@@ -10,6 +10,7 @@ import customtkinter as ctk
 import tempfile
 import time  # Make sure time is imported
 import ctypes
+import shutil
 
 class FilterGamesApp:
     def __init__(self, root):
@@ -307,13 +308,24 @@ class FilterGames:
 
     def show_all_games(self):
         try:
-            if os.path.exists(self.output_file):
-                os.remove(self.output_file)
-                messagebox.showinfo("Success", f"The file '{self.output_file}' has been deleted.")
+            source = "autochanger/include.txt"  # Define the correct source path
+            destination = "collections/Arcades/include.txt"  # Define the correct destination path
+            
+            # Check if the source file exists
+            if os.path.exists(source):
+                # Copy the file from source to destination
+                shutil.copyfile(source, destination)
+                messagebox.showinfo("Success", f"Copied '{source}' to '{destination}'.")
             else:
-                messagebox.showinfo("Info", f"No file to delete. The file '{self.output_file}' does not exist.")
+                # If source does not exist, delete the file in Arcades if it exists
+                if os.path.exists(destination):
+                    os.remove(destination)
+                    messagebox.showinfo("Success", f"'{destination}' has been deleted as the source file was not found.")
+                else:
+                    messagebox.showinfo("Info", f"No file to delete. '{destination}' does not exist.")
+        
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to delete file: {e}")
+            messagebox.showerror("Error", f"Failed to process files: {str(e)}")
 
 
 class AdvancedConfigs:
