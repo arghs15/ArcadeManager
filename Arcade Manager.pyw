@@ -5,6 +5,7 @@ import re
 import subprocess
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import Canvas
 from PIL import Image, ImageTk
 import customtkinter as ctk
 import tempfile
@@ -15,7 +16,7 @@ import shutil
 class FilterGamesApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Game Manager")
+        self.root.title("Arcade Manager")
         self.root.geometry("1920x1080")  # Set the initial size (you can adjust as needed)
         self.root.resizable(True, True)  # Enable window resizing
 
@@ -75,7 +76,6 @@ class FilterGamesApp:
             appearance_frame, values=["Light", "Dark", "System"], command=lambda mode: ctk.set_appearance_mode(mode)
         )
         appearance_mode_optionmenu.pack(side="right", padx=10, pady=10)
-
 
 class ExeFileSelector:
     def __init__(self, parent_frame):
@@ -220,7 +220,7 @@ class FilterGames:
         show_all_button.pack(pady=10)
 
     def load_custom_dll(self):
-        import ctypes
+        #import ctypes
         dll_path = os.path.join(os.path.dirname(sys.executable), 'autochanger/python/VCRUNTIME140.dll')
         ctypes.windll.kernel32.SetDllDirectoryW(os.path.dirname(dll_path))
         if os.path.exists(dll_path):
@@ -229,10 +229,18 @@ class FilterGames:
             print("Custom DLL not found. Please check the path.")
 
     def get_csv_file_path(self):
-        if getattr(sys, 'frozen', False):
+        # Check for an external CSV in the autochanger folder
+        autochanger_csv_path = os.path.join('autochanger', 'MAMEx.csv')
+        if os.path.exists(autochanger_csv_path):
+            return autochanger_csv_path
+
+        # If not found, use the bundled CSV in the executable (from --addfile)
+        if getattr(sys, 'frozen', False):  # When running as a bundled executable
             base_path = sys._MEIPASS
         else:
             base_path = os.path.dirname(os.path.abspath(__file__))
+
+        # Return the path to the bundled CSV
         return os.path.join(base_path, 'meta', 'hyperlist', 'MAMEx.csv')
 
     def sanitize_csv_cell(self, cell_content):
@@ -274,7 +282,7 @@ class FilterGames:
                     vertical_filter = self.vertical_checkbox_var.get()
 
                     for row in reader:
-                        joystick_input = self.sanitize_csv_cell(row.get('Joystick Input'))
+                        joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
                         rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
                         vertical = row.get('Vertical')
                         buttons = row.get('Buttons')
