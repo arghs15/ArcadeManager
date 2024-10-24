@@ -340,16 +340,24 @@ class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
-        self.config_folders = ["- Advanced Configs", "- Themes"]
+        self.config_folders = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass & Scanlines"]
         self.tab_keywords = {
             "Attract": ["Attract", "Scroll"],
-            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],
+            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],  # Updated to use keywords too
             "Front End": ["FRONT END"],
             "InigoBeats": ["MUSIC"],
             "Monitor": ["Monitor"],
             "Splash": ["Splash"],
-            "2nd Screen": ["2nd Screen"],
+            "2nd Screen": None,  # For direct folder mapping
+            "Themes": None,  # For direct folder mapping
             "Other": None
+        }
+
+        # Map folders to tabs for direct mapping
+        self.folder_to_tab_mapping = {
+            "- Themes": "Themes",
+            "- Themes 2nd Screen": "2nd Screen",
+            "- Bezels Glass & Scanlines": "Bezels & Effects"
         }
 
         self.tab_radio_vars = {}
@@ -382,15 +390,26 @@ class AdvancedConfigs:
             for filename in os.listdir(folder_path):
                 if filename.endswith(".bat") or filename.endswith(".cmd"):
                     added_to_tab = False
-                    for tab, keywords in self.tab_keywords.items():
-                        if keywords:
-                            for keyword in keywords:
-                                if keyword.lower() in filename.lower():
-                                    script_categories[tab][len(script_categories[tab]) + 1] = filename
-                                    added_to_tab = True
-                                    break
-                        if added_to_tab:
-                            break
+
+                    # Step 1: Direct folder mapping
+                    if folder in self.folder_to_tab_mapping:
+                        tab_name = self.folder_to_tab_mapping[folder]
+                        script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
+                        added_to_tab = True
+                    
+                    # Step 2: Keyword matching (if not already categorized by folder)
+                    if not added_to_tab:
+                        for tab, keywords in self.tab_keywords.items():
+                            if keywords:
+                                for keyword in keywords:
+                                    if keyword.lower() in filename.lower():
+                                        script_categories[tab][len(script_categories[tab]) + 1] = filename
+                                        added_to_tab = True
+                                        break
+                            if added_to_tab:
+                                break
+
+                    # Step 3: Default to "Other" tab if not matched to any tab yet
                     if not added_to_tab:
                         script_categories["Other"][len(script_categories["Other"]) + 1] = filename
 
@@ -445,10 +464,9 @@ class AdvancedConfigs:
                 )
                 messagebox.showinfo("Success", f"'{script_to_run}' executed successfully.\nOutput:\n{result.stdout}")
             except subprocess.CalledProcessError as e:
-                messagebox.showerror("Error", f"Failed to run the script: {e}\nOutput:\n{e.output}\nError:\n{e.stderr}")
+                messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n{e.output}")
         else:
             messagebox.showwarning("Warning", "No script is mapped to the selected option.")
-
 
 # Main application driver
 if __name__ == "__main__":
