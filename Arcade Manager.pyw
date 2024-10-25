@@ -27,7 +27,7 @@ class FilterGamesApp:
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Create the frame for the tabs (Filter Games and Advanced Configs)
+        # Create the frame for the tabs (Filter Games, Advanced Configs, and Playlists)
         self.tabview_frame = ctk.CTkFrame(self.main_frame, corner_radius=10, fg_color="transparent")
         self.tabview_frame.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=10)
 
@@ -39,14 +39,18 @@ class FilterGamesApp:
         self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
         self.tabview.pack(expand=True, fill="both")
 
-        # Filter Games tab
-        self.filter_games_tab = self.tabview.add("Filter Games")
-        self.filter_games = FilterGames(self.filter_games_tab)
-
         # Advanced Configurations tab
         self.advanced_configs_tab = self.tabview.add("Advanced Configs")
         self.advanced_configs = AdvancedConfigs(self.advanced_configs_tab)
 
+        # Playlists tab
+        self.playlists_tab = self.tabview.add("Playlists")
+        self.playlists = Playlists(self.playlists_tab)
+        
+        # Filter Games tab
+        self.filter_games_tab = self.tabview.add("Filter Games")
+        self.filter_games = FilterGames(self.filter_games_tab)
+        
         # Add exe file selector on the right side
         self.exe_selector = ExeFileSelector(self.exe_selector_frame)
 
@@ -64,7 +68,6 @@ class FilterGamesApp:
 
         # Set the window geometry with the calculated position
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-
 
     def add_appearance_mode_frame(self):
         appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
@@ -335,6 +338,139 @@ class FilterGames:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process files: {str(e)}")
 
+import fileinput
+
+class Playlists:
+    def __init__(self, parent_tab):
+        self.parent_tab = parent_tab
+        self.base_path = os.getcwd()
+        self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
+        self.excluded_playlists = ["ctrltype", "manufacturer", "genres"]
+        self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", "settings5_7.conf")
+
+        self.check_vars = []
+        self.check_buttons = []
+
+        # Create a frame for the scrollable checkbox area
+        self.scrollable_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
+        self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self.scrollable_checklist = ctk.CTkScrollableFrame(self.scrollable_frame, width=400, height=400)
+        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Populate checkboxes based on available playlist files
+        self.populate_checkboxes()
+
+        # Create the Create Playlist button
+        self.create_playlist_button = ctk.CTkButton(
+            self.parent_tab,
+            text="Create Playlist",
+            command=self.create_playlist,
+            fg_color="#4CAF50",
+            hover_color="#45A049"
+        )
+        self.create_playlist_button.pack(side="bottom", pady=10, padx=10)
+
+        # Add additional buttons
+        button_frame = ctk.CTkFrame(self.parent_tab)
+        button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+
+        self.ctrltype_button = ctk.CTkButton(
+            button_frame,
+            text="Control Types",
+            command=lambda: self.activate_special_playlist("ctrltype")
+        )
+        self.ctrltype_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+
+        self.manufacturer_button = ctk.CTkButton(
+            button_frame,
+            text="Manufacturer",
+            command=lambda: self.activate_special_playlist("manufacturer")
+        )
+        self.manufacturer_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+
+        self.genres_button = ctk.CTkButton(
+            button_frame,
+            text="Genres",
+            command=lambda: self.activate_special_playlist("genres")
+        )
+        self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+
+        '''self.reset_button = ctk.CTkButton(
+            button_frame,
+            text="Reset Playlists",
+            fg_color="#D32F2F",
+            hover_color="#C62828",
+            command=self.reset_playlists
+        )
+        self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        '''
+        
+    def populate_checkboxes(self):
+        try:
+            for playlist_file in os.listdir(self.playlists_path):
+                playlist_name, ext = os.path.splitext(playlist_file)
+                if ext == ".txt" and playlist_name.lower() not in self.excluded_playlists:
+                    var = tk.BooleanVar()
+                    checkbutton = ctk.CTkCheckBox(
+                        self.scrollable_checklist,
+                        text=playlist_name,
+                        variable=var
+                    )
+                    checkbutton.pack(anchor="w", padx=10, pady=5)
+                    self.check_vars.append((playlist_name, var))
+        except FileNotFoundError:
+            print(f"Playlists folder not found at: {self.playlists_path}")
+
+    def create_playlist(self):
+        selected_playlists = [name for name, var in self.check_vars if var.get()]
+        self.update_conf_file(selected_playlists)
+
+    def activate_special_playlist(self, playlist_type):
+        self.update_conf_file([playlist_type])
+
+    def reset_playlists(self):
+        default_playlists = [
+            "arcader", "consoles", "favorites", "lastplayed", "old school", "beat em ups",
+            "run n gun", "fight club", "shoot em ups", "racer", "sports", "puzzler"
+        ]
+        self.update_conf_file(default_playlists)
+
+    def update_conf_file(self, playlist_list):
+        try:
+            with open(self.autochanger_conf_path, 'r') as file:
+                lines = file.readlines()
+
+            cycle_playlist_found = False
+            first_playlist_found = False
+
+            updated_lines = []
+            first_selected_playlist = playlist_list[0] if playlist_list else "default_playlist"
+
+            for line in lines:
+                if line.startswith("cyclePlaylist ="):
+                    new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
+                    updated_lines.append(new_line)
+                    cycle_playlist_found = True
+                elif line.startswith("firstPlaylist ="):
+                    new_line = f"firstPlaylist = {first_selected_playlist}\n"
+                    updated_lines.append(new_line)
+                    first_playlist_found = True
+                else:
+                    updated_lines.append(line)
+
+            if not cycle_playlist_found:
+                updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
+            if not first_playlist_found:
+                updated_lines.append(f"firstPlaylist = {first_selected_playlist}\n")
+
+            with open(self.autochanger_conf_path, 'w') as file:
+                file.writelines(updated_lines)
+
+            messagebox.showinfo("Success", f"Updated Playlist(s): {', '.join(playlist_list)}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {str(e)}")
+
 
 class AdvancedConfigs:
     def __init__(self, parent_tab):
@@ -342,14 +478,15 @@ class AdvancedConfigs:
         self.base_path = os.getcwd()
         self.config_folders = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass & Scanlines"]
         self.tab_keywords = {
-            "Attract": ["Attract", "Scroll"],
+            "Themes": None,  # For direct folder mapping
+            "2nd Screen": None,  # For direct folder mapping
             "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],  # Updated to use keywords too
-            "Front End": ["FRONT END"],
+            "Overlays": ["OVERLAY"],  # Updated to use keywords too
             "InigoBeats": ["MUSIC"],
+            "Attract": ["Attract", "Scroll"],           
             "Monitor": ["Monitor"],
             "Splash": ["Splash"],
-            "2nd Screen": None,  # For direct folder mapping
-            "Themes": None,  # For direct folder mapping
+            "Front End": ["FRONT END"],
             "Other": None
         }
 
