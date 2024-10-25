@@ -396,7 +396,7 @@ class Playlists:
         )
         self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
-        '''self.reset_button = ctk.CTkButton(
+        self.reset_button = ctk.CTkButton(
             button_frame,
             text="Reset Playlists",
             fg_color="#D32F2F",
@@ -404,7 +404,6 @@ class Playlists:
             command=self.reset_playlists
         )
         self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-        '''
         
     def populate_checkboxes(self):
         try:
@@ -430,11 +429,21 @@ class Playlists:
         self.update_conf_file([playlist_type])
 
     def reset_playlists(self):
-        default_playlists = [
-            "arcader", "consoles", "favorites", "lastplayed", "old school", "beat em ups",
-            "run n gun", "fight club", "shoot em ups", "racer", "sports", "puzzler"
-        ]
-        self.update_conf_file(default_playlists)
+        """Reset the settings by copying 'settings5_7x.conf' to 'settings5_7.conf'."""
+        # Path to the backup configuration file
+        backup_conf_path = os.path.join(self.base_path, "autochanger", "settings5_7x.conf")
+
+        try:
+            # Check if the backup file exists
+            if os.path.exists(backup_conf_path):
+                # Copy the backup file to replace the original configuration file
+                shutil.copy(backup_conf_path, self.autochanger_conf_path)
+                messagebox.showinfo("Success", "Playlists have been reset to default.")
+            else:
+                messagebox.showerror("Error", "Backup configuration file 'settings5_7x.conf' not found.")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred during reset: {str(e)}")
+
 
     def update_conf_file(self, playlist_list):
         try:
@@ -470,7 +479,6 @@ class Playlists:
             messagebox.showinfo("Success", f"Updated Playlist(s): {', '.join(playlist_list)}")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {str(e)}")
-
 
 class AdvancedConfigs:
     def __init__(self, parent_tab):
