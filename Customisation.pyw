@@ -391,30 +391,27 @@ class Playlists:
         )
         self.create_playlist_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
-        # Uncomment and adjust as necessary for other buttons (e.g., ctrltype, manufacturer, genres)
-        '''
+        # Uncomment and adjust as necessary for other buttons (e.g., ctrltype, manufacturer, genres)  
         self.ctrltype_button = ctk.CTkButton(
             button_frame,
-            text="Control Types",
-            command=lambda: self.activate_special_playlist("ctrltype")
+            text="All Genres",
+            command=lambda: self.activate_special_playlist("beat em ups, fight club, old school, puzzler, racer, run n gun, shoot em ups, sports, trackball, twinsticks, vector")
         )
         self.ctrltype_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
         self.manufacturer_button = ctk.CTkButton(
             button_frame,
-            text="Manufacturer",
-            command=lambda: self.activate_special_playlist("manufacturer")
+            text="All Manufacturer",
+            command=lambda: self.activate_special_playlist("atari, capcom , cave, data east, gunner, irem, konami, midway, namco, neogeo, nintendo, psikyo, raizing, sega, snk, taito, technos, tecmo, toaplan, williams")
         )
         self.manufacturer_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
         self.genres_button = ctk.CTkButton(
             button_frame,
-            text="Genres",
-            command=lambda: self.activate_special_playlist("genres")
+            text="Sort",
+            command=lambda: self.activate_special_playlist("ctrltype, manufacturer, numberplayers, year")
         )
         self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-        '''
-
 
     def populate_checkboxes(self):
         try:
