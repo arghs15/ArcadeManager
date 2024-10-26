@@ -570,6 +570,17 @@ class Playlists:
                 checkbutton.pack(anchor="w", padx=10, pady=5)
                 self.check_vars.append((playlist, var))
 
+    def add_playlists_to_checklist(self, playlist_names):
+        """Adds playlists to the checklist."""
+        current_playlists = [name for name, var in self.check_vars]
+        
+        for playlist in playlist_names:
+            if playlist not in current_playlists:
+                var = tk.BooleanVar()
+                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist, variable=var)
+                checkbutton.pack(anchor="w", padx=10, pady=5)
+                self.check_vars.append((playlist, var))
+
     def remove_playlists_from_checklist(self, playlist_names):
         """Removes playlists from the checklist."""
         for playlist in playlist_names:
@@ -604,10 +615,35 @@ class Playlists:
                 messagebox.showerror("Error", "Backup configuration file 'settings5_7x.conf' not found.")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred during reset: {str(e)}")
-
-
+    
+    def read_default_playlists(self):
+        try:
+            with open(os.path.join("autochanger", "default_playlists.txt"), 'r') as file:
+                for line in file:
+                    line = line.strip()
+                    if line.startswith("cyclePlaylist ="):
+                        default_playlists = [item.strip() for item in line.split("=", 1)[1].split(",") if item.strip()]
+                        return default_playlists
+            return ["arcader", "consoles", "favorites", "lastplayed"]
+        # surpressing the error, as it's not really an error - we use hardcoded values if not found
+        except FileNotFoundError:
+            return ["arcader", "consoles", "favorites", "lastplayed"]
+            #messagebox.showerror("Error", "Default playlists file not found.")
+            #return []
+        except Exception as e:
+            print(f"An error occurred while reading default playlists: {str(e)}")
+            messagebox.showerror("Error", f"An error occurred while reading default playlists: {str(e)}")
+            return[]
+                 
     def update_conf_file(self, playlist_list):
         try:
+            default_playlists = self.read_default_playlists()
+            if not default_playlists:
+                default_playlists = ["arcades, lastplayed"]  # Fallback if reading file fails
+            
+            # The main playlist for firstPlaylist should only be the first entry from default_playlists
+            main_default_playlist = default_playlists[0]
+                
             with open(self.autochanger_conf_path, 'r') as file:
                 lines = file.readlines()
 
@@ -615,24 +651,24 @@ class Playlists:
             first_playlist_found = False
 
             updated_lines = []
-            first_selected_playlist = playlist_list[0] if playlist_list else "default_playlist"
+            first_selected_playlist = playlist_list[0] if playlist_list else default_playlists[0]
 
             for line in lines:
                 if line.startswith("cyclePlaylist ="):
-                    new_line = f"cyclePlaylist = arcader, consoles, favorites, lastplayed, {', '.join(playlist_list)}\n"
+                    new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
                     updated_lines.append(new_line)
                     cycle_playlist_found = True
                 elif line.startswith("firstPlaylist ="):
-                    new_line = f"firstPlaylist = {'arcader'}\n"
+                    new_line = f"firstPlaylist = {main_default_playlist}\n"
                     updated_lines.append(new_line)
                     first_playlist_found = True
                 else:
                     updated_lines.append(line)
 
             if not cycle_playlist_found:
-                updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
+                updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
             if not first_playlist_found:
-                updated_lines.append(f"firstPlaylist = {first_selected_playlist}\n")
+                updated_lines.append(f"firstPlaylist = {first_selected_playlist}, {default_playlists[0]}\n")
 
             with open(self.autochanger_conf_path, 'w') as file:
                 file.writelines(updated_lines)
