@@ -19,7 +19,11 @@ class FilterGamesApp:
         self.root.title("Customisation")
         self.root.geometry("1920x1080")  # Set the initial size (you can adjust as needed)
         self.root.resizable(True, True)  # Enable window resizing
-
+        
+        # Set the window icon
+        #icon_path = os.path.join(os.getcwd(), 'Potion.ico')  # Adjust path as needed
+        #self.iconbitmap(icon_path)  # For .ico files
+        
         # Center the window on the screen
         self.center_window(1200, 800)
 
@@ -338,30 +342,52 @@ class FilterGames:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process files: {str(e)}")
 
-import fileinput
-
 class Playlists:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
+        self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", "settings5_7.conf")
         
-        # Playlists to exclude from being shown in the checkboxes
+        self.check_vars = []
+        self.check_buttons = []
         self.excluded_playlists = [
             "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
             "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
         ]
         
-        self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", "settings5_7.conf")
+        # Playlists associated with each toggle
+        #self.genre_playlists = ["beat em ups", "fight club", "old school", "puzzler", "racer", "run n gun", "shoot em ups", "sports", "trackball", "twinsticks", "vector"]
+        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "gunner", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]  # Example, can expand later
+        self.sort_type_playlists = ["ctrltype", "manufacturer", "numberplayers", "year"]  # Example, can expand later
+        
+        # Create a main frame for all content
+        self.main_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
+        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        
+        #Come back top this. No idea why sort is not working.Manu and genre work fine
+        '''
+        # Create a frame for switches and place it at the top
+        self.switch_frame = ctk.CTkFrame(self.main_frame)
+        self.switch_frame.pack(fill="x", padx=10, pady=(10, 5))
+        
+        # Add CTkSwitch widgets in the switch frame
+        self.genre_switch = ctk.CTkSwitch(self.switch_frame, text="Genres", command=self.toggle_genres, onvalue="on", offvalue="off")
+        self.genre_switch.select()  # Default to 'on'
+        self.genre_switch.pack(side="left", padx=5, pady=5)
 
-        self.check_vars = []
-        self.check_buttons = []
+        self.manufacturer_switch = ctk.CTkSwitch(self.switch_frame, text="Manufacturers", command=self.toggle_manufacturers, onvalue="on", offvalue="off")
+        self.manufacturer_switch.select()  # Default to 'on'
+        self.manufacturer_switch.pack(side="left", padx=5, pady=5)
 
-        # Create a frame for the scrollable checkbox area
-        self.scrollable_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
-        self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.scrollable_checklist = ctk.CTkScrollableFrame(self.scrollable_frame, width=400, height=400)
+        self.sort_types_switch = ctk.CTkSwitch(self.switch_frame, text="Sort Types", command=self.toggle_sort_types, onvalue="on", offvalue="off")
+        self.sort_types_switch.select()  # Default to 'on'
+        self.sort_types_switch.pack(side="left", padx=5, pady=5)
+        '''
+        
+        # Create a frame for the scrollable checkbox area below the switches
+        self.scrollable_checklist = ctk.CTkScrollableFrame(self.main_frame, width=400, height=400)
         self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Populate checkboxes based on available playlist files
@@ -371,17 +397,7 @@ class Playlists:
         button_frame = ctk.CTkFrame(self.parent_tab)
         button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
-        # Create the Reset Playlists button
-        self.reset_button = ctk.CTkButton(
-            button_frame,
-            text="Reset Playlists",
-            fg_color="#D32F2F",
-            hover_color="#C62828",
-            command=self.reset_playlists
-        )
-        self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-
-        # Create the Create Playlist button
+        # Create playlist buttons
         self.create_playlist_button = ctk.CTkButton(
             button_frame,
             text="Create Playlist",
@@ -391,51 +407,188 @@ class Playlists:
         )
         self.create_playlist_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
-        # Uncomment and adjust as necessary for other buttons (e.g., ctrltype, manufacturer, genres)  
-        self.ctrltype_button = ctk.CTkButton(
+        self.reset_button = ctk.CTkButton(
+            button_frame,
+            text="Reset Playlists",
+            fg_color="#D32F2F",
+            hover_color="#C62828",
+            command=self.reset_playlists
+        )
+        self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        '''
+        self.genres_button = ctk.CTkButton(
             button_frame,
             text="All Genres",
             command=lambda: self.activate_special_playlist("beat em ups, fight club, old school, puzzler, racer, run n gun, shoot em ups, sports, trackball, twinsticks, vector")
         )
-        self.ctrltype_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-
+        self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        '''
+        self.genres_button = ctk.CTkButton(
+            button_frame,
+            text="All Genres",
+            command=lambda: self.activate_special_playlist(",".join(self.get_genre_playlists()))
+        )
+        self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        
         self.manufacturer_button = ctk.CTkButton(
             button_frame,
             text="All Manufacturer",
-            command=lambda: self.activate_special_playlist("atari, capcom , cave, data east, gunner, irem, konami, midway, namco, neogeo, nintendo, psikyo, raizing, sega, snk, taito, technos, tecmo, toaplan, williams")
+            command=lambda: self.activate_special_playlist(",".join(self.manufacturer_playlists))
         )
         self.manufacturer_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
-        self.genres_button = ctk.CTkButton(
+        self.sort_type_button = ctk.CTkButton(
             button_frame,
             text="Sort",
-            command=lambda: self.activate_special_playlist("ctrltype, manufacturer, numberplayers, year")
+            command=lambda: self.activate_special_playlist(",".join(self.sort_type_playlists))
         )
-        self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+
+    # Define toggle functions and other methods as before...
+    def get_genre_playlists(self):
+        return [name for name, _ in self.check_vars 
+            if name not in self.sort_type_playlists and name not in self.manufacturer_playlists]
+    
+    def toggle_genres(self):
+        genre_playlists = self.get_genre_playlists()  # Fetch genre playlists correctly
+        if self.genre_switch.get() == "off":
+            for genre in genre_playlists:
+                if genre not in self.excluded_playlists:
+                    self.excluded_playlists.append(genre)
+        else:
+            for genre in genre_playlists:    
+                if genre in self.excluded_playlists:
+                    self.excluded_playlists.remove(genre)
+                    
+        self.refresh_checkboxes()
+    
+    def toggle_manufacturers(self):
+        if self.manufacturer_switch.get() == "off":
+            for manufacturer in self.manufacturer_playlists:
+                if manufacturer not in self.excluded_playlists:
+                    print(f"Adding {manufacturer} to excluded playlists")  # Debugging statement
+                    self.excluded_playlists.append(manufacturer)
+        else:
+            for manufacturer in self.manufacturer_playlists:
+                if manufacturer in self.excluded_playlists:
+                    print(f"Removing {manufacturer} from excluded playlists")  # Debugging statement
+                    self.excluded_playlists.remove(manufacturer)
+
+        self.refresh_checkboxes()
+    
+    def toggle_sort_types(self):
+        print(f"Sort Switch State Before: {self.sort_types_switch.get()}")
+        if self.sort_types_switch.get() == "off":
+            for sort in self.sort_type_playlists:
+                if sort not in self.excluded_playlists:
+                    self.excluded_playlists.append(sort)
+        else:
+            for sort in self.sort_type_playlists:
+                if sort in self.excluded_playlists:
+                    self.excluded_playlists.remove(sort)
+        
+        self.refresh_checkboxes()
+    
+    def refresh_checkboxes(self):
+        for widget in self.scrollable_checklist.winfo_children():
+            widget.destroy()
+        self.populate_checkboxes()
 
     def populate_checkboxes(self):
+        """Populates the initial checkboxes with manufacturer playlists at the end."""
         try:
+            all_playlists = []  # To store all found playlists
+            manufacturer_playlists = []  # To store only manufacturer playlists
+            sort_type_playlists = []  # To store only sort type playlists
+
+            # Debugging: Print the path we're checking
+            #print("Checking playlists in:", self.playlists_path)
+            
+            # Debugging: Print the sort type playlists to check if they're defined
+            #print("Sort Type Playlists:", self.sort_type_playlists)
+        
+            # Iterate through the files in the playlists directory
             for playlist_file in os.listdir(self.playlists_path):
                 playlist_name, ext = os.path.splitext(playlist_file)
+                # Check if it's a .txt file and not excluded
                 if ext == ".txt" and playlist_name.lower() not in self.excluded_playlists:
-                    var = tk.BooleanVar()
-                    checkbutton = ctk.CTkCheckBox(
-                        self.scrollable_checklist,
-                        text=playlist_name,
-                        variable=var
-                    )
-                    checkbutton.pack(anchor="w", padx=10, pady=5)
-                    self.check_vars.append((playlist_name, var))
+                    all_playlists.append(playlist_name)  # Add to all_playlists
+                    
+                    # Check if it's a manufacturer playlist
+                    if playlist_name.lower() in [m.lower() for m in self.manufacturer_playlists]:
+                        manufacturer_playlists.append(playlist_name)  # Separate manufacturer playlists
+                        
+                        # Check if it's a sort type playlist
+                    if playlist_name.lower() in [s.lower() for s in self.sort_type_playlists]:
+                        sort_type_playlists.append(playlist_name)  # Separate sort type playlists
+            
+            # Debugging: Print found playlists
+            print("Found Playlists:", all_playlists)
+            print("Manufacturer Playlists:", manufacturer_playlists)
+            print("Sort Type Playlists:", sort_type_playlists)
+            
+            # Remove manufacturer playlists from all_playlists
+            for manufacturer_playlist in manufacturer_playlists:
+                if manufacturer_playlist in all_playlists:
+                    all_playlists.remove(manufacturer_playlist)
+            
+            # Remove sort type playlists from all_playlists
+            for sort_playlist in sort_type_playlists:
+                if sort_playlist in all_playlists:
+                    all_playlists.remove(sort_playlist)
+                
+            # Append manufacturer playlists to the end
+            all_playlists.extend(manufacturer_playlists)
+            
+            # Append sort type playlists to the end
+            all_playlists.extend(sort_type_playlists)  # Add sort playlists after manufacturer playlists
+        
+            # Debugging: Print the final order of playlists
+            print("Final Playlist Order:", all_playlists)
+
+            # Populate checkboxes in the desired order
+            for playlist_name in all_playlists:
+                var = tk.BooleanVar()
+                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist_name, variable=var)
+                checkbutton.pack(anchor="w", padx=10, pady=5)
+                self.check_vars.append((playlist_name, var))
+
         except FileNotFoundError:
             print(f"Playlists folder not found at: {self.playlists_path}")
+        except Exception as e:
+            # Catch all exceptions to understand any issues
+            print("An error occurred:", str(e))
+
+    def add_playlists_to_checklist(self, playlist_names):
+        """Adds playlists to the checklist."""
+        current_playlists = [name for name, var in self.check_vars]
+        
+        for playlist in playlist_names:
+            if playlist not in current_playlists:
+                var = tk.BooleanVar()
+                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist, variable=var)
+                checkbutton.pack(anchor="w", padx=10, pady=5)
+                self.check_vars.append((playlist, var))
+
+    def remove_playlists_from_checklist(self, playlist_names):
+        """Removes playlists from the checklist."""
+        for playlist in playlist_names:
+            for name, var in self.check_vars:
+                if name == playlist:
+                    var.set(False)  # Uncheck the checkbox
+                    self.check_vars.remove((name, var))  # Remove from the list
+                    break
 
     def create_playlist(self):
         selected_playlists = [name for name, var in self.check_vars if var.get()]
         self.update_conf_file(selected_playlists)
-
+    
     def activate_special_playlist(self, playlist_type):
-        self.update_conf_file([playlist_type])
-
+        playlists_to_check = [playlist.strip() for playlist in playlist_type.split(",")]
+        for name, var in self.check_vars:
+            if name in playlists_to_check:
+                var.set(not var.get())  # Toggle the checkbox state
+               
     def reset_playlists(self):
         """Reset the settings by copying 'settings5_7x.conf' to 'settings5_7.conf'."""
         # Path to the backup configuration file
@@ -615,8 +768,9 @@ class AdvancedConfigs:
                     capture_output=True,
                     cwd=os.path.dirname(script_path)
                 )
-                messagebox.showinfo("Success", f"'{script_to_run}' executed successfully.\nOutput:\n{result.stdout}")
-            except subprocess.CalledProcessError as e:
+                #Surpress success because errors are not tru, and confuse users
+                #messagebox.showinfo("Success", f"'{script_to_run}' executed successfully.\nOutput:\n{result.stdout}")
+            except subprocess.CalledProcessError as cpe:
                 messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n{e.output}")
         else:
             messagebox.showwarning("Warning", "No script is mapped to the selected option.")
