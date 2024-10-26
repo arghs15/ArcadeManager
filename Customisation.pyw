@@ -439,7 +439,7 @@ class Playlists:
 
         self.sort_type_button = ctk.CTkButton(
             button_frame,
-            text="Sort",
+            text="All Sort Types",
             command=lambda: self.activate_special_playlist(",".join(self.sort_type_playlists))
         )
         self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
