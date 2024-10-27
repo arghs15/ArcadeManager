@@ -501,10 +501,13 @@ class Playlists:
         
         self.check_vars = []
         self.check_buttons = []
-        self.excluded_playlists = [
+        
+        # Read excluded playlists from the configuration file
+        self.excluded_playlists = self.read_excluded_playlists()
+        '''self.excluded_playlists = [
             "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
             "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
-        ]
+        ]'''
         
         # Playlists associated with each toggle
         #self.genre_playlists = ["beat em ups", "fight club", "old school", "puzzler", "racer", "run n gun", "shoot em ups", "sports", "trackball", "twinsticks", "vector"]
@@ -593,7 +596,7 @@ class Playlists:
             command=lambda: self.activate_special_playlist(",".join(self.sort_type_playlists))
         )
         self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-
+                        
     # Define toggle functions and other methods as before...
     def get_genre_playlists(self):
         return [name for name, _ in self.check_vars 
@@ -784,7 +787,28 @@ class Playlists:
             print(f"An error occurred while reading default playlists: {str(e)}")
             messagebox.showerror("Error", f"An error occurred while reading default playlists: {str(e)}")
             return[]
-             
+    
+    def read_excluded_playlists(self):
+        try:
+            with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
+                for line in file:
+                    line = line.strip()
+                    if line.startswith("excluded ="):
+                        excluded_playlists = [item.strip() for item in line.split("=", 1)[1].split(",") if item.strip()]
+                        return excluded_playlists
+            return [
+                "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
+                "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
+            ]
+        except FileNotFoundError:
+            return [
+                "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
+                "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
+            ]
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred while reading excluded playlists: {str(e)}")
+            return []
+            
     def update_conf_file(self, playlist_list):
         try:
             default_playlists = self.read_default_playlists()
