@@ -24,6 +24,7 @@ class FilterGamesApp:
         # Set the window icon
         #icon_path = os.path.join(os.getcwd(), 'Potion.ico')  # Adjust path as needed
         #self.iconbitmap(icon_path)  # For .ico files
+        root.iconbitmap('Potion.ico')
         
         # Center the window on the screen
         self.center_window(1200, 800)
