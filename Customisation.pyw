@@ -12,6 +12,7 @@ import tempfile
 import time  # Make sure time is imported
 import ctypes
 import shutil
+import shlex
 
 class FilterGamesApp:
     def __init__(self, root):
@@ -56,8 +57,8 @@ class FilterGamesApp:
         self.filter_games = FilterGames(self.filter_games_tab)
         
         # Add exe file selector on the right side
-        self.exe_selector = ExeFileSelector(self.exe_selector_frame)
-
+        self.exe_selector = ExeFileSelector(self.exe_selector_frame) 
+        
         # Bottom frame for Appearance Mode options
         self.add_appearance_mode_frame()
 
@@ -71,8 +72,18 @@ class FilterGamesApp:
         y = (screen_height // 2) - (height // 2)
 
         # Set the window geometry with the calculated position
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.geometry(f"{width}x{height}+{x}+{y}") 
 
+    def run_script(self, script_name):
+        try:
+            script_path = os.path.join(os.getcwd(), script_name)
+            if os.path.isfile(script_path):
+                subprocess.run(script_path, shell=True)
+            else:
+                ctk.CTkMessageBox.showerror("Error", f"The script does not exist: {script_name}")
+        except Exception as e:
+            ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
+            
     def add_appearance_mode_frame(self):
         appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
         appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
@@ -110,6 +121,98 @@ class ExeFileSelector:
         # Add a button to run the selected exe
         run_exe_button = ctk.CTkButton(exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
         run_exe_button.pack(pady=20)
+        
+        # Call a method to add the batch file buttons frame below this frame
+        self.add_batch_file_buttons(parent_frame)
+
+    def add_batch_file_buttons(self, parent_frame):
+        # Create a frame for batch file buttons below the exe frame
+        self.batch_file_frame = ctk.CTkFrame(parent_frame, corner_radius=10, fg_color="transparent")
+        self.batch_file_frame.grid(row=2, column=1, sticky="nswe", padx=20, pady=(5, 10))  # Adjust row index
+
+        # Add a title for the reset section
+        reset_label = ctk.CTkLabel(self.batch_file_frame, text="Reset Build to Defaults", font=("Arial", 14, "bold"))
+        reset_label.pack(pady=(10, 5))  # Padding to separate from buttons
+
+        # Find all batch files in the current directory with "Reset" in their names
+        batch_files = self.find_reset_batch_files()
+
+        # Dynamically create a button for each batch file
+        for batch_file in batch_files:
+            button_text = os.path.splitext(batch_file[2:])[0]  # Remove the first two characters from the name
+            
+            # Create a button with the modified name
+            button = ctk.CTkButton(
+                self.batch_file_frame, 
+                text=button_text,
+                command=lambda bf=batch_file: self.run_script(bf), 
+                hover_color="red"
+            )
+            button.pack(pady=10, padx=10, fill='x')  # Fill horizontally for better spacing
+
+    def find_reset_batch_files(self):
+        """Find all .bat files in the current directory that have 'Reset' in their name."""
+        base_path = os.getcwd()  # Get the current working directory
+
+        # Debugging: Print the base path and all files in the directory
+        print(f"Base path: {base_path}")
+        print(f"Files in directory: {os.listdir(base_path)}")
+
+        # Find all .bat files with "Reset" in their name
+        return [f for f in os.listdir(base_path) if f.endswith('.bat') and "Restore" in f]
+
+    def run_script(self, script_name):
+        try:
+            # Get the full path to the script
+            script_path = os.path.join(os.getcwd(), script_name)
+    
+            # Check if the script exists
+            if not os.path.isfile(script_path):
+                messagebox.showerror("File Not Found", f"The script does not exist at the path: {script_path}")
+                return
+        
+            print(f"Attempting to run script at: {script_path}")  # Debug print statement
+
+            # Run the batch file
+            completed_process = subprocess.run(
+                f'cmd.exe /c "{script_path}"',
+                shell=True,
+                capture_output=True,  # Capture stdout and stderr
+                text=True,  # Decode to text
+                check=False  # Don't automatically raise an error if the command fails
+            )
+
+            # Check for errors in the execution
+            if completed_process.returncode != 0:
+                error_message = (
+                    f"Failed to run {script_name}.\n\n"
+                    f"Return Code: {completed_process.returncode}\n"
+                    f"Error Output: {completed_process.stderr.strip()}\n"
+                    f"Standard Output: {completed_process.stdout.strip()}"
+                )
+                messagebox.showerror("Script Execution Error", error_message)
+            else:
+                #success_message = f"Script '{script_name}' ran successfully:\n{completed_process.stdout.strip()}"
+                messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has run" )#, success_message)
+                print(f"Script ran successfully:\n{completed_process.stdout.strip()}")
+
+        except FileNotFoundError:
+            messagebox.showerror("File Not Found", f"The specified batch file was not found: {script_path}")
+        except PermissionError:
+            messagebox.showerror("Permission Denied", f"Permission denied while trying to run: {script_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred while running {script_name}: {str(e)}")
+
+            
+    '''def run_script(self, script_name):
+        try:
+            script_path = os.path.join(os.getcwd(), script_name)
+            if os.path.isfile(script_path):
+                subprocess.run(f'cmd.exe /c "{script_path}"', check=True)#check=True,text=True,capture_output=True,
+            else:
+                messagebox.showerror("Error", f"The script does not exist: {script_path}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to run {script_name}: {str(e)}")'''
 
     def find_exe_files(self):
         """Finds all .exe files in the current directory."""
@@ -681,7 +784,7 @@ class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
-        self.config_folders = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass & Scanlines"]
+        self.config_folders = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass and Scanlines"]
         self.tab_keywords = {
             "Themes": None,  # For direct folder mapping
             "2nd Screen": None,  # For direct folder mapping
@@ -699,7 +802,7 @@ class AdvancedConfigs:
         self.folder_to_tab_mapping = {
             "- Themes": "Themes",
             "- Themes 2nd Screen": "2nd Screen",
-            "- Bezels Glass & Scanlines": "Bezels & Effects"
+            "- Bezels Glass and Scanlines": "Bezels & Effects"
         }
 
         self.tab_radio_vars = {}
@@ -810,6 +913,7 @@ class AdvancedConfigs:
                 messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n{e.output}")
         else:
             messagebox.showwarning("Warning", "No script is mapped to the selected option.")
+                         
 
 # Main application driver
 if __name__ == "__main__":
