@@ -15,6 +15,13 @@ import shutil
 import shlex
 
 class FilterGamesApp:
+    @staticmethod
+    def resource_path(relative_path):
+        """ Get the absolute path to a resource, accounting for PyInstaller's bundling. """
+        if hasattr(sys, '_MEIPASS'):
+            return os.path.join(sys._MEIPASS, relative_path)
+        return os.path.join(os.getcwd(), relative_path)
+        
     def __init__(self, root):
         self.root = root
         self.root.title("Customisation")
@@ -24,8 +31,11 @@ class FilterGamesApp:
         # Set the window icon
         #icon_path = os.path.join(os.getcwd(), 'Potion.ico')  # Adjust path as needed
         #self.iconbitmap(icon_path)  # For .ico files
-        root.iconbitmap('Potion.ico')
-        
+        #root.iconbitmap('Potion.ico')
+        icon_path = self.resource_path('Potion.ico')
+        if os.path.exists(icon_path):
+            root.iconbitmap(icon_path)
+
         # Center the window on the screen
         self.center_window(1200, 800)
 
@@ -62,7 +72,7 @@ class FilterGamesApp:
         
         # Bottom frame for Appearance Mode options
         self.add_appearance_mode_frame()
-
+        
     def center_window(self, width, height):
         # Get the screen dimensions
         screen_width = self.root.winfo_screenwidth()
