@@ -101,8 +101,35 @@ class ExeFileSelector:
         # Create a new frame for the .exe radio buttons below the main content
         exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)  # New frame for exe selection
         exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)  # Place below main_content_frame
-
-        ctk.CTkLabel(exe_frame, text="Select Executable", font=("Arial", 14, "bold")).pack(padx=10, pady=10)
+        
+        parent_frame.grid_columnconfigure(1, weight=1)
+        parent_frame.grid_rowconfigure(1, weight=1)
+        
+        # Check if the logo image file exists
+        logo_path = 'autochanger/Logo.png'
+        if os.path.exists(logo_path):
+            
+            # Load and create the image (logo)
+            fixed_width = 250  # Set the desired width for the image
+            
+            # Open the image to find its original dimensions
+            logo_original = Image.open(logo_path)
+            aspect_ratio = logo_original.height / logo_original.width
+            calculated_height = int(fixed_width * aspect_ratio)  # Calculate height based on the aspect ratio
+        
+            # Load and create the image (logo)
+            logo_image = ctk.CTkImage(
+                light_image=logo_original,
+                dark_image=logo_original,
+                size=(fixed_width, calculated_height)  # Set width and calculated height
+            )
+        
+            # Add the logo label to the exe_frame
+            logo_label = ctk.CTkLabel(exe_frame, text="", image=logo_image)
+            logo_label.pack(pady=(10, 0))  # Padding to add spacing at the top
+        else:
+            # use title in its place if not found
+            ctk.CTkLabel(exe_frame, text="Select Executable", font=("Arial", 14, "bold")).pack(padx=10, pady=10)
 
         # Create a scrollable frame inside exe_frame to hold the radio buttons
         scrollable_frame = ctk.CTkScrollableFrame(exe_frame, width=400, height=200, corner_radius=10)
