@@ -729,7 +729,7 @@ class Playlists:
     
     def read_default_playlists(self):
         try:
-            with open(os.path.join("autochanger", "default_playlists.txt"), 'r') as file:
+            with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
                 for line in file:
                     line = line.strip()
                     if line.startswith("cyclePlaylist ="):
