@@ -162,6 +162,14 @@ class ExeFileSelector:
         return [f for f in os.listdir(base_path) if f.endswith('.bat') and "Restore" in f]
 
     def run_script(self, script_name):
+        confirm = messagebox.askyesno(
+            "Confirmation",
+            f"Are you sure you want to run the '{script_name}' script?"
+        )
+        
+        if not confirm:
+            return  # Exit if the user selects "No"
+            
         try:
             # Get the full path to the script
             script_path = os.path.join(os.getcwd(), script_name)
