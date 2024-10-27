@@ -41,7 +41,7 @@ class FilterGamesApp:
 
         # Main container to hold both the tabview and exe selector
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
 
         # Create the frame for the tabs (Filter Games, Advanced Configs, and Playlists)
         self.tabview_frame = ctk.CTkFrame(self.main_frame, corner_radius=10, fg_color="transparent")
@@ -49,7 +49,7 @@ class FilterGamesApp:
 
         # Create the exe selector frame (on the right side)
         self.exe_selector_frame = ctk.CTkFrame(self.main_frame, width=300, corner_radius=10)
-        self.exe_selector_frame.pack(side="right", fill="y", padx=10, pady=10)
+        self.exe_selector_frame.pack(side="right", fill="y", padx=10, pady=(0, 10))  # Adjusted padding
 
         # Create tab view and initialize the tabs for each class
         self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
@@ -72,6 +72,17 @@ class FilterGamesApp:
         
         # Bottom frame for Appearance Mode options
         self.add_appearance_mode_frame()
+    
+    def add_appearance_mode_frame(self):
+        appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+
+        ctk.CTkLabel(appearance_frame, text="Appearance Mode", font=("Arial", 14, "bold")).pack(side="left", padx=(20, 10), pady=10)
+
+        appearance_mode_optionmenu = ctk.CTkOptionMenu(
+            appearance_frame, values=["Dark", "Light", "System"], command=lambda mode: ctk.set_appearance_mode(mode)
+        )
+        appearance_mode_optionmenu.pack(side="right", padx=10, pady=10)
         
     def center_window(self, width, height):
         # Get the screen dimensions
@@ -95,16 +106,6 @@ class FilterGamesApp:
         except Exception as e:
             ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
             
-    def add_appearance_mode_frame(self):
-        appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
-        appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
-
-        ctk.CTkLabel(appearance_frame, text="Appearance Mode", font=("Arial", 14, "bold")).pack(side="left", padx=(20, 10), pady=10)
-
-        appearance_mode_optionmenu = ctk.CTkOptionMenu(
-            appearance_frame, values=["Light", "Dark", "System"], command=lambda mode: ctk.set_appearance_mode(mode)
-        )
-        appearance_mode_optionmenu.pack(side="right", padx=10, pady=10)
 
 class ExeFileSelector:
     def __init__(self, parent_frame):
@@ -783,7 +784,7 @@ class Playlists:
             print(f"An error occurred while reading default playlists: {str(e)}")
             messagebox.showerror("Error", f"An error occurred while reading default playlists: {str(e)}")
             return[]
-                 
+             
     def update_conf_file(self, playlist_list):
         try:
             default_playlists = self.read_default_playlists()
