@@ -109,6 +109,9 @@ class FilterGamesApp:
 
 class ExeFileSelector:
     def __init__(self, parent_frame):
+        # Store a reference to the parent frame
+        self.parent_frame = parent_frame
+        
         # Create a new frame for the .exe radio buttons below the main content
         exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)  # New frame for exe selection
         exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)  # Place below main_content_frame
@@ -121,18 +124,19 @@ class ExeFileSelector:
         if os.path.exists(logo_path):
             
             # Load and create the image (logo)
-            fixed_width = 250  # Set the desired width for the image
-            
+            #fixed_width = 250  # Set the desired width for the image
+            max_height = 150
+
             # Open the image to find its original dimensions
             logo_original = Image.open(logo_path)
-            aspect_ratio = logo_original.height / logo_original.width
-            calculated_height = int(fixed_width * aspect_ratio)  # Calculate height based on the aspect ratio
-        
+            aspect_ratio = logo_original.width / logo_original.height
+            calculated_width = int(max_height * aspect_ratio)
+                
             # Load and create the image (logo)
             logo_image = ctk.CTkImage(
                 light_image=logo_original,
                 dark_image=logo_original,
-                size=(fixed_width, calculated_height)  # Set width and calculated height
+                size=(calculated_width, max_height)  # Set width and calculated height
             )
         
             # Add the logo label to the exe_frame
@@ -157,6 +161,12 @@ class ExeFileSelector:
             rbutton = ctk.CTkRadioButton(scrollable_frame, text=exe, variable=self.exe_var, value=exe)
             rbutton.pack(anchor="w", padx=20, pady=5)
 
+        # Add a switch to control closing the GUI
+        self.close_gui_switch = ctk.CTkSwitch(
+            exe_frame, text="Close GUI After Running", onvalue=True, offvalue=False
+        )
+        self.close_gui_switch.pack(pady=10)
+        
         # Add a button to run the selected exe
         run_exe_button = ctk.CTkButton(exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
         run_exe_button.pack(pady=20)
@@ -280,24 +290,19 @@ class ExeFileSelector:
         return [f for f in os.listdir(base_path) if f.endswith('.exe') and f != current_exe]
 
     def run_selected_exe(self):
-        """Runs the selected executable file."""
-        if getattr(sys, 'frozen', False):
-            # When running as a PyInstaller executable
-            base_path = os.path.dirname(sys.executable)
-        else:
-            # When running as a script
-            base_path = os.path.dirname(os.path.abspath(__file__))
-
-        selected_exe = self.exe_var.get()  # Get the selected exe from the radio buttons
+        selected_exe = self.exe_var.get()
         if selected_exe:
-            exe_path = os.path.join(base_path, selected_exe)  # Use the correct base path
+            exe_path = os.path.join(os.getcwd(), selected_exe)
             try:
                 os.startfile(exe_path)  # This will run the .exe file (Windows only)
-                root.destroy()  # Close the window after running the .exe
-                
+
+                # Close the window based on the switch state
+                if self.close_gui_switch.get():
+                    self.parent_frame.winfo_toplevel().destroy()  # Close the root window if the switch is on
+
                 # Adding a short delay before the script ends to allow for cleanup
                 time.sleep(1)  # Delay for 1 second
-                
+
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to run {selected_exe}: {e}")
         else:
