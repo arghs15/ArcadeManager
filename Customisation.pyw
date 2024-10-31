@@ -13,6 +13,7 @@ import time  # Make sure time is imported
 import ctypes
 import shutil
 import shlex
+import cv2
 
 class FilterGamesApp:
     @staticmethod
@@ -38,10 +39,16 @@ class FilterGamesApp:
 
         # Center the window on the screen
         self.center_window(1200, 800)
+        
+        # Bottom frame for Appearance Mode options
+        ## Moved here to stop other frames from pushing it out of view
+        self.add_appearance_mode_frame()
 
         # Main container to hold both the tabview and exe selector
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+        
+        #self.main_frame.pack_propagate(False)
 
         # Create the frame for the tabs (Filter Games, Advanced Configs, and Playlists)
         self.tabview_frame = ctk.CTkFrame(self.main_frame, corner_radius=10, fg_color="transparent")
@@ -54,6 +61,12 @@ class FilterGamesApp:
         # Create tab view and initialize the tabs for each class
         self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
         self.tabview.pack(expand=True, fill="both")
+        
+        # Check if the zzzSettings folder exists before adding the Themes tab
+        self.zzz_settings_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
+        if self.check_zzz_settings_folder():
+            self.Themes_games_tab = self.tabview.add("Themes")
+            self.Themes_games = Themes(self.Themes_games_tab)
 
         # Advanced Configurations tab
         self.advanced_configs_tab = self.tabview.add("Advanced Configs")
@@ -71,7 +84,14 @@ class FilterGamesApp:
         self.exe_selector = ExeFileSelector(self.exe_selector_frame) 
         
         # Bottom frame for Appearance Mode options
-        self.add_appearance_mode_frame()
+        #self.add_appearance_mode_frame()
+    
+    def check_zzz_settings_folder(self):
+        """Check if the zzzSettings folder exists."""
+        if not os.path.isdir(self.zzz_settings_path):
+            print(f"Warning: zzzSettings folder not found at: {self.zzz_settings_path}")
+            return False
+        return True
     
     def add_appearance_mode_frame(self):
         appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
@@ -122,9 +142,7 @@ class ExeFileSelector:
         # Check if the logo image file exists
         logo_path = 'autochanger/Logo.png'
         if os.path.exists(logo_path):
-            
             # Load and create the image (logo)
-            #fixed_width = 250  # Set the desired width for the image
             max_height = 150
 
             # Open the image to find its original dimensions
@@ -132,18 +150,17 @@ class ExeFileSelector:
             aspect_ratio = logo_original.width / logo_original.height
             calculated_width = int(max_height * aspect_ratio)
                 
-            # Load and create the image (logo)
             logo_image = ctk.CTkImage(
                 light_image=logo_original,
                 dark_image=logo_original,
-                size=(calculated_width, max_height)  # Set width and calculated height
+                size=(calculated_width, max_height)
             )
         
             # Add the logo label to the exe_frame
             logo_label = ctk.CTkLabel(exe_frame, text="", image=logo_image)
-            logo_label.pack(pady=(10, 0))  # Padding to add spacing at the top
+            logo_label.pack(pady=(10, 0))
         else:
-            # use title in its place if not found
+            # Use title in its place if not found
             ctk.CTkLabel(exe_frame, text="Select Executable", font=("Arial", 14, "bold")).pack(padx=10, pady=10)
 
         # Create a scrollable frame inside exe_frame to hold the radio buttons
@@ -154,7 +171,7 @@ class ExeFileSelector:
         self.exe_files = self.find_exe_files()
 
         # Variable to hold the selected exe file
-        self.exe_var = tk.StringVar(value="")  # Default to no selection
+        self.exe_var = tk.StringVar(value="")
 
         # Add a radio button for each .exe file found inside the scrollable frame
         for exe in self.exe_files:
@@ -163,80 +180,110 @@ class ExeFileSelector:
 
         # Add a switch to control closing the GUI
         self.close_gui_switch = ctk.CTkSwitch(
-            exe_frame, text="Close GUI After Running", onvalue=True, offvalue=False
+            exe_frame,
+            text="Close GUI After Running",  # Initial text when the switch is off
+            onvalue=True,
+            offvalue=False,
+            variable=tk.BooleanVar(value=True),  # Set to 'on' by default
+            command=self.update_switch_text  # Call a method to update text when toggled
         )
         self.close_gui_switch.pack(pady=10)
+
+        # Call the update method initially to set the correct label
+        self.update_switch_text()
+
+
         
         # Add a button to run the selected exe
         run_exe_button = ctk.CTkButton(exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
         run_exe_button.pack(pady=20)
         
-        # Call a method to add the batch file buttons frame below this frame
-        self.add_batch_file_buttons(parent_frame)
+        # Call a method to add the batch file dropdown and button frame below this frame
+        self.add_batch_file_dropdown(parent_frame)
 
-    def add_batch_file_buttons(self, parent_frame):
-        # Create a frame for batch file buttons below the exe frame
+    def update_switch_text(self):
+        if self.close_gui_switch.get():
+            # True/default Value - Gui will close on run
+            self.close_gui_switch.configure(text="Exit the GUI after execution")
+        else:
+            # False value - Gui will stay open on run
+            self.close_gui_switch.configure(text="Stay in the GUI after execution")
+
+    
+    def add_batch_file_dropdown(self, parent_frame):
+        # Create a frame for batch file dropdown below the exe frame
         self.batch_file_frame = ctk.CTkFrame(parent_frame, corner_radius=10, fg_color="transparent")
-        self.batch_file_frame.grid(row=2, column=1, sticky="nswe", padx=20, pady=(5, 10))  # Adjust row index
+        self.batch_file_frame.grid(row=2, column=1, sticky="nswe", padx=20, pady=(5, 10))
 
         # Add a title for the reset section
         reset_label = ctk.CTkLabel(self.batch_file_frame, text="Reset Build to Defaults", font=("Arial", 14, "bold"))
-        reset_label.pack(pady=(10, 5))  # Padding to separate from buttons
+        reset_label.pack(pady=(10, 5))
 
-        # Find all batch files in the current directory with "Reset" in their names
+        # Find all batch files in the current directory with "Restore" in their names
         batch_files = self.find_reset_batch_files()
 
-        # Dynamically create a button for each batch file
-        for batch_file in batch_files:
-            button_text = os.path.splitext(batch_file[2:])[0]  # Remove the first two characters from the name
-            
-            # Create a button with the modified name
-            button = ctk.CTkButton(
-                self.batch_file_frame, 
-                text=button_text,
-                command=lambda bf=batch_file: self.run_script(bf), 
-                hover_color="red"
-            )
-            button.pack(pady=10, padx=10, fill='x')  # Fill horizontally for better spacing
+        # Extract clean names for display, but keep original for execution
+        display_names = [os.path.splitext(batch_file)[0].replace("- ", "") for batch_file in batch_files]
+
+        # Variable to hold the selected batch file name
+        self.selected_batch = tk.StringVar(value=display_names[0])  # Set default to the first script found
+
+        # Create a dropdown (combobox) with cleaned names
+        self.dropdown = ctk.CTkComboBox(self.batch_file_frame, values=display_names, variable=self.selected_batch)
+        self.dropdown.pack(padx=10, pady=10, fill='x')
+
+        # Add a button to run the selected batch script
+        run_batch_button = ctk.CTkButton(
+            self.batch_file_frame, text="Run Selected Script", command=self.run_selected_script, hover_color="red"
+        )
+        run_batch_button.pack(pady=10, padx=10, fill='x')
 
     def find_reset_batch_files(self):
-        """Find all .bat files in the current directory that have 'Reset' in their name."""
-        base_path = os.getcwd()  # Get the current working directory
-
-        # Debugging: Print the base path and all files in the directory
-        print(f"Base path: {base_path}")
-        print(f"Files in directory: {os.listdir(base_path)}")
-
-        # Find all .bat files with "Reset" in their name
+        """Find all .bat files in the current directory that have 'Restore' in their name."""
+        base_path = os.getcwd()
         return [f for f in os.listdir(base_path) if f.endswith('.bat') and "Restore" in f]
+
+    def run_selected_script(self):
+        # Get the selected display name and find the corresponding batch file
+        selected_display_name = self.selected_batch.get()
+        batch_files = self.find_reset_batch_files()
+
+        # Find the batch file that matches the display name (without "- ")
+        matching_batch = next(
+            (bf for bf in batch_files if os.path.splitext(bf)[0].replace("- ", "") == selected_display_name), None
+        )
+
+        if matching_batch:
+            self.run_script(matching_batch)
+        else:
+            messagebox.showerror("File Not Found", f"No matching batch file found for '{selected_display_name}'.")
 
     def run_script(self, script_name):
         confirm = messagebox.askyesno(
             "Confirmation",
             f"Are you sure you want to run the '{script_name}' script?"
         )
-        
+
         if not confirm:
             return  # Exit if the user selects "No"
-            
+
         try:
-            # Get the full path to the script
             script_path = os.path.join(os.getcwd(), script_name)
-    
+
             # Check if the script exists
             if not os.path.isfile(script_path):
                 messagebox.showerror("File Not Found", f"The script does not exist at the path: {script_path}")
                 return
-        
-            print(f"Attempting to run script at: {script_path}")  # Debug print statement
+
+            print(f"Attempting to run script at: {script_path}")
 
             # Run the batch file
             completed_process = subprocess.run(
                 f'cmd.exe /c "{script_path}"',
                 shell=True,
-                capture_output=True,  # Capture stdout and stderr
-                text=True,  # Decode to text
-                check=False  # Don't automatically raise an error if the command fails
+                capture_output=True,
+                text=True,
+                check=False
             )
 
             # Check for errors in the execution
@@ -249,8 +296,7 @@ class ExeFileSelector:
                 )
                 messagebox.showerror("Script Execution Error", error_message)
             else:
-                #success_message = f"Script '{script_name}' ran successfully:\n{completed_process.stdout.strip()}"
-                messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has run" )#, success_message)
+                messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has run.")
                 print(f"Script ran successfully:\n{completed_process.stdout.strip()}")
 
         except FileNotFoundError:
@@ -260,33 +306,16 @@ class ExeFileSelector:
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred while running {script_name}: {str(e)}")
 
-            
-    '''def run_script(self, script_name):
-        try:
-            script_path = os.path.join(os.getcwd(), script_name)
-            if os.path.isfile(script_path):
-                subprocess.run(f'cmd.exe /c "{script_path}"', check=True)#check=True,text=True,capture_output=True,
-            else:
-                messagebox.showerror("Error", f"The script does not exist: {script_path}")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to run {script_name}: {str(e)}")'''
-
     def find_exe_files(self):
-        """Finds all .exe files in the current directory."""
         if getattr(sys, 'frozen', False):
-            # When running as a PyInstaller executable
             base_path = os.path.dirname(sys.executable)
-            current_exe = os.path.basename(sys.executable)  # Get the name of the current executable
+            current_exe = os.path.basename(sys.executable)
         else:
-            # When running as a script
             base_path = os.path.dirname(os.path.abspath(__file__))
-            current_exe = None  # No current exe if running as a script
+            current_exe = None
 
-        # Debugging: Print the base path and all files in the directory
         print(f"Base path: {base_path}")
         print(f"Files in directory: {os.listdir(base_path)}")
-
-        # Find and return all .exe files in the directory, excluding the current exe
         return [f for f in os.listdir(base_path) if f.endswith('.exe') and f != current_exe]
 
     def run_selected_exe(self):
@@ -294,19 +323,15 @@ class ExeFileSelector:
         if selected_exe:
             exe_path = os.path.join(os.getcwd(), selected_exe)
             try:
-                os.startfile(exe_path)  # This will run the .exe file (Windows only)
-
-                # Close the window based on the switch state
+                os.startfile(exe_path)
                 if self.close_gui_switch.get():
-                    self.parent_frame.winfo_toplevel().destroy()  # Close the root window if the switch is on
-
-                # Adding a short delay before the script ends to allow for cleanup
-                time.sleep(1)  # Delay for 1 second
-
+                    self.parent_frame.winfo_toplevel().destroy()
+                time.sleep(1)
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to run {selected_exe}: {e}")
         else:
             messagebox.showinfo("No Selection", "Please select an executable.")
+
 
 class FilterGames:
     def __init__(self, parent_tab):
@@ -507,6 +532,7 @@ class Playlists:
         self.check_vars = []
         self.check_buttons = []
         
+        ## Replaced with a function to retrieve a lsit form autochnagers. if one not found it uses the list below ##
         # Read excluded playlists from the configuration file
         self.excluded_playlists = self.read_excluded_playlists()
         '''self.excluded_playlists = [
@@ -573,6 +599,8 @@ class Playlists:
             command=self.reset_playlists
         )
         self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        
+        ## Old reference to when the values were hard coded.
         '''
         self.genres_button = ctk.CTkButton(
             button_frame,
@@ -581,6 +609,7 @@ class Playlists:
         )
         self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
         '''
+        
         self.genres_button = ctk.CTkButton(
             button_frame,
             text="All Genres",
@@ -602,7 +631,7 @@ class Playlists:
         )
         self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
                         
-    # Define toggle functions and other methods as before...
+    # Gets all playlists not included in manufacturer and sort types
     def get_genre_playlists(self):
         return [name for name, _ in self.check_vars 
             if name not in self.sort_type_playlists and name not in self.manufacturer_playlists]
@@ -856,6 +885,250 @@ class Playlists:
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
+class Themes:
+    def __init__(self, parent_tab):
+        self.parent_tab = parent_tab
+        self.base_path = os.getcwd()
+
+        # Folders for themes and images
+        self.theme_folder = os.path.join(self.base_path, "collections", "zzzSettings", "roms")
+        self.image_folder = os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "screenshot")
+
+        # List to hold .bat files and their corresponding images
+        self.themes_list = []
+        self.current_theme_index = 0
+
+        # Create a frame for displaying the image
+        self.display_frame = ctk.CTkFrame(self.parent_tab, fg_color="transparent")
+        self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Create a canvas for displaying the theme image
+        self.image_canvas = tk.Canvas(self.display_frame, width=400, height=300, bg="#2B2B2B", highlightthickness=0, bd=0)
+        self.image_canvas.pack(expand=True, fill="both", padx=10, pady=10)
+        self.image_canvas.bind("<Configure>", self.on_canvas_resize)
+
+        ## Keep for reference ##
+        # Add navigation buttons
+        '''self.previous_button = ctk.CTkButton(self.display_frame, text="Previous", command=self.show_previous_theme)
+        self.previous_button.pack(side="left", padx=10, pady=10)
+
+        self.next_button = ctk.CTkButton(self.display_frame, text="Next", command=self.show_next_theme)
+        self.next_button.pack(side="right", padx=10, pady=10)
+
+        self.apply_button = ctk.CTkButton(self.display_frame, text="Apply Theme", command=self.run_selected_script)
+        self.apply_button.pack(side="bottom", padx=10, pady=10)'''
+
+        ## Keep for reference ##
+        # Create individual buttons inside the frame
+        '''self.previous_button = ctk.CTkButton(self.display_frame, text="Previous", command=self.show_previous_theme)
+        self.previous_button.pack(side="left", padx=10, pady=10, fill="x", expand=True)
+
+        self.apply_button = ctk.CTkButton(self.display_frame, text="Apply Theme", command=self.run_selected_script, fg_color="green")
+        self.apply_button.pack(side="left", padx=10, pady=10, fill="x", expand=True)
+
+        self.next_button = ctk.CTkButton(self.display_frame, text="Next", command=self.show_next_theme)
+        self.next_button.pack(side="left", padx=10, pady=10, fill="x", expand=True)'''
+
+        # Create a frame to act as a segmented button container with the same background color
+        self.button_frame = ctk.CTkFrame(self.display_frame, corner_radius=8)
+        self.button_frame.pack(padx=5, pady=5, fill="x", expand=False)
+
+        # "Previous" button matching the background
+        self.previous_button = ctk.CTkButton(
+            self.button_frame, text="Previous", command=self.show_previous_theme, 
+            border_width=0, corner_radius=0)
+        self.previous_button.grid(row=0, column=0, sticky="ew", padx=(5, 0), pady=5)
+
+        # "Apply Theme" button in green for emphasis
+        self.apply_button = ctk.CTkButton(
+            self.button_frame, text="Apply Theme", command=self.run_selected_script, 
+            fg_color="green", hover_color="darkgreen", border_width=0, corner_radius=0)
+        self.apply_button.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
+
+        # "Next" button matching the background
+        self.next_button = ctk.CTkButton(
+            self.button_frame, text="Next", command=self.show_next_theme, 
+            border_width=0, corner_radius=0)
+        self.next_button.grid(row=0, column=2, sticky="ew", padx=(0, 5), pady=5)
+
+        # Configure grid layout to make buttons fill evenly within the frame
+        self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        # Load the themes (scripts and images)
+        self.load_themes()
+
+    def on_canvas_resize(self, event=None):
+        """Callback to be called when the canvas is resized."""
+        self.show_current_theme()  # Refresh the image on canvas resize
+
+    def load_themes(self):
+        """Load .bat files from the theme folder and their corresponding images."""
+        if not os.path.isdir(self.theme_folder):
+            print(f"Folder does not exist: {self.theme_folder}")
+            return
+
+        # List of supported image extensions
+        image_extensions = ['.png', '.jpg', '.jpeg', '.gif']
+
+        # Clear existing themes_list to avoid duplicate entries
+        self.themes_list = []
+
+        for filename in os.listdir(self.theme_folder):
+            if filename.endswith(".bat"):
+                theme_name = os.path.splitext(filename)[0]
+
+                image_found = False
+                for ext in image_extensions:
+                    image_path = os.path.join(self.image_folder, f"{theme_name}{ext}")
+
+                    if os.path.isfile(image_path):
+                        self.themes_list.append((filename, image_path))
+                        print(f"Loaded theme: {theme_name}, Image path: {image_path}")  # Debugging output
+                        image_found = True
+                        break  # Exit loop once an image is found
+                if not image_found:
+                    print(f"Warning: No image found for theme: {theme_name}")  # Debugging output
+                    self.themes_list.append((filename, None))  # Append with None if no specific image is found
+
+        if not self.themes_list:
+            messagebox.showwarning("Warning", "No themes with matching images found.")
+        else:
+            # Show the first theme after themes are successfully loaded
+            self.current_theme_index = 0
+            self.show_current_theme()
+
+    def show_current_theme(self):
+        """Display the current theme's image on the canvas."""
+        if not self.themes_list:
+            return  # No themes to show
+
+        theme_name, image_path = self.themes_list[self.current_theme_index]
+
+        # Check if the theme-specific image exists
+        if image_path and os.path.isfile(image_path):
+            self.update_image_canvas(image_path)
+        else:
+            # Try to load a default image if available
+            default_image_path = os.path.join(self.image_folder, "default.jpg")
+            if os.path.isfile(default_image_path):
+                self.update_image_canvas(default_image_path)
+            else:
+                # If no default image is available, display the theme title as text
+                print(f"No image found for theme '{theme_name}', displaying title text instead.")
+                self.display_title_text(theme_name)
+
+    def display_title_text(self, title):
+        """Display the title text on the canvas in place of an image."""
+        self.image_canvas.delete("all")  # Clear the canvas
+        self.image_canvas.create_text(
+            self.image_canvas.winfo_width() / 2,  # Center X
+            self.image_canvas.winfo_height() / 2,  # Center Y
+            text=title,
+            font=("Arial", 24),
+            fill="white"
+        )
+
+    def show_previous_theme(self):
+        """Show the previous theme's image."""
+        if not self.themes_list:
+            return
+
+        self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
+        print(f"Moved to previous theme index: {self.current_theme_index}")  # Debugging output
+        self.show_current_theme()
+
+    def show_next_theme(self):
+        """Show the next theme's image."""
+        if not self.themes_list:
+            return
+
+        self.current_theme_index = (self.current_theme_index + 1) % len(self.themes_list)
+        print(f"Moved to next theme index: {self.current_theme_index}")  # Debugging output
+        self.show_current_theme()
+
+    def update_image_canvas(self, image_path):
+        """Update the canvas with the provided image and overlay a logo."""
+        # Open the main theme image
+        main_image = Image.open(image_path)
+
+        # Get the width of the canvas
+        canvas_width = self.image_canvas.winfo_width()
+
+        if canvas_width <= 0:
+            print("Warning: Canvas width is not valid.")
+            return  # Exit if canvas width is not valid
+
+        # Get the original dimensions of the main image
+        original_width, original_height = main_image.size
+
+        if original_width <= 0 or original_height <= 0:
+            print("Warning: Original image dimensions are not valid.")
+            return  # Exit if original dimensions are not valid
+
+        # Calculate the new dimensions for the main image
+        aspect_ratio = original_height / original_width  # Calculate the aspect ratio
+        new_width = canvas_width  # Set new width to canvas width
+        new_height = int(new_width * aspect_ratio)  # Calculate new height
+
+        # Ensure new dimensions are greater than zero
+        if new_height <= 0:
+            print("Warning: New image height is not valid after resizing.")
+            return  # Exit if new height is not valid
+
+        # Resize the main image
+        main_image = main_image.resize((new_width, new_height), Image.Resampling.LANCZOS)  # Updated for Pillow 10+
+
+        # Determine the theme name and construct the logo path
+        theme_name, _ = os.path.splitext(os.path.basename(self.themes_list[self.current_theme_index][0]))
+        logo_path = os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo", f"{theme_name}.png")
+        
+        if os.path.isfile(logo_path):
+            # Load and resize the logo image
+            logo_image = Image.open(logo_path)
+
+            # Resize the logo to be smaller than the main image (e.g., 20% of the main image width)
+            logo_width = int(new_width * 0.2)
+            logo_aspect_ratio = logo_image.size[1] / logo_image.size[0]
+            logo_height = int(logo_width * logo_aspect_ratio)
+            logo_image = logo_image.resize((logo_width, logo_height), Image.Resampling.LANCZOS)
+
+            # Paste the logo onto the main image (e.g., bottom-right corner with padding)
+            position = (new_width - logo_width - 10, new_height - logo_height - 10)  # Adjust padding as needed
+            main_image.paste(logo_image, position, logo_image)  # Use transparency of the logo image if it has an alpha channel
+        else:
+            print(f"Logo not found at: {logo_path}")  # Debugging output
+
+        # Update the PhotoImage with the combined image
+        self.current_image = ImageTk.PhotoImage(main_image)
+
+        # Clear the canvas and display the new image
+        self.image_canvas.delete("all")
+        self.image_canvas.create_image(0, 0, anchor=tk.NW, image=self.current_image)
+
+    def run_selected_script(self):
+        """Run the selected .bat script."""
+        if not self.themes_list:
+            return
+
+        script_filename, _ = self.themes_list[self.current_theme_index]
+        script_path = os.path.join(self.theme_folder, script_filename)
+
+        if not os.path.isfile(script_path):
+            messagebox.showerror("Error", f"Script not found: {script_path}")
+            return
+
+        try:
+            result = subprocess.run(
+                ["cmd.exe", "/c", script_path],
+                check=True,
+                text=True,
+                capture_output=True,
+                cwd=self.theme_folder
+            )
+            # Suppressing the success message due to prior feedback
+        except subprocess.CalledProcessError as cpe:
+            messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n{cpe.output}")
+            
 class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
@@ -887,9 +1160,29 @@ class AdvancedConfigs:
         # Create the tab view in the parent tab
         self.tabview = ctk.CTkTabview(self.parent_tab)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
+        
         # Populate the tabs and scripts dynamically
         self.populate_tabs_and_scripts()
+        
+        ## This works for displaying an external wide screen video. Have commented out for now ##
+        # Add a canvas for displaying video
+        '''self.video_canvas = tk.Canvas(
+            self.parent_tab,
+            width=400,
+            height=300,
+            bg="#2B2B2B",               # Set a black background
+            highlightthickness=0,     # Remove white outline (default highlight thickness)
+            bd=0                      # Set border width to zero
+        )
+        self.video_canvas.pack(side="right", padx=10, pady=10)
+        
+        # Add a Preview button at the bottom of the parent tab
+        self.preview_button = ctk.CTkButton(
+            self.parent_tab,
+            text="Preview Video",
+            command=self.preview_video  # Link to preview video method
+        )
+        self.preview_button.pack(side="bottom", pady=10, padx=10)'''
 
         # Add the Configure button at the bottom of the parent tab
         self.configure_button = ctk.CTkButton(
@@ -898,6 +1191,96 @@ class AdvancedConfigs:
             command=self.run_selected_script
         )
         self.configure_button.pack(side="bottom", pady=10, padx=10)
+    
+    # Video functions are not used atm. Have commented out the preview button for now. Can add back later
+    def preview_video(self):
+        selected_tab = self.tabview.get()
+        selected_index = self.tab_radio_vars[selected_tab].get()
+
+        if selected_index in self.radio_button_script_mapping[selected_tab]:
+            script_name = self.radio_button_script_mapping[selected_tab][selected_index]
+            theme = os.path.splitext(script_name)[0]
+
+            video_path = os.path.join("collections", "settings", f"{theme}.mp4")
+
+            if not os.path.exists(video_path):
+                print(f"Video file for theme '{theme}' not found.")
+                return
+
+            # Stop previous video if any
+            self.stop_video()
+    
+            # Open the video file
+            self.cap = cv2.VideoCapture(video_path)
+            if not self.cap.isOpened():
+                print("Error: Could not open video.")
+                return
+
+            # Get the frame rate of the video
+            fps = self.cap.get(cv2.CAP_PROP_FPS)
+            wait_time = int(1000 / fps)  # Calculate wait time in milliseconds
+
+            # Create a named window for the video
+            cv2.namedWindow("Preview Video", cv2.WND_PROP_FULLSCREEN)
+            cv2.setWindowProperty("Preview Video", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+            # Loop through frames and display them
+            while True:
+                ret, frame = self.cap.read()
+                if not ret:
+                    break  # Exit if the video ends
+
+                # Display the frame in the OpenCV window
+                cv2.imshow("Preview Video", frame)
+
+                # Wait for the calculated time or until a key is pressed; break on 'q' key press
+                if cv2.waitKey(wait_time) & 0xFF == ord('q'):
+                    break
+
+            # Release the video capture and close the window
+            self.cap.release()
+            cv2.destroyAllWindows()
+
+    def stop_video(self):
+        if hasattr(self, 'cap') and self.cap is not None:
+            self.cap.release()
+            self.cap = None
+            self.video_canvas.delete("all")  # Clear the canvas
+
+    def update_video(self):
+        if self.cap is not None and self.cap.isOpened():
+            ret, frame = self.cap.read()
+            if ret:
+                # Get the canvas dimensions
+                canvas_width = self.video_canvas.winfo_width()
+                canvas_height = self.video_canvas.winfo_height()
+                
+                # Get the aspect ratio of the original frame
+                original_height, original_width = frame.shape[:2]
+                aspect_ratio = original_width / original_height
+                
+                 # Calculate new dimensions while maintaining aspect ratio
+                if canvas_width / canvas_height < aspect_ratio:
+                    new_width = canvas_width
+                    new_height = int(canvas_width / aspect_ratio)
+                else:
+                    new_height = canvas_height
+                    new_width = int(canvas_height * aspect_ratio)
+                    # Resize the frame
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+                # Convert the image from OpenCV's BGR format to RGB
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                self.current_frame = ImageTk.PhotoImage(Image.fromarray(frame))
+                
+                # Update the tkinter canvas with the new frame
+                self.video_canvas.create_image(
+                    (canvas_width - new_width) // 2, (canvas_height - new_height) // 2,
+                    anchor=tk.NW, image=self.current_frame
+                )
+
+                # Schedule the next frame update
+                self.video_canvas.after(33, self.update_video)  # Adjust for smoother playback based on your video FPS
 
     def categorize_scripts(self):
         script_categories = {tab: {} for tab in self.tab_keywords}
@@ -986,7 +1369,7 @@ class AdvancedConfigs:
                 #Surpress success because errors are not tru, and confuse users
                 #messagebox.showinfo("Success", f"'{script_to_run}' executed successfully.\nOutput:\n{result.stdout}")
             except subprocess.CalledProcessError as cpe:
-                messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n{e.output}")
+                pass#messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n")
         else:
             messagebox.showwarning("Warning", "No script is mapped to the selected option.")
                          
