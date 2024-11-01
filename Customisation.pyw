@@ -1536,7 +1536,7 @@ class Themes:
             self._show_no_video_message()
 
     def _display_frame(self, frame, force_resize=False):
-        """Display a frame or thumbnail on the canvas"""
+        """Display a frame or thumbnail on the canvas with logo overlay"""
         try:
             # Store the current frame for resize events
             if not force_resize:
@@ -1561,9 +1561,42 @@ class Themes:
             frame = cv2.resize(frame, (new_width, new_height))
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
+            # Convert main frame to PIL Image
+            main_image = Image.fromarray(frame)
+            
+            # Try to load and overlay the logo
+            try:
+                # Get current theme name
+                current_theme = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
+                logo_path = os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo", f"{current_theme}.png")
+                
+                if os.path.exists(logo_path):
+                    # Load and resize logo
+                    logo_img = Image.open(logo_path)
+                    
+                    # Calculate logo size (e.g., 20% of frame width)
+                    logo_max_size = min(new_width, new_height) // 3
+                    logo_w, logo_h = logo_img.size
+                    logo_scale = min(logo_max_size/logo_w, logo_max_size/logo_h)
+                    logo_new_size = (int(logo_w * logo_scale), int(logo_h * logo_scale))
+                    logo_img = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
+                    
+                    # Calculate position (bottom right with padding)
+                    padding = 10  # pixels from edge
+                    pos_x = new_width - logo_new_size[0] - padding
+                    pos_y = new_height - logo_new_size[1] - padding
+                    
+                    # Paste logo onto main image
+                    if logo_img.mode == 'RGBA':
+                        main_image.paste(logo_img, (pos_x, pos_y), logo_img)
+                    else:
+                        main_image.paste(logo_img, (pos_x, pos_y))
+            except Exception as e:
+                print(f"Error loading or applying logo: {e}")
+                # Continue without logo if there's an error
+            
             # Convert to PhotoImage
-            image = Image.fromarray(frame)
-            photo = ImageTk.PhotoImage(image=image)
+            photo = ImageTk.PhotoImage(image=main_image)
             
             # Clear canvas
             self.video_canvas.delete("all")
