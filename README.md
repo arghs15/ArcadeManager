@@ -14,4 +14,4 @@ Gui for filtering games, applying advanced configs, and themes
 4. Once ready, run the following command from **CMD** from the root of the build:
 
 ```bash
-pyinstaller --onefile --windowed --add-data "meta\\hyperlist\\MAMEx.csv;meta\\hyperlist" --icon=Potion.ico "Customisation.pyw"
+pyinstaller --onefile --windowed --add-data "meta\\hyperlist\\MAMEx.csv;meta\\hyperlist" --add-data "Logo.png;." --icon=Potion.ico "Customisation.pyw"
