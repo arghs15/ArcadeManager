@@ -135,42 +135,44 @@ class ExeFileSelector:
         self.parent_frame = parent_frame
         
         # Create a new frame for the .exe radio buttons below the main content
-        exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)  # New frame for exe selection
-        exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)  # Place below main_content_frame
+        exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)
+        exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)
         
         parent_frame.grid_columnconfigure(1, weight=1)
         parent_frame.grid_rowconfigure(1, weight=1)
         
-        # Determine the path for the logo in the current directory
+        # Determine the path for the logo
         logo_path = 'autochanger/Logo.png'
-
-        # Path to the built-in logo that will be packaged with the executable
-        default_logo_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'Logo.png')  # Adjust path as needed
-
-        # Check if the logo image file exists in the autochanger folder
-        if os.path.exists(logo_path):
-            logo_image_path = logo_path
-        else:
-            logo_image_path = default_logo_path  # Use the built-in logo if the file does not exist
-
-        # Load and create the image (logo)
-        max_height = 150
+        default_logo_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'Logo.png')
+        logo_image_path = logo_path if os.path.exists(logo_path) else default_logo_path
 
         try:
-            # Open the logo image to find its original dimensions
-            logo_original = Image.open(logo_image_path)  # Use logo_image_path here
-            aspect_ratio = logo_original.width / logo_original.height
-            calculated_width = int(max_height * aspect_ratio)
-
+            # Load the original image
+            logo_original = Image.open(logo_image_path)
+            
+            # Set maximum dimensions
+            MAX_WIDTH = 300  # Maximum width in pixels
+            MAX_HEIGHT = 150  # Maximum height in pixels
+            
+            # Calculate scaled dimensions while maintaining aspect ratio
+            width_ratio = MAX_WIDTH / logo_original.width
+            height_ratio = MAX_HEIGHT / logo_original.height
+            scale_ratio = min(width_ratio, height_ratio)
+            
+            new_width = int(logo_original.width * scale_ratio)
+            new_height = int(logo_original.height * scale_ratio)
+            
+            # Create the CTkImage with the calculated dimensions
             logo_image = ctk.CTkImage(
                 light_image=logo_original,
                 dark_image=logo_original,
-                size=(calculated_width, max_height)
+                size=(new_width, new_height)
             )
-
+            
             # Add the logo label to the exe_frame
             logo_label = ctk.CTkLabel(exe_frame, text="", image=logo_image)
             logo_label.pack(pady=(10, 0))
+            
         except Exception as e:
             # Fallback in case loading the image fails
             title_label = ctk.CTkLabel(exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
@@ -180,13 +182,13 @@ class ExeFileSelector:
         # Create a scrollable frame inside exe_frame to hold the radio buttons
         scrollable_frame = ctk.CTkScrollableFrame(exe_frame, width=400, height=200, corner_radius=10)
         scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
+        
         # Find all .exe files in the directory
         self.exe_files = self.find_exe_files()
-
+        
         # Variable to hold the selected exe file
         self.exe_var = tk.StringVar(value="")
-
+        
         # Add a radio button for each .exe file found inside the scrollable frame
         for exe in self.exe_files:
             rbutton = ctk.CTkRadioButton(scrollable_frame, text=exe, variable=self.exe_var, value=exe)
@@ -195,18 +197,16 @@ class ExeFileSelector:
         # Add a switch to control closing the GUI
         self.close_gui_switch = ctk.CTkSwitch(
             exe_frame,
-            text="Close GUI After Running",  # Initial text when the switch is off
+            text="Close GUI After Running",
             onvalue=True,
             offvalue=False,
-            variable=tk.BooleanVar(value=True),  # Set to 'on' by default
-            command=self.update_switch_text  # Call a method to update text when toggled
+            variable=tk.BooleanVar(value=True),
+            command=self.update_switch_text
         )
         self.close_gui_switch.pack(pady=10)
-
-        # Call the update method initially to set the correct label
+        
+        # Update switch text initially
         self.update_switch_text()
-
-
         
         # Add a button to run the selected exe
         run_exe_button = ctk.CTkButton(exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
