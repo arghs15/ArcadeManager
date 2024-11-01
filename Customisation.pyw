@@ -1335,26 +1335,37 @@ class Themes:
             '''
 
 class ThemeViewer:
-    def __init__(self, video_path):
+    def __init__(self, video_path=None, image_path=None):
         self.video_path = video_path
+        self.image_path = image_path
         self.thumbnail = None
         self.video_cap = None
         self.is_playing = False
         self.lock = Lock()
         
     def extract_thumbnail(self):
-        """Extract thumbnail from video file"""
-        try:
-            cap = cv2.VideoCapture(self.video_path)
-            ret, frame = cap.read()
-            cap.release()
-            
-            if ret:
-                return frame
-            return None
-        except Exception as e:
-            print(f"Error extracting thumbnail: {e}")
-            return None
+        """Extract thumbnail from video file or load PNG"""
+        if self.video_path:
+            try:
+                cap = cv2.VideoCapture(self.video_path)
+                ret, frame = cap.read()
+                cap.release()
+                
+                if ret:
+                    return frame
+            except Exception as e:
+                print(f"Error extracting video thumbnail: {e}")
+                
+        if self.image_path:
+            try:
+                # Read PNG file directly using cv2
+                image = cv2.imread(self.image_path)
+                if image is not None:
+                    return image
+            except Exception as e:
+                print(f"Error loading PNG: {e}")
+                
+        return None
 
     def start_video(self):
         """Start video playback"""
@@ -1386,6 +1397,7 @@ class ThemeViewer:
 
 class Themes:
     def __init__(self, parent_tab):
+        print("Initializing Themes...")  # Debug print
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         
@@ -1401,8 +1413,161 @@ class Themes:
         self.thumbnail_cache = {}
         
         self._setup_ui()
-        self.parent_tab.after(100, self.load_themes)
+        # Schedule theme loading after UI is fully initialized
+        self.parent_tab.after(100, self.delayed_load_themes)
             
+    def delayed_load_themes(self):
+        """Load themes after ensuring UI is ready"""
+        print("Loading themes...")  # Debug print
+        self.load_themes()
+        # Schedule initial theme display
+        self.parent_tab.after(100, self.force_initial_display)
+
+    def force_initial_display(self):
+        """Force the initial theme display"""
+        print("Forcing initial display...")  # Debug print
+        if self.themes_list:
+            self.parent_tab.update_idletasks()
+            self.show_initial_theme()
+
+    def show_initial_theme(self):
+        """Special handling for the first theme display"""
+        print("Showing initial theme...")  # Debug print
+        if not self.themes_list:
+            return
+
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Initialize viewer
+        self.current_viewer = ThemeViewer(video_path, png_path)
+        self.play_button.configure(state="normal" if video_path else "disabled")
+
+        # Force immediate thumbnail extraction and display
+        thumbnail = self.current_viewer.extract_thumbnail()
+        if thumbnail is not None:
+            print("Thumbnail extracted, displaying...")  # Debug print
+            cache_key = video_path or png_path
+            if cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail
+            
+            # Force canvas update and display
+            self.parent_tab.update_idletasks()
+            self._display_frame(thumbnail)
+        else:
+            print("No thumbnail available...")  # Debug print
+            self._show_no_video_message()
+
+    def load_themes(self):
+        """Load themes and their video/image paths"""
+        if not os.path.isdir(self.theme_folder):
+            messagebox.showerror("Error", f"Theme folder not found: {self.theme_folder}")
+            return
+
+        self.themes_list = []
+        
+        for filename in os.listdir(self.theme_folder):
+            if filename.endswith(".bat"):
+                theme_name = os.path.splitext(filename)[0]
+                video_path = os.path.join(self.video_folder, f"{theme_name}.mp4")
+                png_path = os.path.join(self.video_folder, f"{theme_name}.png")
+                
+                if os.path.isfile(video_path):
+                    self.themes_list.append((filename, video_path, png_path if os.path.isfile(png_path) else None))
+                elif os.path.isfile(png_path):
+                    self.themes_list.append((filename, None, png_path))
+                else:
+                    self.themes_list.append((filename, None, None))
+
+    def show_current_theme(self):
+        """Display the current theme's thumbnail"""
+        print("Showing current theme...")  # Debug print
+        if not self.themes_list:
+            return
+
+        # Stop any playing video
+        if self.current_viewer and self.current_viewer.is_playing:
+            self.current_viewer.stop_video()
+            self.play_button.configure(text="Play Video")
+
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Create viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+        self.play_button.configure(state="normal" if video_path else "disabled")
+        
+        # Force immediate thumbnail display
+        self.show_thumbnail()
+
+    def show_thumbnail(self):
+        """Display the current theme's thumbnail"""
+        if not self.current_viewer:
+            self._show_no_video_message()
+            return
+            
+        # Use cached thumbnail if available
+        cache_key = self.current_viewer.video_path or self.current_viewer.image_path
+        if cache_key and cache_key in self.thumbnail_cache:
+            thumbnail = self.thumbnail_cache[cache_key]
+        else:
+            thumbnail = self.current_viewer.extract_thumbnail()
+            if thumbnail is not None and cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail
+        
+        if thumbnail is not None:
+            self.parent_tab.update_idletasks()
+            self._display_frame(thumbnail)
+        else:
+            self._show_no_video_message()
+
+    def _display_frame(self, frame):
+        """Display a frame or thumbnail on the canvas"""
+        try:
+            print("Displaying frame...")  # Debug print
+            # Get current display size
+            canvas_width = self.video_canvas.winfo_width()
+            canvas_height = self.video_canvas.winfo_height()
+            
+            if canvas_width < 1 or canvas_height < 1:
+                canvas_width, canvas_height = self.default_size
+                print(f"Using default size: {self.default_size}")  # Debug print
+            else:
+                print(f"Canvas size: {canvas_width}x{canvas_height}")  # Debug print
+            
+            # Get frame dimensions
+            height, width = frame.shape[:2]
+            print(f"Frame size: {width}x{height}")  # Debug print
+            
+            # Calculate scaling
+            scale = min(canvas_width/width, canvas_height/height)
+            new_width = max(1, int(width * scale))
+            new_height = max(1, int(height * scale))
+            print(f"Scaled size: {new_width}x{new_height}")  # Debug print
+            
+            # Resize frame
+            frame = cv2.resize(frame, (new_width, new_height))
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # Convert to PhotoImage
+            image = Image.fromarray(frame)
+            photo = ImageTk.PhotoImage(image=image)
+            
+            # Clear canvas and display new frame
+            self.video_canvas.delete("all")
+            self.video_canvas.create_image(
+                canvas_width//2, canvas_height//2,
+                image=photo, anchor="center"
+            )
+            self.video_canvas.image = photo
+            print("Frame displayed successfully")  # Debug print
+            
+        except Exception as e:
+            print(f"Error displaying frame: {e}")
+            self._show_no_video_message()
+
     def _setup_ui(self):
         """Initialize and configure UI components"""
         # Main display frame
@@ -1484,77 +1649,19 @@ class Themes:
             self.play_button.configure(text="Play Video")
             self.show_thumbnail()
 
-    def show_thumbnail(self):
-        """Display the current theme's thumbnail"""
-        if not self.current_viewer:
-            return
-            
-        # Use cached thumbnail if available
-        if self.current_viewer.video_path in self.thumbnail_cache:
-            thumbnail = self.thumbnail_cache[self.current_viewer.video_path]
-        else:
-            thumbnail = self.current_viewer.extract_thumbnail()
-            if thumbnail is not None:
-                self.thumbnail_cache[self.current_viewer.video_path] = thumbnail
-        
-        if thumbnail is not None:
-            self._display_frame(thumbnail)
-        else:
-            self._show_no_video_message()
-
-    def _display_frame(self, frame):
-        """Display a frame or thumbnail on the canvas"""
-        try:
-            # Get current display size
-            canvas_width = self.video_canvas.winfo_width()
-            canvas_height = self.video_canvas.winfo_height()
-            
-            if canvas_width < 1 or canvas_height < 1:
-                canvas_width, canvas_height = self.default_size
-            
-            # Get frame dimensions
-            height, width = frame.shape[:2]
-            
-            # Calculate scaling
-            scale = min(canvas_width/width, canvas_height/height)
-            new_width = max(1, int(width * scale))
-            new_height = max(1, int(height * scale))
-            
-            # Resize frame
-            frame = cv2.resize(frame, (new_width, new_height))
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Convert to PhotoImage
-            image = Image.fromarray(frame)
-            photo = ImageTk.PhotoImage(image=image)
-            
-            # Clear canvas and display new frame
-            self.video_canvas.delete("all")
-            self.video_canvas.create_image(
-                canvas_width//2, canvas_height//2,
-                image=photo, anchor="center"
-            )
-            self.video_canvas.image = photo
-            
-        except Exception as e:
-            print(f"Error displaying frame: {e}")
-
-    def show_current_theme(self):
-        """Display the current theme's thumbnail"""
+    def initialize_first_theme(self):
+        """Initialize and display the first theme"""
         if not self.themes_list:
             return
-
-        # Stop any playing video
-        if self.current_viewer and self.current_viewer.is_playing:
-            self.current_viewer.stop_video()
-            self.play_button.configure(text="Play Video")
-
+            
         theme_name, video_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
         self.theme_label.configure(text=f"Theme: {display_name}")
 
         if video_path and os.path.isfile(video_path):
             self.current_viewer = ThemeViewer(video_path)
+            # Force canvas update before showing thumbnail
+            self.video_canvas.update()
             self.show_thumbnail()
         else:
             self.current_viewer = None
@@ -1595,35 +1702,12 @@ class Themes:
             self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
             self.show_current_theme()
 
-    def load_themes(self):
-        """Load themes and their video paths"""
-        if not os.path.isdir(self.theme_folder):
-            messagebox.showerror("Error", f"Theme folder not found: {self.theme_folder}")
-            return
-
-        self.themes_list = []
-        
-        for filename in os.listdir(self.theme_folder):
-            if filename.endswith(".bat"):
-                theme_name = os.path.splitext(filename)[0]
-                video_path = os.path.join(self.video_folder, f"{theme_name}.mp4")
-                
-                if os.path.isfile(video_path):
-                    self.themes_list.append((filename, video_path))
-                else:
-                    self.themes_list.append((filename, None))
-        
-        if self.themes_list:
-            self.show_current_theme()
-        else:
-            messagebox.showwarning("Warning", "No themes found.")
-
     def run_selected_script(self):
         """Execute the selected theme script"""
         if not self.themes_list:
             return
 
-        script_filename, _ = self.themes_list[self.current_theme_index]
+        script_filename, _, _ = self.themes_list[self.current_theme_index]
         script_path = os.path.join(self.theme_folder, script_filename)
 
         if not os.path.isfile(script_path):
@@ -1631,16 +1715,41 @@ class Themes:
             return
 
         try:
-            result = subprocess.run(
-                ["cmd.exe", "/c", script_path],
+            # Print for debugging
+            print(f"Executing script: {script_path}")
+            print(f"Working directory: {self.theme_folder}")
+
+            # Create a startupinfo object to hide the command window
+            startupinfo = None
+            if hasattr(subprocess, 'STARTUPINFO'):
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+            # Run the batch file
+            process = subprocess.run(
+                [script_path],
                 check=True,
+                shell=True,
                 text=True,
                 capture_output=True,
-                cwd=self.theme_folder
+                cwd=self.theme_folder,
+                startupinfo=startupinfo
             )
-            messagebox.showinfo("Success", "Theme applied successfully!")
+
+            if process.returncode == 0:
+                messagebox.showinfo("Success", "Theme applied successfully!")
+                print("Script output:", process.stdout)
+            else:
+                raise subprocess.CalledProcessError(process.returncode, script_path, process.stdout, process.stderr)
+
         except subprocess.CalledProcessError as e:
-            messagebox.showerror("Error", f"Failed to apply theme:\n{e.output}")
+            error_message = f"Error output: {e.stderr}\nStandard output: {e.stdout}" if hasattr(e, 'stderr') else str(e)
+            messagebox.showerror("Error", f"Failed to apply theme:\n{error_message}")
+            print(f"Error executing script: {error_message}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred:\n{str(e)}")
+            print(f"Unexpected error: {str(e)}")
             
 class AdvancedConfigs:
     def __init__(self, parent_tab):
