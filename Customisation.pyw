@@ -583,6 +583,12 @@ class Playlists:
         self.sort_types_switch.select()  # Default to 'on'
         self.sort_types_switch.pack(side="left", padx=5, pady=5)
         '''
+        # Initialize the toggle state dictionary for each button
+        self.toggle_state = {
+            "genres": False,       # False means unselected, True means selected
+            "manufacturer": False,
+            "sort_type": False
+        }
         
         # Create a frame for the scrollable checkbox area below the switches
         self.scrollable_checklist = ctk.CTkScrollableFrame(self.main_frame, width=400, height=400)
@@ -624,24 +630,25 @@ class Playlists:
         self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
         '''
         
+        # Set up buttons with modified commands
         self.genres_button = ctk.CTkButton(
             button_frame,
             text="All Genres",
-            command=lambda: self.activate_special_playlist(",".join(self.get_genre_playlists()))
+            command=lambda: self.activate_special_playlist("genres", self.get_genre_playlists())
         )
         self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
         
         self.manufacturer_button = ctk.CTkButton(
             button_frame,
             text="All Manufacturer",
-            command=lambda: self.activate_special_playlist(",".join(self.manufacturer_playlists))
+            command=lambda: self.activate_special_playlist("manufacturer", self.manufacturer_playlists)
         )
         self.manufacturer_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
         self.sort_type_button = ctk.CTkButton(
             button_frame,
             text="All Sort Types",
-            command=lambda: self.activate_special_playlist(",".join(self.sort_type_playlists))
+            command=lambda: self.activate_special_playlist("sort_type", self.sort_type_playlists)
         )
         self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
                         
@@ -795,11 +802,16 @@ class Playlists:
         selected_playlists = [name for name, var in self.check_vars if var.get()]
         self.update_conf_file(selected_playlists)
     
-    def activate_special_playlist(self, playlist_type):
-        playlists_to_check = [playlist.strip() for playlist in playlist_type.split(",")]
+    def activate_special_playlist(self, button_type, playlist_type):
+        # Check the toggle state to determine if we select or unselect
+        current_state = self.toggle_state[button_type]
+        
         for name, var in self.check_vars:
-            if name in playlists_to_check:
-                var.set(not var.get())  # Toggle the checkbox state
+            if name in playlist_type:
+                var.set(not current_state)  # Set to True if unselected, False if already selected
+
+        # Toggle the button's state for next click
+        self.toggle_state[button_type] = not current_state
                
     def reset_playlists(self):
         """Reset the settings by copying 'settings5_7x.conf' to 'settings5_7.conf'."""
@@ -1411,6 +1423,7 @@ class Themes:
         self.current_viewer = None
         self.default_size = (640, 480)
         self.thumbnail_cache = {}
+        self.current_frame = None  # Store current frame for resize events
         
         self._setup_ui()
         # Schedule theme loading after UI is fully initialized
@@ -1511,41 +1524,38 @@ class Themes:
         # Use cached thumbnail if available
         cache_key = self.current_viewer.video_path or self.current_viewer.image_path
         if cache_key and cache_key in self.thumbnail_cache:
-            thumbnail = self.thumbnail_cache[cache_key]
+            thumbnail = self.thumbnail_cache[cache_key].copy()  # Create a copy from cache
         else:
             thumbnail = self.current_viewer.extract_thumbnail()
             if thumbnail is not None and cache_key:
-                self.thumbnail_cache[cache_key] = thumbnail
+                self.thumbnail_cache[cache_key] = thumbnail.copy()
         
         if thumbnail is not None:
-            self.parent_tab.update_idletasks()
             self._display_frame(thumbnail)
         else:
             self._show_no_video_message()
 
-    def _display_frame(self, frame):
+    def _display_frame(self, frame, force_resize=False):
         """Display a frame or thumbnail on the canvas"""
         try:
-            print("Displaying frame...")  # Debug print
+            # Store the current frame for resize events
+            if not force_resize:
+                self.current_frame = frame.copy()
+            
             # Get current display size
             canvas_width = self.video_canvas.winfo_width()
             canvas_height = self.video_canvas.winfo_height()
             
             if canvas_width < 1 or canvas_height < 1:
                 canvas_width, canvas_height = self.default_size
-                print(f"Using default size: {self.default_size}")  # Debug print
-            else:
-                print(f"Canvas size: {canvas_width}x{canvas_height}")  # Debug print
             
             # Get frame dimensions
             height, width = frame.shape[:2]
-            print(f"Frame size: {width}x{height}")  # Debug print
             
-            # Calculate scaling
+            # Calculate scaling while maintaining aspect ratio
             scale = min(canvas_width/width, canvas_height/height)
             new_width = max(1, int(width * scale))
             new_height = max(1, int(height * scale))
-            print(f"Scaled size: {new_width}x{new_height}")  # Debug print
             
             # Resize frame
             frame = cv2.resize(frame, (new_width, new_height))
@@ -1555,14 +1565,20 @@ class Themes:
             image = Image.fromarray(frame)
             photo = ImageTk.PhotoImage(image=image)
             
-            # Clear canvas and display new frame
+            # Clear canvas
             self.video_canvas.delete("all")
+            
+            # Calculate centered position
+            x = canvas_width // 2
+            y = canvas_height // 2
+            
+            # Display image centered
             self.video_canvas.create_image(
-                canvas_width//2, canvas_height//2,
-                image=photo, anchor="center"
+                x, y,
+                image=photo,
+                anchor="center"
             )
             self.video_canvas.image = photo
-            print("Frame displayed successfully")  # Debug print
             
         except Exception as e:
             print(f"Error displaying frame: {e}")
@@ -1584,6 +1600,9 @@ class Themes:
             highlightthickness=0
         )
         self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        # Bind resize event
+        self.video_canvas.bind('<Configure>', self.handle_resize)
         
         # Theme name and status
         self.status_frame = ctk.CTkFrame(self.display_frame)
@@ -1632,6 +1651,11 @@ class Themes:
                 corner_radius=0
             )
             btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
+
+    def handle_resize(self, event=None):
+        """Handle window resize events"""
+        if hasattr(self, 'current_frame') and self.current_frame is not None:
+            self._display_frame(self.current_frame, force_resize=True)
 
     def toggle_video(self):
         """Toggle video playback"""
