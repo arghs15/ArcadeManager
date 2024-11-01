@@ -1,5 +1,5 @@
 DONE - fix first Thumbnail not showing
-- add logo to bottom right of thumbnail, and remove title
+IN-PROGRESS add logo to bottom right of thumbnail, and remove title
 - move play video button
 - make sure all warning suppressed
 - edit filter games screen. break tabs up to fill area

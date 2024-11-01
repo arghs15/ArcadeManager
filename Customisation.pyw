@@ -541,7 +541,9 @@ class Playlists:
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
-        self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", "settings5_7.conf")
+        # Replace the hardcoded settings file with the dynamic one
+        settings_file = self.read_settings_file_name()
+        self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", settings_file)
         
         self.check_vars = []
         self.check_buttons = []
@@ -611,12 +613,14 @@ class Playlists:
         )
         self.create_playlist_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
 
+        # Create reset button with disabled state by default
         self.reset_button = ctk.CTkButton(
             button_frame,
             text="Reset Playlists",
             fg_color="#D32F2F",
             hover_color="#C62828",
-            command=self.reset_playlists
+            command=self.reset_playlists,
+            state="disabled"  # Start disabled
         )
         self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
         
@@ -651,6 +655,9 @@ class Playlists:
             command=lambda: self.activate_special_playlist("sort_type", self.sort_type_playlists)
         )
         self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+
+        # Check if backup file exists and enable/disable button accordingly
+        self.update_reset_button_state()
                         
     # Gets all playlists not included in manufacturer and sort types
     def get_genre_playlists(self):
@@ -812,41 +819,85 @@ class Playlists:
 
         # Toggle the button's state for next click
         self.toggle_state[button_type] = not current_state
-               
-    def reset_playlists(self):
-        """Reset the settings by copying 'settings5_7x.conf' to 'settings5_7.conf'."""
-        # Path to the backup configuration file
-        backup_conf_path = os.path.join(self.base_path, "autochanger", "settings5_7x.conf")
 
+    def read_settings_file_name(self):
         try:
+            with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
+                for line in file:
+                    line = line.strip()
+                    if line.startswith("settingsFile ="):
+                        settings_value = line.split("=", 1)[1].strip()
+                        # Only use the custom value if it's not empty
+                        if settings_value:
+                            return f"settings{settings_value}.conf"
+            # If no settings line found or empty value, use default
+            return "settings5_7.conf"
+        except FileNotFoundError:
+            return "settings5_7.conf"  # Default if file not found
+        except Exception as e:
+            print(f"An error occurred while reading settings file name: {str(e)}")
+            return "settings5_7.conf"  # Default if any error occurs
+               
+    def update_reset_button_state(self):
+        """Check if backup settings file exists and update reset button state"""
+        try:
+            # Get current settings filename
+            current_settings = self.read_settings_file_name()
+            # Create backup filename
+            backup_file = current_settings.replace(".conf", "x.conf")
+            # Full path to backup file
+            backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
+            
+            # Enable button if backup exists, disable if it doesn't
+            if os.path.exists(backup_conf_path):
+                self.reset_button.configure(state="normal")
+            else:
+                self.reset_button.configure(state="disabled")
+        except Exception as e:
+            print(f"Error checking backup file: {str(e)}")
+            self.reset_button.configure(state="disabled")
+
+    def reset_playlists(self):
+        """Reset the settings by copying the backup settings file (with 'x' suffix) to the current settings file."""
+        try:
+            # Get the current settings filename being used (e.g., "settings5_2.conf" or "settings5_7.conf")
+            current_settings = self.read_settings_file_name()
+            
+            # Create the backup filename by adding 'x' (e.g., "settings5_2x.conf" or "settings5_7x.conf")
+            backup_file = current_settings.replace(".conf", "x.conf")
+            
+            # Path to the backup configuration file
+            backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
+
             # Check if the backup file exists
             if os.path.exists(backup_conf_path):
-                # Copy the backup file to replace the original configuration file
+                # Copy the backup file to replace the current configuration file
                 shutil.copy(backup_conf_path, self.autochanger_conf_path)
-                messagebox.showinfo("Success", "Playlists have been reset to default.")
+                messagebox.showinfo("Success", f"Playlists have been reset using {backup_file}")
             else:
-                messagebox.showerror("Error", "Backup configuration file 'settings5_7x.conf' not found.")
+                messagebox.showerror("Error", f"Backup configuration file '{backup_file}' not found.")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred during reset: {str(e)}")
     
     def read_default_playlists(self):
         try:
             with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
+                found_line = False
                 for line in file:
                     line = line.strip()
                     if line.startswith("cyclePlaylist ="):
+                        found_line = True
                         default_playlists = [item.strip() for item in line.split("=", 1)[1].split(",") if item.strip()]
                         return default_playlists
-            return ["arcader", "consoles", "favorites", "lastplayed"]
-        # surpressing the error, as it's not really an error - we use hardcoded values if not found
+                # Only return defaults if line wasn't found at all
+                if not found_line:
+                    return ["arcader", "consoles", "favorites", "lastplayed"]  # Default if line not found
+                return []  # Empty list if line was found but empty
         except FileNotFoundError:
-            return ["arcader", "consoles", "favorites", "lastplayed"]
-            #messagebox.showerror("Error", "Default playlists file not found.")
-            #return []
+            return ["arcader", "consoles", "favorites", "lastplayed"]  # Default if file not found
         except Exception as e:
             print(f"An error occurred while reading default playlists: {str(e)}")
-            messagebox.showerror("Error", f"An error occurred while reading default playlists: {str(e)}")
-            return[]
+            return []
     
     def read_excluded_playlists(self):
         try:
@@ -872,12 +923,7 @@ class Playlists:
     def update_conf_file(self, playlist_list):
         try:
             default_playlists = self.read_default_playlists()
-            if not default_playlists:
-                default_playlists = ["arcades, lastplayed"]  # Fallback if reading file fails
             
-            # The main playlist for firstPlaylist should only be the first entry from default_playlists
-            main_default_playlist = default_playlists[0]
-                
             with open(self.autochanger_conf_path, 'r') as file:
                 lines = file.readlines()
 
@@ -885,24 +931,37 @@ class Playlists:
             first_playlist_found = False
 
             updated_lines = []
-            first_selected_playlist = playlist_list[0] if playlist_list else default_playlists[0]
+            first_selected_playlist = playlist_list[0] if playlist_list else ""
 
             for line in lines:
                 if line.startswith("cyclePlaylist ="):
-                    new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                    if default_playlists:
+                        new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                    else:
+                        new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
                     updated_lines.append(new_line)
                     cycle_playlist_found = True
                 elif line.startswith("firstPlaylist ="):
-                    new_line = f"firstPlaylist = {main_default_playlist}\n"
+                    if default_playlists:
+                        main_default_playlist = default_playlists[0]
+                        new_line = f"firstPlaylist = {main_default_playlist}\n"
+                    else:
+                        new_line = f"firstPlaylist = {first_selected_playlist}\n"
                     updated_lines.append(new_line)
                     first_playlist_found = True
                 else:
                     updated_lines.append(line)
 
             if not cycle_playlist_found:
-                updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
+                if default_playlists:
+                    updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
+                else:
+                    updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
             if not first_playlist_found:
-                updated_lines.append(f"firstPlaylist = {first_selected_playlist}, {default_playlists[0]}\n")
+                if default_playlists:
+                    updated_lines.append(f"firstPlaylist = {default_playlists[0]}\n")
+                else:
+                    updated_lines.append(f"firstPlaylist = {first_selected_playlist}\n")
 
             with open(self.autochanger_conf_path, 'w') as file:
                 file.writelines(updated_lines)
