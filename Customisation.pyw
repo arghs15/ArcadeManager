@@ -768,35 +768,28 @@ class Playlists:
     def populate_checkboxes(self):
         """Populates the initial checkboxes with manufacturer playlists at the end."""
         try:
-            all_playlists = []  # To store all found playlists
-            manufacturer_playlists = []  # To store only manufacturer playlists
-            sort_type_playlists = []  # To store only sort type playlists
+            all_playlists = []
+            manufacturer_playlists = []
+            sort_type_playlists = []
 
-            # Debugging: Print the path we're checking
-            #print("Checking playlists in:", self.playlists_path)
-            
-            # Debugging: Print the sort type playlists to check if they're defined
-            #print("Sort Type Playlists:", self.sort_type_playlists)
-        
-            # Iterate through the files in the playlists directory
             for playlist_file in os.listdir(self.playlists_path):
                 playlist_name, ext = os.path.splitext(playlist_file)
+                # Normalize the playlist name for comparison
+                normalized_name = playlist_name.lower().strip()
+                # Normalize the excluded playlists for comparison
+                normalized_excluded = [excluded.lower().strip() for excluded in self.excluded_playlists]
+                
                 # Check if it's a .txt file and not excluded
-                if ext == ".txt" and playlist_name.lower() not in self.excluded_playlists:
-                    all_playlists.append(playlist_name)  # Add to all_playlists
+                if ext == ".txt" and normalized_name not in normalized_excluded:
+                    all_playlists.append(playlist_name)
                     
                     # Check if it's a manufacturer playlist
-                    if playlist_name.lower() in [m.lower() for m in self.manufacturer_playlists]:
-                        manufacturer_playlists.append(playlist_name)  # Separate manufacturer playlists
+                    if normalized_name in [m.lower() for m in self.manufacturer_playlists]:
+                        manufacturer_playlists.append(playlist_name)
                         
-                        # Check if it's a sort type playlist
-                    if playlist_name.lower() in [s.lower() for s in self.sort_type_playlists]:
-                        sort_type_playlists.append(playlist_name)  # Separate sort type playlists
-            
-            # Debugging: Print found playlists
-            print("Found Playlists:", all_playlists)
-            print("Manufacturer Playlists:", manufacturer_playlists)
-            print("Sort Type Playlists:", sort_type_playlists)
+                    # Check if it's a sort type playlist
+                    if normalized_name in [s.lower() for s in self.sort_type_playlists]:
+                        sort_type_playlists.append(playlist_name)
             
             # Remove manufacturer playlists from all_playlists
             for manufacturer_playlist in manufacturer_playlists:
@@ -808,14 +801,12 @@ class Playlists:
                 if sort_playlist in all_playlists:
                     all_playlists.remove(sort_playlist)
                 
-            # Append manufacturer playlists to the end
-            all_playlists.extend(manufacturer_playlists)
+            # Sort playlists to handle numeric prefixes properly
+            all_playlists.sort(key=str.lower)
             
-            # Append sort type playlists to the end
-            all_playlists.extend(sort_type_playlists)  # Add sort playlists after manufacturer playlists
-        
-            # Debugging: Print the final order of playlists
-            print("Final Playlist Order:", all_playlists)
+            # Append manufacturer and sort type playlists to the end
+            all_playlists.extend(manufacturer_playlists)
+            all_playlists.extend(sort_type_playlists)
 
             # Populate checkboxes in the desired order
             for playlist_name in all_playlists:
@@ -827,7 +818,6 @@ class Playlists:
         except FileNotFoundError:
             print(f"Playlists folder not found at: {self.playlists_path}")
         except Exception as e:
-            # Catch all exceptions to understand any issues
             print("An error occurred:", str(e))
 
     def add_playlists_to_checklist(self, playlist_names):
