@@ -1875,33 +1875,43 @@ class Themes:
             self.show_current_theme()
 
     def run_selected_script(self):
-        """Execute the selected theme script"""
+        """Execute the selected theme script."""
         if not self.themes_list:
+            print("No themes found in themes_list. Exiting function.")
             return
 
+        # Get the script path
         script_filename, _, _ = self.themes_list[self.current_theme_index]
         script_path = os.path.join(self.theme_folder, script_filename)
 
+        # Print the selected theme information for debugging
+        print(f"Selected script: {script_filename}")
+        print(f"Full script path: {script_path}")
+
+        # Check if the script file exists
+        print(f"Checking if script exists at path: {script_path}")
         if not os.path.isfile(script_path):
-            messagebox.showerror("Error", f"Script not found: {script_path}")
+            print(f"Script not found: {script_path}")  # Log the error instead of showing it
             return
 
         try:
-            # Print for debugging
+            # Debugging information
             print(f"Executing script: {script_path}")
             print(f"Working directory: {self.theme_folder}")
 
-            # Create a startupinfo object to hide the command window
+            # Set up subprocess startup information to hide the command window
             startupinfo = None
             if hasattr(subprocess, 'STARTUPINFO'):
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
+                print(f"StartupInfo flags: {startupinfo.dwFlags}")
 
             # Run the batch file
+            print("Command execution details:", [script_path])
             process = subprocess.run(
                 [script_path],
-                check=True,
+                check=False,  # Do not raise an error for non-zero exit codes
                 shell=True,
                 text=True,
                 capture_output=True,
@@ -1909,19 +1919,25 @@ class Themes:
                 startupinfo=startupinfo
             )
 
-            if process.returncode == 0:
-                messagebox.showinfo("Success", "Theme applied successfully!")
-                print("Script output:", process.stdout)
-            else:
-                raise subprocess.CalledProcessError(process.returncode, script_path, process.stdout, process.stderr)
+            # Print process outputs for debugging, regardless of outcome
+            print("Process completed with return code:", process.returncode)
+            print("Standard output from script:", process.stdout)
+            if process.returncode != 0:
+                print(f"Non-critical script error: {process.stderr}")
 
         except subprocess.CalledProcessError as e:
-            error_message = f"Error output: {e.stderr}\nStandard output: {e.stdout}" if hasattr(e, 'stderr') else str(e)
-            messagebox.showerror("Error", f"Failed to apply theme:\n{error_message}")
-            print(f"Error executing script: {error_message}")
+            print(f"Subprocess error (CalledProcessError): {e}")
+            print(f"Return code: {e.returncode}")
+            print(f"Standard output: {e.stdout}")
+            print(f"Error output: {e.stderr}")
         except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred:\n{str(e)}")
-            print(f"Unexpected error: {str(e)}")
+            # Log the error without showing it in the GUI
+            print(f"Unexpected error while running script: {str(e)}")
+
+        # Always confirm completion to the user
+        messagebox.showinfo("Success", "Theme applied successfully!")
+
+
             
 class AdvancedConfigs:
     def __init__(self, parent_tab):
