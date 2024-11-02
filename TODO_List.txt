@@ -1,8 +1,10 @@
 DONE - fix first Thumbnail not showing
-IN-PROGRESS add logo to bottom right of thumbnail, and remove title
+IN-PROGRESS remove title from themes screen
+- add logo to bottom right of thumbnail
 - move play video button
 - make sure all warning suppressed
 - edit filter games screen. break tabs up to fill area
 DONE - thumbnail/video don't auto resize when full screen unless you click next/previous
-DONE - themes thumbnail use png file if no video found
+DONE - themes thumbnail use .png file if no video found
+- Fix slow videos. specially if full size
 

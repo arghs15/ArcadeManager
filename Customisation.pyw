@@ -16,14 +16,19 @@ import shlex
 import cv2
 from threading import Thread, Lock
 import queue
+import ctypes
 
 class FilterGamesApp:
     @staticmethod
     def resource_path(relative_path):
-        """ Get the absolute path to a resource, accounting for PyInstaller's bundling. """
-        if hasattr(sys, '_MEIPASS'):
-            return os.path.join(sys._MEIPASS, relative_path)
-        return os.path.join(os.getcwd(), relative_path)
+        """Get the absolute path to a resource, works for dev and PyInstaller"""
+        try:
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
+        
+        return os.path.join(base_path, relative_path)
         
     def __init__(self, root):
         self.root = root
@@ -31,13 +36,25 @@ class FilterGamesApp:
         self.root.geometry("1920x1080")  # Set the initial size (you can adjust as needed)
         self.root.resizable(True, True)  # Enable window resizing
         
-        # Set the window icon
-        #icon_path = os.path.join(os.getcwd(), 'Potion.ico')  # Adjust path as needed
-        #self.iconbitmap(icon_path)  # For .ico files
-        #root.iconbitmap('Potion.ico')
-        icon_path = self.resource_path('Potion.ico')
-        if os.path.exists(icon_path):
-            root.iconbitmap(icon_path)
+        # Set window icon - handles both development and PyInstaller
+        try:
+            # First try the bundled path
+            icon_path = self.resource_path("Potion.ico")
+            
+            # For Windows: set both the window icon and taskbar icon
+            if os.name == 'nt':  # Windows
+                self.root.iconbitmap(default=icon_path)
+                # Set taskbar icon
+                myappid = 'company.product.subproduct.version'  # arbitrary string
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+            else:  # For other operating systems
+                icon_img = PhotoImage(file=icon_path)
+                self.root.iconphoto(True, icon_img)
+                
+        except Exception as e:
+            print(f"Could not load icon: {e}")
+            # Continue without icon if there's an error
+            pass
 
         # Center the window on the screen
         self.center_window(1200, 800)
@@ -291,32 +308,71 @@ class ExeFileSelector:
 
             print(f"Attempting to run script at: {script_path}")
 
-            # Run the batch file
-            completed_process = subprocess.run(
-                f'cmd.exe /c "{script_path}"',
-                shell=True,
-                capture_output=True,
-                text=True,
-                check=False
+            # Create a modal progress window
+            progress_window = tk.Toplevel(self.parent_frame)
+            progress_window.title("Running Script")
+            
+            # Make it modal (blocks main window interaction)
+            progress_window.grab_set()
+            
+            # Center the progress window
+            window_width = 400
+            window_height = 150
+            screen_width = progress_window.winfo_screenwidth()
+            screen_height = progress_window.winfo_screenheight()
+            center_x = int((screen_width - window_width) / 2)
+            center_y = int((screen_height - window_height) / 2)
+            progress_window.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+            
+            # Make it non-resizable and always on top
+            progress_window.resizable(False, False)
+            progress_window.transient(self.parent_frame)
+            progress_window.attributes('-topmost', True)
+
+            # Add message
+            message_label = ctk.CTkLabel(
+                progress_window,
+                text="Please wait while the restore script runs...\n\nThis window will close automatically when complete.",
+                font=("Arial", 12),
+                wraplength=350
             )
+            message_label.pack(pady=20, padx=20)
 
-            # Check for errors in the execution
-            if completed_process.returncode != 0:
-                error_message = (
-                    f"Failed to run {script_name}.\n\n"
-                    f"Return Code: {completed_process.returncode}\n"
-                    f"Error Output: {completed_process.stderr.strip()}\n"
-                    f"Standard Output: {completed_process.stdout.strip()}"
-                )
-                messagebox.showerror("Script Execution Error", error_message)
-            else:
-                messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has run.")
-                print(f"Script ran successfully:\n{completed_process.stdout.strip()}")
+            # Add spinning progress indicator
+            progress = ctk.CTkProgressBar(progress_window)
+            progress.pack(pady=10, padx=20)
+            progress.configure(mode='indeterminate')
+            progress.start()
 
-        except FileNotFoundError:
-            messagebox.showerror("File Not Found", f"The specified batch file was not found: {script_path}")
-        except PermissionError:
-            messagebox.showerror("Permission Denied", f"Permission denied while trying to run: {script_path}")
+            # Function to run the script and close the progress window
+            def run_script_thread():
+                try:
+                    # Run the batch file
+                    subprocess.run(
+                        f'cmd.exe /c "{script_path}"',
+                        shell=True,
+                        text=True,
+                        check=False
+                    )
+                    
+                    # Schedule the window closure and success message on the main thread
+                    progress_window.after(0, lambda: [
+                        progress_window.destroy(),
+                        messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has completed.")
+                    ])
+                    
+                except Exception as e:
+                    # Schedule error handling on the main thread
+                    progress_window.after(0, lambda: [
+                        progress_window.destroy(),
+                        messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                    ])
+
+            # Run the script in a separate thread
+            thread = Thread(target=run_script_thread)
+            thread.daemon = True
+            thread.start()
+
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred while running {script_name}: {str(e)}")
 
