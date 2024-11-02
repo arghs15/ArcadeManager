@@ -82,7 +82,7 @@ class FilterGamesApp:
         self.tabview.pack(expand=True, fill="both")
         
         # Check if the zzzSettings folder exists before adding the Themes tab
-        self.zzz_settings_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
+        self.zzz_settings_path = os.path.join(os.getcwd(), "autochanger", "themes")
         if self.check_zzz_settings_folder():
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)
@@ -1475,7 +1475,6 @@ class ThemeViewer:
                 
         if self.image_path:
             try:
-                # Read PNG file directly using cv2
                 image = cv2.imread(self.image_path)
                 if image is not None:
                     return image
@@ -1487,59 +1486,140 @@ class ThemeViewer:
     def start_video(self):
         """Start video playback"""
         with self.lock:
-            if not self.is_playing:
-                self.video_cap = cv2.VideoCapture(self.video_path)
-                self.is_playing = True
+            if not self.is_playing and self.video_path:
+                try:
+                    self.video_cap = cv2.VideoCapture(self.video_path)
+                    if self.video_cap.isOpened():
+                        self.is_playing = True
+                        print(f"Video started successfully: {self.video_path}")
+                        return True
+                    else:
+                        print("Failed to open video file")
+                        self.video_cap = None
+                except Exception as e:
+                    print(f"Error starting video: {e}")
+                    self.video_cap = None
+            return False
 
     def stop_video(self):
         """Stop video playback"""
         with self.lock:
             self.is_playing = False
             if self.video_cap:
-                self.video_cap.release()
-                self.video_cap = None
+                try:
+                    self.video_cap.release()
+                except Exception as e:
+                    print(f"Error stopping video: {e}")
+                finally:
+                    self.video_cap = None
 
     def get_frame(self):
         """Get next video frame if playing"""
         if not self.is_playing or not self.video_cap:
             return None
             
-        ret, frame = self.video_cap.read()
-        if ret:
-            return frame
-        else:
-            # Reset video to start
-            self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        try:
+            ret, frame = self.video_cap.read()
+            if ret:
+                return frame
+            else:
+                # Reset video to start
+                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.video_cap.read()
+                return frame if ret else None
+        except Exception as e:
+            print(f"Error reading frame: {e}")
             return None
 
 class Themes:
     def __init__(self, parent_tab):
-        print("Initializing Themes...")  # Debug print
+        print("Initializing Themes...")
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         
         # Configuration paths
-        self.theme_folder = os.path.join(self.base_path, "collections", "zzzSettings", "roms")
-        self.video_folder = os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video")
+        self.theme_folder = os.path.join(self.base_path, "- Themes")
+        self.video_folder = os.path.join(self.base_path, "autochanger", "themes", "video")
         
         # State management
         self.themes_list = []
         self.current_theme_index = 0
         self.current_viewer = None
-        self.default_size = (640, 480)
+        self.default_size = (640, 360)
         self.thumbnail_cache = {}
-        self.current_frame = None  # Store current frame for resize events
+        self.current_frame = None
+        self.autoplay_after = None
+        self.last_resize_time = 0
+        self.resize_delay = 200  # ms
+        self.last_frame_time = 0
+        self.target_fps = 40
+        self.frame_interval = 1000 / self.target_fps  # ms
         
         self._setup_ui()
-        # Schedule theme loading after UI is fully initialized
-        self.parent_tab.after(100, self.delayed_load_themes)
-            
-    def delayed_load_themes(self):
-        """Load themes after ensuring UI is ready"""
-        print("Loading themes...")  # Debug print
         self.load_themes()
-        # Schedule initial theme display
-        self.parent_tab.after(100, self.force_initial_display)
+        if self.themes_list:
+            self.parent_tab.after(100, self.show_initial_theme)
+
+    def cancel_autoplay(self):
+        """Cancel any scheduled autoplay"""
+        if self.autoplay_after:
+            try:
+                self.parent_tab.after_cancel(self.autoplay_after)
+                print("Cancelled scheduled autoplay")
+            except Exception as e:
+                print(f"Error cancelling autoplay: {e}")
+            finally:
+                self.autoplay_after = None
+
+    def schedule_autoplay(self):
+        """Schedule video autoplay after 2 seconds"""
+        self.cancel_autoplay()
+        
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling autoplay...")
+            self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
+
+    def start_autoplay(self):
+        """Start video playback for autoplay"""
+        print("Attempting to start autoplay...")
+        if self.current_viewer and self.current_viewer.video_path:
+            if not self.current_viewer.is_playing:
+                success = self.current_viewer.start_video()
+                if success:
+                    print("Autoplay started successfully")
+                    self.play_button.configure(text="Stop Video")
+                    self.play_video()  # This line was causing the error
+                else:
+                    print("Failed to start autoplay")
+                    self.show_thumbnail()
+
+    def show_current_theme(self):
+        """Display the current theme's thumbnail"""
+        print("Showing current theme...")
+        if not self.themes_list:
+            return
+
+        # Stop any playing video and cancel any pending autoplay
+        self.cancel_autoplay()
+        if self.current_viewer and self.current_viewer.is_playing:
+            self.current_viewer.stop_video()
+            self.play_button.configure(text="Play Video")
+
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Create viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+        self.play_button.configure(state="normal" if video_path else "disabled")
+        
+        # Show thumbnail and schedule autoplay
+        self.show_thumbnail()
+        if video_path:
+            print(f"Video path exists, scheduling autoplay: {video_path}")
+            self.schedule_autoplay()
+        else:
+            print("No video path available for autoplay")
 
     def force_initial_display(self):
         """Force the initial theme display"""
@@ -1550,7 +1630,7 @@ class Themes:
 
     def show_initial_theme(self):
         """Special handling for the first theme display"""
-        print("Showing initial theme...")  # Debug print
+        print("Showing initial theme...")
         if not self.themes_list:
             return
 
@@ -1563,19 +1643,60 @@ class Themes:
         self.play_button.configure(state="normal" if video_path else "disabled")
 
         # Force immediate thumbnail extraction and display
-        thumbnail = self.current_viewer.extract_thumbnail()
-        if thumbnail is not None:
-            print("Thumbnail extracted, displaying...")  # Debug print
-            cache_key = video_path or png_path
-            if cache_key:
-                self.thumbnail_cache[cache_key] = thumbnail
+        if self.current_viewer:
+            thumbnail = self.current_viewer.extract_thumbnail()
+            if thumbnail is not None:
+                print("Thumbnail extracted, displaying...")
+                cache_key = video_path or png_path
+                if cache_key:
+                    self.thumbnail_cache[cache_key] = thumbnail
+                
+                # Force canvas update and display
+                self.parent_tab.update_idletasks()
+                self._display_frame(thumbnail)
+                
+                # Schedule autoplay if video exists
+                if video_path:
+                    print(f"Scheduling initial autoplay for: {video_path}")
+                    self.schedule_autoplay()
+            else:
+                print("No thumbnail available")
+                self._show_no_video_message()
+
+    def play_video(self):
+        """Play video with frame timing control"""
+        if not self.current_viewer or not self.current_viewer.is_playing:
+            return
             
-            # Force canvas update and display
-            self.parent_tab.update_idletasks()
-            self._display_frame(thumbnail)
-        else:
-            print("No thumbnail available...")  # Debug print
-            self._show_no_video_message()
+        try:
+            current_time = time.time() * 1000
+            if current_time - self.last_frame_time >= self.frame_interval:
+                frame = self.current_viewer.get_frame()
+                if frame is not None:
+                    self._display_frame(frame)
+                else:
+                    print("No frame available, stopping video")
+                    self.current_viewer.stop_video()
+                    self.play_button.configure(text="Play Video")
+                    self.show_thumbnail()
+                    return
+            
+            # Schedule next frame
+            self.parent_tab.after(max(1, int(self.frame_interval)), self.play_video)
+            
+        except Exception as e:
+            print(f"Error during video playback: {e}")
+            self.current_viewer.stop_video()
+            self.play_button.configure(text="Play Video")
+            self.show_thumbnail()
+
+    def schedule_autoplay(self):
+        """Schedule video autoplay after 2 seconds"""
+        self.cancel_autoplay()
+        
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling autoplay...")
+            self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
 
     def load_themes(self):
         """Load themes and their video/image paths"""
@@ -1604,7 +1725,8 @@ class Themes:
         if not self.themes_list:
             return
 
-        # Stop any playing video
+        # Stop any playing video and cancel any pending autoplay
+        self.cancel_autoplay()
         if self.current_viewer and self.current_viewer.is_playing:
             self.current_viewer.stop_video()
             self.play_button.configure(text="Play Video")
@@ -1617,8 +1739,9 @@ class Themes:
         self.current_viewer = ThemeViewer(video_path, png_path)
         self.play_button.configure(state="normal" if video_path else "disabled")
         
-        # Force immediate thumbnail display
+        # Show thumbnail and schedule autoplay
         self.show_thumbnail()
+        self.schedule_autoplay()
 
     def show_thumbnail(self):
         """Display the current theme's thumbnail"""
@@ -1641,9 +1764,10 @@ class Themes:
             self._show_no_video_message()
 
     def _display_frame(self, frame, force_resize=False):
-        """Display a frame or thumbnail on the canvas with logo overlay"""
+        """Display a frame or thumbnail on the canvas with proper aspect ratio"""
         try:
-            # Store the current frame for resize events
+            current_time = time.time() * 1000
+            
             if not force_resize:
                 self.current_frame = frame.copy()
             
@@ -1654,51 +1778,62 @@ class Themes:
             if canvas_width < 1 or canvas_height < 1:
                 canvas_width, canvas_height = self.default_size
             
-            # Get frame dimensions
-            height, width = frame.shape[:2]
+            # Get original frame dimensions
+            frame_height, frame_width = frame.shape[:2]
+            frame_aspect = frame_width / frame_height
+            canvas_aspect = canvas_width / canvas_height
             
-            # Calculate scaling while maintaining aspect ratio
-            scale = min(canvas_width/width, canvas_height/height)
-            new_width = max(1, int(width * scale))
-            new_height = max(1, int(height * scale))
+            # Calculate new dimensions maintaining aspect ratio
+            if canvas_aspect > frame_aspect:
+                # Canvas is wider than frame - fit to height
+                new_height = canvas_height
+                new_width = int(canvas_height * frame_aspect)
+            else:
+                # Canvas is taller than frame - fit to width
+                new_width = canvas_width
+                new_height = int(canvas_width / frame_aspect)
             
-            # Resize frame
-            frame = cv2.resize(frame, (new_width, new_height))
+            # Skip frame if falling behind
+            if not force_resize and self.current_viewer and self.current_viewer.is_playing:
+                if current_time - self.last_frame_time < self.frame_interval:
+                    return
+            
+            # Resize frame maintaining aspect ratio
+            if new_width * new_height > 1920 * 1080:
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+            
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Convert main frame to PIL Image
             main_image = Image.fromarray(frame)
             
             # Try to load and overlay the logo
             try:
-                # Get current theme name
                 current_theme = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
-                logo_path = os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo", f"{current_theme}.png")
+                logo_path = os.path.join(self.base_path, "autochanger", "themes", "logo", f"{current_theme}.png")
                 
                 if os.path.exists(logo_path):
-                    # Load and resize logo
-                    logo_img = Image.open(logo_path)
+                    if not hasattr(self, f'logo_cache_{current_theme}'):
+                        logo_img = Image.open(logo_path)
+                        logo_max_size = min(new_width, new_height) // 3
+                        logo_w, logo_h = logo_img.size
+                        logo_scale = min(logo_max_size/logo_w, logo_max_size/logo_h)
+                        logo_new_size = (int(logo_w * logo_scale), int(logo_h * logo_scale))
+                        logo_img = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
+                        setattr(self, f'logo_cache_{current_theme}', logo_img)
+                    else:
+                        logo_img = getattr(self, f'logo_cache_{current_theme}')
                     
-                    # Calculate logo size (e.g., 20% of frame width)
-                    logo_max_size = min(new_width, new_height) // 3
-                    logo_w, logo_h = logo_img.size
-                    logo_scale = min(logo_max_size/logo_w, logo_max_size/logo_h)
-                    logo_new_size = (int(logo_w * logo_scale), int(logo_h * logo_scale))
-                    logo_img = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
+                    padding = 10
+                    pos_x = new_width - logo_img.size[0] - padding
+                    pos_y = new_height - logo_img.size[1] - padding
                     
-                    # Calculate position (bottom right with padding)
-                    padding = 10  # pixels from edge
-                    pos_x = new_width - logo_new_size[0] - padding
-                    pos_y = new_height - logo_new_size[1] - padding
-                    
-                    # Paste logo onto main image
                     if logo_img.mode == 'RGBA':
                         main_image.paste(logo_img, (pos_x, pos_y), logo_img)
                     else:
                         main_image.paste(logo_img, (pos_x, pos_y))
             except Exception as e:
                 print(f"Error loading or applying logo: {e}")
-                # Continue without logo if there's an error
             
             # Convert to PhotoImage
             photo = ImageTk.PhotoImage(image=main_image)
@@ -1706,9 +1841,12 @@ class Themes:
             # Clear canvas
             self.video_canvas.delete("all")
             
-            # Calculate centered position
+            # Calculate center position
             x = canvas_width // 2
             y = canvas_height // 2
+            
+            # Create black background to fill canvas
+            self.video_canvas.configure(bg="#2B2B2B")
             
             # Display image centered
             self.video_canvas.create_image(
@@ -1717,6 +1855,8 @@ class Themes:
                 anchor="center"
             )
             self.video_canvas.image = photo
+            
+            self.last_frame_time = current_time
             
         except Exception as e:
             print(f"Error displaying frame: {e}")
@@ -1802,9 +1942,12 @@ class Themes:
             
         if not self.current_viewer.is_playing:
             # Start video
-            self.current_viewer.start_video()
-            self.play_button.configure(text="Stop Video")
-            self.play_video()
+            success = self.current_viewer.start_video()
+            if success:
+                self.play_button.configure(text="Stop Video")
+                self.play_video()
+            else:
+                self.show_thumbnail()
         else:
             # Stop video and show thumbnail
             self.current_viewer.stop_video()
@@ -1813,44 +1956,38 @@ class Themes:
 
     def initialize_first_theme(self):
         """Initialize and display the first theme"""
+        print("Initializing first theme...")
         if not self.themes_list:
+            print("No themes available")
             return
             
-        theme_name, video_path = self.themes_list[self.current_theme_index]
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
         self.theme_label.configure(text=f"Theme: {display_name}")
 
-        if video_path and os.path.isfile(video_path):
-            self.current_viewer = ThemeViewer(video_path)
-            # Force canvas update before showing thumbnail
-            self.video_canvas.update()
-            self.show_thumbnail()
-        else:
-            self.current_viewer = None
-            self._show_no_video_message()
-
-    def play_video(self):
-        """Play video if it's active"""
-        if not self.current_viewer or not self.current_viewer.is_playing:
-            return
+        # Initialize viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+        self.play_button.configure(state="normal" if video_path else "disabled")
+        
+        # Force immediate thumbnail display
+        print("Forcing thumbnail display...")
+        thumbnail = self.current_viewer.extract_thumbnail()
+        if thumbnail is not None:
+            cache_key = video_path or png_path
+            if cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail
             
-        frame = self.current_viewer.get_frame()
-        if frame is not None:
-            self._display_frame(frame)
-            self.parent_tab.after(33, self.play_video)
+            # Force canvas update and display
+            self.parent_tab.update_idletasks()
+            self._display_frame(thumbnail)
+            
+            # Schedule autoplay if video exists
+            if video_path:
+                print("Scheduling initial autoplay...")
+                self.schedule_autoplay()
         else:
-            # Restart video
-            self.play_video()
-
-    def _show_no_video_message(self):
-        """Display message when no video is available"""
-        self.video_canvas.delete("all")
-        self.video_canvas.create_text(
-            self.video_canvas.winfo_width() // 2,
-            self.video_canvas.winfo_height() // 2,
-            text="No video available",
-            fill="white"
-        )
+            print("No thumbnail available")
+            self._show_no_video_message()
 
     def show_next_theme(self):
         """Navigate to next theme"""
@@ -1863,6 +2000,16 @@ class Themes:
         if self.themes_list:
             self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
             self.show_current_theme()
+
+    def _show_no_video_message(self):
+        """Display message when no video is available"""
+        self.video_canvas.delete("all")
+        self.video_canvas.create_text(
+            self.video_canvas.winfo_width() // 2,
+            self.video_canvas.winfo_height() // 2,
+            text="No video available",
+            fill="white"
+        )
 
     def run_selected_script(self):
         """Execute the selected theme script."""
@@ -1927,8 +2074,6 @@ class Themes:
         # Always confirm completion to the user
         messagebox.showinfo("Success", "Theme applied successfully!")
 
-
-            
 class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab

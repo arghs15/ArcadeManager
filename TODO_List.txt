@@ -1,6 +1,6 @@
 DONE - fix first Thumbnail not showing
 IN-PROGRESS remove title from themes screen
-- add logo to bottom right of thumbnail
+DONE - add logo to bottom right of thumbnail
 - move play video button
 - make sure all warning suppressed
 - edit filter games screen. break tabs up to fill area
