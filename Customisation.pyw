@@ -405,7 +405,6 @@ class ExeFileSelector:
 
 class FilterGames:
     def __init__(self, parent_tab):
-        # Store references to parent_tab for creating widgets
         self.parent_tab = parent_tab
         self.output_dir = 'collections\\Arcades\\'
         self.output_file = os.path.join(self.output_dir, "include.txt")
@@ -421,60 +420,177 @@ class FilterGames:
             "Vertical Games Only": "VERTICAL"
         }
 
-        # Call methods to create the UI and load necessary settings
-        self.create_filter_games_tab()
-        self.load_custom_dll()
+        # Create notebook for tabs
+        self.notebook = ctk.CTkTabview(self.parent_tab)
+        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
 
-        # Path to the CSV file
+        # Add tabs
+        self.filter_tab = self.notebook.add("Filter Games")
+        self.games_list_tab = self.notebook.add("Games List")
+
+        self.load_custom_dll()
         self.csv_file_path = self.get_csv_file_path()
+        
+        # Create UI elements for both tabs
+        self.create_filter_games_tab()
+        self.create_games_list_tab()
+
+    def create_games_list_tab(self):
+        # Create frame for the games list
+        games_frame = ctk.CTkFrame(self.games_list_tab)
+        games_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Add a search entry
+        search_frame = ctk.CTkFrame(games_frame)
+        search_frame.pack(fill='x', padx=10, pady=(10, 5))
+        
+        search_label = ctk.CTkLabel(search_frame, text="Search Games:")
+        search_label.pack(side='left', padx=5)
+        
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', self.filter_games_list)
+        search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+        # Create a frame for the games list with scrollbar
+        list_frame = ctk.CTkFrame(games_frame)
+        list_frame.pack(fill='both', expand=True, padx=10, pady=5)
+
+        # Add scrollbar
+        scrollbar = ctk.CTkScrollbar(list_frame)
+        scrollbar.pack(side='right', fill='y')
+
+        # Create Text widget for games list
+        self.games_text = ctk.CTkTextbox(list_frame)
+        self.games_text.pack(fill='both', expand=True)
+        
+        # Populate the games list
+        self.populate_games_list()
+
+        # Add refresh button
+        refresh_button = ctk.CTkButton(games_frame, text="Refresh Games List", command=self.populate_games_list)
+        refresh_button.pack(pady=10)
 
     def create_filter_games_tab(self):
-        # Create a sidebar frame to hold the tab view for control types, buttons, and vertical filter
-        sidebar_frame = ctk.CTkFrame(self.parent_tab, width=200, corner_radius=10)
-        sidebar_frame.grid(row=0, column=0, rowspan=2, sticky="nswe", padx=10, pady=10)
+        # Create main container frame
+        main_container = ctk.CTkFrame(self.filter_tab)
+        main_container.pack(fill='both', expand=True, padx=10, pady=10)
 
-        # Create main content frame for buttons (Filter, Reset, etc.)
-        main_content_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
-        main_content_frame.grid(row=0, column=1, sticky="nswe", padx=10, pady=10)
+        # Create left sidebar frame
+        sidebar_frame = ctk.CTkFrame(main_container, width=200, corner_radius=10)
+        sidebar_frame.pack(side='left', fill='y', padx=10, pady=10)
+
+        # Create right content frame
+        main_content_frame = ctk.CTkFrame(main_container, corner_radius=10)
+        main_content_frame.pack(side='left', fill='both', expand=True, padx=10, pady=10)
 
         # Create a TabView for Control Types, Buttons, and Vertical Filter
         tabview = ctk.CTkTabview(sidebar_frame, width=200)
-        tabview.pack(padx=10, pady=10, fill='both', expand=True)
+        tabview.pack(fill='both', expand=True, padx=10, pady=10)
 
         # Add Control Types, Buttons, and Vertical tabs
         control_types_tab = tabview.add("Control Types")
         buttons_tab = tabview.add("Buttons")
         vertical_tab = tabview.add("Vertical")
 
-        # Control Types checkboxes in the "Control Types" tab
+        # Control Types checkboxes
         self.control_type_vars = {}
         control_types = ["8 way", "4 way", "analog", "trackball", "twin stick", "lightgun"]
-        ctk.CTkLabel(control_types_tab, text="Control Types", font=("Arial", 14, "bold")).grid(row=0, column=0, padx=20, pady=10)
+        control_label = ctk.CTkLabel(control_types_tab, text="Control Types", font=("Arial", 14, "bold"))
+        control_label.pack(pady=(10,5))
 
-        for index, control_type in enumerate(control_types, start=1):
+        for control_type in control_types:
             var = tk.IntVar()
             checkbox = ctk.CTkCheckBox(control_types_tab, text=control_type, variable=var)
-            checkbox.grid(row=index, column=0, padx=20, pady=5, sticky='w')
+            checkbox.pack(padx=20, pady=5, anchor='w')
             self.control_type_vars[control_type] = var
 
-        # Move Number of Buttons to "Buttons" tab
+        # Buttons tab content
         self.buttons_var = ctk.StringVar(value="Select number of buttons")
         button_options = ["Select number of buttons", "0", "1", "2", "3", "4", "5", "6"]
-        ctk.CTkLabel(buttons_tab, text="Number of Buttons", font=("Arial", 14, "bold")).grid(row=0, column=0, padx=20, pady=10)
+        buttons_label = ctk.CTkLabel(buttons_tab, text="Number of Buttons", font=("Arial", 14, "bold"))
+        buttons_label.pack(pady=(10,5))
         buttons_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.buttons_var, values=button_options)
-        buttons_dropdown.grid(row=1, column=0, padx=20, pady=5)
+        buttons_dropdown.pack(padx=20, pady=5)
 
-        # Move the Vertical filter checkbox to the "Vertical" tab
+        # Vertical tab content
         self.vertical_checkbox_var = tk.IntVar()
         vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games", variable=self.vertical_checkbox_var)
-        vertical_checkbox.grid(row=0, column=0, padx=20, pady=10, sticky="w")
+        vertical_checkbox.pack(padx=20, pady=10, anchor='w')
 
-        # Add Filter and Show All Games buttons to the main content frame
+        # Filter and Reset buttons
         filter_button = ctk.CTkButton(main_content_frame, text="Filter Games", command=self.filter_games_from_csv)
         filter_button.pack(pady=20)
 
         show_all_button = ctk.CTkButton(main_content_frame, text="Reset to Default", command=self.show_all_games, fg_color="red")
         show_all_button.pack(pady=10)
+
+    def populate_games_list(self):
+        try:
+            # Clear existing content
+            self.games_text.delete('1.0', 'end')
+            
+            # Get ROMs in build
+            roms_in_build = self.scan_collections_for_roms()
+            
+            # Read CSV and match ROMs with descriptions
+            games_info = []
+            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
+                reader = csv.DictReader(csv_file)
+                for row in reader:
+                    rom_name = row.get('ROM Name', '').strip()
+                    if rom_name in roms_in_build:
+                        description = row.get('Description', '').strip()
+                        if description:  # Only add if there's a description
+                            games_info.append(f"{description} ({rom_name})\n")
+            
+            # Sort alphabetically and insert into text widget
+            games_info.sort()
+            for game in games_info:
+                self.games_text.insert('end', game)
+            
+            # Add summary at the top
+            self.games_text.insert('1.0', f"Total Games in Build: {len(games_info)}\n\n")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error populating games list: {str(e)}")
+
+    def filter_games_list(self, *args):
+        # Get search term
+        search_term = self.search_var.get().lower()
+        
+        # Clear current display
+        self.games_text.delete('1.0', 'end')
+        
+        try:
+            # Get ROMs in build
+            roms_in_build = self.scan_collections_for_roms()
+            
+            # Read CSV and match ROMs with descriptions
+            games_info = []
+            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
+                reader = csv.DictReader(csv_file)
+                for row in reader:
+                    rom_name = row.get('ROM Name', '').strip()
+                    if rom_name in roms_in_build:
+                        description = row.get('Description', '').strip()
+                        if description and (search_term in description.lower() or search_term in rom_name.lower()):
+                            games_info.append(f"{description} ({rom_name})\n")
+            
+            # Sort and display filtered results
+            games_info.sort()
+            for game in games_info:
+                self.games_text.insert('end', game)
+            
+            # Add summary at the top
+            self.games_text.insert('1.0', f"Found Games: {len(games_info)}\n\n")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error filtering games list: {str(e)}")
+
+    # [Keep all other existing methods unchanged: load_custom_dll, get_csv_file_path, 
+    # sanitize_csv_cell, get_selected_control_types, control_type_exists, 
+    # check_output_dir, scan_collections_for_roms, filter_games_from_csv, show_all_games]
 
     def load_custom_dll(self):
         #import ctypes
@@ -525,15 +641,54 @@ class FilterGames:
             self.parent_tab.quit()
             sys.exit()
 
+    # Method to scan collections for ROMs
+    def scan_collections_for_roms(self):
+        root_dir = os.getcwd()
+        collections_dir = os.path.join(root_dir, 'collections')
+        rom_list = []
+
+        for collection_name in os.listdir(collections_dir):
+            if "settings" in collection_name.lower() or "zzz" in collection_name.lower():
+                continue
+            
+            collection_path = os.path.join(collections_dir, collection_name)
+            settings_path = os.path.join(collection_path, 'settings.conf')
+            
+            if os.path.isdir(collection_path) and os.path.isfile(settings_path):
+                rom_folder = None
+                extensions = []
+
+                with open(settings_path, 'r') as settings_file:
+                    for line in settings_file:
+                        line = line.strip()
+                        if line.startswith("#"):
+                            continue
+                        if line.startswith("list.path"):
+                            rom_folder = line.split("=", 1)[1].strip()
+                            rom_folder = os.path.join(root_dir, rom_folder)
+                        elif line.startswith("list.extensions"):
+                            ext_line = line.split("=", 1)[1].strip()
+                            extensions = [ext.strip() for ext in ext_line.split(",")]
+
+                if rom_folder and extensions and os.path.isdir(rom_folder):
+                    for root, _, files in os.walk(rom_folder):
+                        for file in files:
+                            if any(file.endswith(ext) for ext in extensions):
+                                filename_without_extension = os.path.splitext(file)[0]
+                                rom_list.append(filename_without_extension)
+
+        return set(rom_list)  # Return as set to ensure uniqueness
+
+    # Updated filter_games_from_csv method
     def filter_games_from_csv(self):
         self.check_output_dir()
+        roms_in_build = self.scan_collections_for_roms()
 
         try:
             with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
                 reader = csv.DictReader(csv_file)
                 with open(self.output_file, 'w', encoding='utf-8') as f:
                     game_count = 0
-
                     selected_ctrltypes = self.get_selected_control_types()
                     selected_buttons = self.buttons_var.get().strip()
                     vertical_filter = self.vertical_checkbox_var.get()
@@ -543,15 +698,17 @@ class FilterGames:
                         rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
                         vertical = row.get('Vertical')
                         buttons = row.get('Buttons')
-
                         buttons = int(buttons) if buttons.isdigit() else float('inf')
 
+                        # Check if the ROM is in the current build
+                        if rom_name not in roms_in_build:
+                            continue
+
+                        # Apply filters
                         if vertical_filter == 1 and (not vertical or vertical.strip().upper() != "VERTICAL"):
                             continue
-
                         if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
                             continue
-
                         if selected_ctrltypes:
                             for selected_ctrltype in selected_ctrltypes:
                                 mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
@@ -563,6 +720,7 @@ class FilterGames:
                             f.write(f"{rom_name}\n")
                             game_count += 1
 
+                    # Feedback for users
                     if game_count == 0:
                         messagebox.showinfo("No Games Found", "No games matched the selected filters.")
                     else:
