@@ -151,13 +151,13 @@ class ExeFileSelector:
         # Store a reference to the parent frame
         self.parent_frame = parent_frame
         
-        # Create a new frame for the .exe radio buttons below the main content
-        exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)
-        exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)
+        # Create a new frame for the .exe radio buttons with fixed size
+        self.exe_frame = ctk.CTkFrame(parent_frame, width=300, height=400, corner_radius=10)  # Fixed width and height
+        self.exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)
         
         parent_frame.grid_columnconfigure(1, weight=1)
         parent_frame.grid_rowconfigure(1, weight=1)
-        
+
         # Determine the path for the logo
         logo_path = 'autochanger/Logo.png'
         default_logo_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'Logo.png')
@@ -187,18 +187,18 @@ class ExeFileSelector:
             )
             
             # Add the logo label to the exe_frame
-            logo_label = ctk.CTkLabel(exe_frame, text="", image=logo_image)
+            logo_label = ctk.CTkLabel(self.exe_frame, text="", image=logo_image)
             logo_label.pack(pady=(10, 0))
             
         except Exception as e:
             # Fallback in case loading the image fails
-            title_label = ctk.CTkLabel(exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
+            title_label = ctk.CTkLabel(self.exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
             title_label.pack(padx=10, pady=10)
             print(f"Error loading logo: {e}")
 
         # Create a scrollable frame inside exe_frame to hold the radio buttons
-        scrollable_frame = ctk.CTkScrollableFrame(exe_frame, width=400, height=200, corner_radius=10)
-        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        self.scrollable_frame = ctk.CTkScrollableFrame(self.exe_frame, width=300, height=200, corner_radius=10)  # Set fixed width
+        self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Find all .exe files in the directory
         self.exe_files = self.find_exe_files()
@@ -208,12 +208,12 @@ class ExeFileSelector:
         
         # Add a radio button for each .exe file found inside the scrollable frame
         for exe in self.exe_files:
-            rbutton = ctk.CTkRadioButton(scrollable_frame, text=exe, variable=self.exe_var, value=exe)
+            rbutton = ctk.CTkRadioButton(self.scrollable_frame, text=exe, variable=self.exe_var, value=exe)
             rbutton.pack(anchor="w", padx=20, pady=5)
 
         # Add a switch to control closing the GUI
         self.close_gui_switch = ctk.CTkSwitch(
-            exe_frame,
+            self.exe_frame,
             text="Close GUI After Running",
             onvalue=True,
             offvalue=False,
@@ -226,7 +226,7 @@ class ExeFileSelector:
         self.update_switch_text()
         
         # Add a button to run the selected exe
-        run_exe_button = ctk.CTkButton(exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
+        run_exe_button = ctk.CTkButton(self.exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
         run_exe_button.pack(pady=20)
         
         # Call a method to add the batch file dropdown and button frame below this frame
@@ -826,11 +826,76 @@ class Playlists:
         # Populate checkboxes based on available playlist files
         self.populate_checkboxes()
 
-        # Create a frame for the buttons
+        # Create main button frame
         button_frame = ctk.CTkFrame(self.parent_tab)
         button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
-        # Create playlist buttons
+        # Create top frame for main actions
+        top_button_frame = ctk.CTkFrame(button_frame)
+        top_button_frame.pack(fill="x", padx=2, pady=2)
+
+        # Create bottom frame for categories
+        bottom_button_frame = ctk.CTkFrame(button_frame)
+        bottom_button_frame.pack(fill="x", padx=2, pady=2)
+
+        # Create main action buttons in top frame - side by side
+        self.create_playlist_button = ctk.CTkButton(
+            top_button_frame,
+            text="Create Playlist",
+            command=self.create_playlist,
+            fg_color="#4CAF50",
+            hover_color="#45A049"
+        )
+        self.create_playlist_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        self.reset_button = ctk.CTkButton(
+            top_button_frame,
+            text="Reset Playlists",
+            fg_color="#D32F2F",
+            hover_color="#C62828",
+            command=self.reset_playlists,
+            state="disabled"
+        )
+        self.reset_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        # Create category buttons in bottom frame
+        self.genres_button = ctk.CTkButton(
+            bottom_button_frame,
+            text="All Genres",
+            command=lambda: self.activate_special_playlist("genres", self.get_genre_playlists()),
+            fg_color="#2196F3",
+            hover_color="#1976D2"
+        )
+        self.genres_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        self.manufacturer_button = ctk.CTkButton(
+            bottom_button_frame,
+            text="All Manufacturer",
+            command=lambda: self.activate_special_playlist("manufacturer", self.manufacturer_playlists),
+            fg_color="#2196F3",
+            hover_color="#1976D2"
+        )
+        self.manufacturer_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        self.sort_type_button = ctk.CTkButton(
+            bottom_button_frame,
+            text="All Sort Types",
+            command=lambda: self.activate_special_playlist("sort_type", self.sort_type_playlists),
+            fg_color="#2196F3",
+            hover_color="#1976D2"
+        )
+        self.sort_type_button.pack(side="left", fill="x", expand=True, padx=2)
+
+
+        # Drop down list version. good if we need to add more
+        '''# Create a frame for the buttons with grid layout
+        button_frame = ctk.CTkFrame(self.parent_tab)
+        button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+
+        # Configure grid columns to be evenly spaced
+        button_frame.grid_columnconfigure((0, 1), weight=1)
+
+        # Create main action buttons in first row
         self.create_playlist_button = ctk.CTkButton(
             button_frame,
             text="Create Playlist",
@@ -838,53 +903,38 @@ class Playlists:
             fg_color="#4CAF50",
             hover_color="#45A049"
         )
-        self.create_playlist_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        self.create_playlist_button.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
 
-        # Create reset button with disabled state by default
         self.reset_button = ctk.CTkButton(
             button_frame,
             text="Reset Playlists",
             fg_color="#D32F2F",
             hover_color="#C62828",
             command=self.reset_playlists,
-            state="disabled"  # Start disabled
+            state="disabled"
         )
-        self.reset_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-        
-        ## Old reference to when the values were hard coded.
-        '''
-        self.genres_button = ctk.CTkButton(
-            button_frame,
-            text="All Genres",
-            command=lambda: self.activate_special_playlist("beat em ups, fight club, old school, puzzler, racer, run n gun, shoot em ups, sports, trackball, twinsticks, vector")
-        )
-        self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-        '''
-        
-        # Set up buttons with modified commands
-        self.genres_button = ctk.CTkButton(
-            button_frame,
-            text="All Genres",
-            command=lambda: self.activate_special_playlist("genres", self.get_genre_playlists())
-        )
-        self.genres_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
-        
-        self.manufacturer_button = ctk.CTkButton(
-            button_frame,
-            text="All Manufacturer",
-            command=lambda: self.activate_special_playlist("manufacturer", self.manufacturer_playlists)
-        )
-        self.manufacturer_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        self.reset_button.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
 
-        self.sort_type_button = ctk.CTkButton(
+        # Create a dropdown menu for category selections
+        self.category_var = ctk.StringVar(value="Select Category")
+        self.category_menu = ctk.CTkOptionMenu(
             button_frame,
-            text="All Sort Types",
-            command=lambda: self.activate_special_playlist("sort_type", self.sort_type_playlists)
+            values=["All Genres", "All Manufacturers", "All Sort Types"],
+            variable=self.category_var,
+            command=self.handle_category_selection
         )
-        self.sort_type_button.pack(side="left", expand=True, fill="x", padx=5, pady=5)
+        self.category_menu.grid(row=1, column=0, columnspan=2, padx=2, pady=2, sticky="ew")
 
-        # Check if backup file exists and enable/disable button accordingly
-        self.update_reset_button_state()
+    def handle_category_selection(self, choice):
+        if choice == "All Genres":
+            self.activate_special_playlist("genres", self.get_genre_playlists())
+        elif choice == "All Manufacturers":
+            self.activate_special_playlist("manufacturer", self.manufacturer_playlists)
+        elif choice == "All Sort Types":
+            self.activate_special_playlist("sort_type", self.sort_type_playlists)
+
+            # Check if backup file exists and enable/disable button accordingly
+            self.update_reset_button_state()'''
                         
     # Gets all playlists not included in manufacturer and sort types
     def get_genre_playlists(self):
