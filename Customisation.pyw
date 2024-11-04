@@ -420,69 +420,24 @@ class FilterGames:
             "Vertical Games Only": "VERTICAL"
         }
 
-        # Create notebook for tabs
-        self.notebook = ctk.CTkTabview(self.parent_tab)
-        self.notebook.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Add tabs
-        self.filter_tab = self.notebook.add("Filter Games")
-        self.games_list_tab = self.notebook.add("Games List")
-
         self.load_custom_dll()
         self.csv_file_path = self.get_csv_file_path()
         
-        # Create UI elements for both tabs
-        self.create_filter_games_tab()
-        self.create_games_list_tab()
+        # Create main UI
+        self.create_main_interface()
 
-    def create_games_list_tab(self):
-        # Create frame for the games list
-        games_frame = ctk.CTkFrame(self.games_list_tab)
-        games_frame.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Add a search entry
-        search_frame = ctk.CTkFrame(games_frame)
-        search_frame.pack(fill='x', padx=10, pady=(10, 5))
-        
-        search_label = ctk.CTkLabel(search_frame, text="Search Games:")
-        search_label.pack(side='left', padx=5)
-        
-        self.search_var = tk.StringVar()
-        self.search_var.trace('w', self.filter_games_list)
-        search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var)
-        search_entry.pack(side='left', fill='x', expand=True, padx=5)
-
-        # Create a frame for the games list with scrollbar
-        list_frame = ctk.CTkFrame(games_frame)
-        list_frame.pack(fill='both', expand=True, padx=10, pady=5)
-
-        # Add scrollbar
-        scrollbar = ctk.CTkScrollbar(list_frame)
-        scrollbar.pack(side='right', fill='y')
-
-        # Create Text widget for games list
-        self.games_text = ctk.CTkTextbox(list_frame)
-        self.games_text.pack(fill='both', expand=True)
-        
-        # Populate the games list
-        self.populate_games_list()
-
-        # Add refresh button
-        refresh_button = ctk.CTkButton(games_frame, text="Refresh Games List", command=self.populate_games_list)
-        refresh_button.pack(pady=10)
-
-    def create_filter_games_tab(self):
-        # Create main container frame
-        main_container = ctk.CTkFrame(self.filter_tab)
+    def create_main_interface(self):
+        # Create main container frame with weight distribution
+        main_container = ctk.CTkFrame(self.parent_tab)
         main_container.pack(fill='both', expand=True, padx=10, pady=10)
 
-        # Create left sidebar frame
+        # Create left sidebar frame (1/3 width)
         sidebar_frame = ctk.CTkFrame(main_container, width=200, corner_radius=10)
         sidebar_frame.pack(side='left', fill='y', padx=10, pady=10)
 
-        # Create right content frame
-        main_content_frame = ctk.CTkFrame(main_container, corner_radius=10)
-        main_content_frame.pack(side='left', fill='both', expand=True, padx=10, pady=10)
+        # Create right content frame (2/3 width)
+        right_frame = ctk.CTkFrame(main_container, corner_radius=10)
+        right_frame.pack(side='left', fill='both', expand=True, padx=10, pady=10)
 
         # Create a TabView for Control Types, Buttons, and Vertical Filter
         tabview = ctk.CTkTabview(sidebar_frame, width=200)
@@ -501,96 +456,148 @@ class FilterGames:
 
         for control_type in control_types:
             var = tk.IntVar()
-            checkbox = ctk.CTkCheckBox(control_types_tab, text=control_type, variable=var)
+            checkbox = ctk.CTkCheckBox(control_types_tab, text=control_type, variable=var, command=self.update_filtered_list)
             checkbox.pack(padx=20, pady=5, anchor='w')
             self.control_type_vars[control_type] = var
 
         # Buttons tab content
         self.buttons_var = ctk.StringVar(value="Select number of buttons")
+        self.buttons_var.trace('w', lambda *args: self.update_filtered_list())
         button_options = ["Select number of buttons", "0", "1", "2", "3", "4", "5", "6"]
         buttons_label = ctk.CTkLabel(buttons_tab, text="Number of Buttons", font=("Arial", 14, "bold"))
         buttons_label.pack(pady=(10,5))
         buttons_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.buttons_var, values=button_options)
         buttons_dropdown.pack(padx=20, pady=5)
 
+        # Players tab content
+        '''
+        self.players_var = ctk.StringVar(value="Select number of players")
+        self.players_var.trace('w', lambda *args: self.update_filtered_list())
+        player_options = ["Select number of players", "1", "2", "3", "4", "5", "6", "7", "8"]
+        players_label = ctk.CTkLabel(buttons_tab, text="Number of Players", font=("Arial", 14, "bold"))
+        players_label.pack(pady=(10, 5))
+        players_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.players_var, values=player_options)
+        players_dropdown.pack(padx=20, pady=5)'''
+
         # Vertical tab content
         self.vertical_checkbox_var = tk.IntVar()
-        vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games", variable=self.vertical_checkbox_var)
+        vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games", 
+                                          variable=self.vertical_checkbox_var,
+                                          command=self.update_filtered_list)
         vertical_checkbox.pack(padx=20, pady=10, anchor='w')
 
+        # Button frame at bottom of sidebar
+        button_frame = ctk.CTkFrame(sidebar_frame)
+        button_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
         # Filter and Reset buttons
-        filter_button = ctk.CTkButton(main_content_frame, text="Filter Games", command=self.filter_games_from_csv)
-        filter_button.pack(pady=20)
+        filter_button = ctk.CTkButton(button_frame, text="Save Filter", command=self.filter_games_from_csv)
+        filter_button.pack(pady=(0, 5), fill='x')
 
-        show_all_button = ctk.CTkButton(main_content_frame, text="Reset to Default", command=self.show_all_games, fg_color="red")
-        show_all_button.pack(pady=10)
+        show_all_button = ctk.CTkButton(button_frame, text="Reset to Default", 
+                                       command=self.show_all_games, fg_color="red")
+        show_all_button.pack(fill='x')
 
-    def populate_games_list(self):
+        # Create right side games list
+        # Add a search entry at the top
+        search_frame = ctk.CTkFrame(right_frame)
+        search_frame.pack(fill='x', padx=5, pady=5)
+        
+        search_label = ctk.CTkLabel(search_frame, text="Search Games:")
+        search_label.pack(side='left', padx=5)
+        
+        self.search_var = tk.StringVar()
+        self.search_var.trace('w', lambda *args: self.update_filtered_list())
+        search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+        # Create games list with scrollbar
+        list_frame = ctk.CTkFrame(right_frame)
+        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+        self.games_text = ctk.CTkTextbox(list_frame)
+        self.games_text.pack(fill='both', expand=True, side='left')
+
+        #scrollbar = ctk.CTkScrollbar(list_frame, command=self.games_text.yview)
+        #scrollbar.pack(side='right', fill='y')
+        #self.games_text.configure(yscrollcommand=scrollbar.set)
+
+        # Initial population of the games list
+        self.update_filtered_list()
+
+    def update_filtered_list(self, *args):
         try:
-            # Clear existing content
+            # Clear current display
             self.games_text.delete('1.0', 'end')
             
+            # Get search term
+            search_term = self.search_var.get().lower()
+            
+            # Get current filter settings
+            selected_ctrltypes = self.get_selected_control_types()
+            selected_buttons = self.buttons_var.get().strip()
+            #selected_players = self.players_var.get().strip()  # New player selection
+            vertical_filter = self.vertical_checkbox_var.get()
+            
             # Get ROMs in build
             roms_in_build = self.scan_collections_for_roms()
             
-            # Read CSV and match ROMs with descriptions
+            # Read CSV and apply filters
             games_info = []
             with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
                 reader = csv.DictReader(csv_file)
                 for row in reader:
                     rom_name = row.get('ROM Name', '').strip()
-                    if rom_name in roms_in_build:
-                        description = row.get('Description', '').strip()
-                        if description:  # Only add if there's a description
-                            games_info.append(f"{description} ({rom_name})\n")
+                    if rom_name not in roms_in_build:
+                        continue
+                        
+                    description = row.get('Description', '').strip()
+                    joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
+                    vertical = row.get('Vertical')
+                    buttons = row.get('Buttons', '0')
+                    ##players = row.get('Players', '1')  # Get the Players column, default to '1'
+
+                    # Convert buttons and players to integers for comparison
+                    buttons = int(buttons) if buttons.isdigit() else float('inf')
+                    ##players = int(players) if players.isdigit() else float('inf')
+
+                    # Apply filters
+                    if vertical_filter and (not vertical or vertical.strip().upper() != "VERTICAL"):
+                        continue
+                    if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
+                        continue
+                    ##if selected_players != "Select number of players" and players != int(selected_players):
+                        ##continue
+                    if selected_ctrltypes:
+                        matches_control = False
+                        for selected_ctrltype in selected_ctrltypes:
+                            mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
+                            if self.control_type_exists(joystick_input, mapped_ctrltype):
+                                matches_control = True
+                                break
+                        if not matches_control:
+                            continue
+
+                    # Apply search filter
+                    if search_term and search_term not in description.lower() and search_term not in rom_name.lower():
+                        continue
+
+                    # Format the display string based on whether there's a description
+                    if description:
+                        display_string = f"{description} ({rom_name})\n"
+                    else:
+                        display_string = f"{rom_name}\n"
+
+                    games_info.append(display_string)
             
-            # Sort alphabetically and insert into text widget
+            # Sort and display results
             games_info.sort()
+            self.games_text.insert('1.0', f"Matching Games: {len(games_info)}\n\n")
             for game in games_info:
                 self.games_text.insert('end', game)
             
-            # Add summary at the top
-            self.games_text.insert('1.0', f"Total Games in Build: {len(games_info)}\n\n")
-            
         except Exception as e:
-            messagebox.showerror("Error", f"Error populating games list: {str(e)}")
-
-    def filter_games_list(self, *args):
-        # Get search term
-        search_term = self.search_var.get().lower()
-        
-        # Clear current display
-        self.games_text.delete('1.0', 'end')
-        
-        try:
-            # Get ROMs in build
-            roms_in_build = self.scan_collections_for_roms()
-            
-            # Read CSV and match ROMs with descriptions
-            games_info = []
-            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
-                reader = csv.DictReader(csv_file)
-                for row in reader:
-                    rom_name = row.get('ROM Name', '').strip()
-                    if rom_name in roms_in_build:
-                        description = row.get('Description', '').strip()
-                        if description and (search_term in description.lower() or search_term in rom_name.lower()):
-                            games_info.append(f"{description} ({rom_name})\n")
-            
-            # Sort and display filtered results
-            games_info.sort()
-            for game in games_info:
-                self.games_text.insert('end', game)
-            
-            # Add summary at the top
-            self.games_text.insert('1.0', f"Found Games: {len(games_info)}\n\n")
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error filtering games list: {str(e)}")
-
-    # [Keep all other existing methods unchanged: load_custom_dll, get_csv_file_path, 
-    # sanitize_csv_cell, get_selected_control_types, control_type_exists, 
-    # check_output_dir, scan_collections_for_roms, filter_games_from_csv, show_all_games]
+            messagebox.showerror("Error", f"Error updating filtered list: {str(e)}")
 
     def load_custom_dll(self):
         #import ctypes
@@ -690,6 +697,7 @@ class FilterGames:
                 with open(self.output_file, 'w', encoding='utf-8') as f:
                     game_count = 0
                     selected_ctrltypes = self.get_selected_control_types()
+                    #selected_players = self.players_var.get().strip()  # New player selection
                     selected_buttons = self.buttons_var.get().strip()
                     vertical_filter = self.vertical_checkbox_var.get()
 
@@ -698,7 +706,10 @@ class FilterGames:
                         rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
                         vertical = row.get('Vertical')
                         buttons = row.get('Buttons')
+                        #players = row.get('Players')  # Get the Players column
+
                         buttons = int(buttons) if buttons.isdigit() else float('inf')
+                        #players = int(players) if players.isdigit() else float('inf')
 
                         # Check if the ROM is in the current build
                         if rom_name not in roms_in_build:
@@ -709,6 +720,8 @@ class FilterGames:
                             continue
                         if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
                             continue
+                        #if selected_players != "Select number of players" and players != int(selected_players):
+                            #continue
                         if selected_ctrltypes:
                             for selected_ctrltype in selected_ctrltypes:
                                 mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)

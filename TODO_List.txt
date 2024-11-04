@@ -3,8 +3,8 @@ IN-PROGRESS remove title from themes screen
 DONE - add logo to bottom right of thumbnail
 - move play video button
 - make sure all warning suppressed
-- edit filter games screen. break tabs up to fill area
+DONE - edit filter games screen. break tabs up to fill area
 DONE - thumbnail/video don't auto resize when full screen unless you click next/previous
 DONE - themes thumbnail use .png file if no video found
-- Fix slow videos. specially if full size
+PENDING - Fix slow videos. specially if full size
 
