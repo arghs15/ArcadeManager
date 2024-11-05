@@ -17,6 +17,7 @@ import cv2
 from threading import Thread, Lock
 import queue
 import ctypes
+from tkinter import messagebox, filedialog
 
 class FilterGamesApp:
     @staticmethod
@@ -425,7 +426,7 @@ class FilterGames:
         
         # Create main UI
         self.create_main_interface()
-
+    
     def create_main_interface(self):
         # Create main container frame with weight distribution
         main_container = ctk.CTkFrame(self.parent_tab)
@@ -439,6 +440,9 @@ class FilterGames:
         right_frame = ctk.CTkFrame(main_container, corner_radius=10)
         right_frame.pack(side='left', fill='both', expand=True, padx=10, pady=10)
 
+        # Initialize status bar first
+        self.status_bar = ctk.CTkLabel(right_frame, text="Ready", anchor='w')
+        
         # Create a TabView for Control Types, Buttons, and Vertical Filter
         tabview = ctk.CTkTabview(sidebar_frame, width=200)
         tabview.pack(fill='both', expand=True, padx=10, pady=10)
@@ -489,9 +493,19 @@ class FilterGames:
         button_frame = ctk.CTkFrame(sidebar_frame)
         button_frame.pack(side='bottom', fill='x', padx=10, pady=10)
 
-        # Filter and Reset buttons
-        filter_button = ctk.CTkButton(button_frame, text="Save Filter", command=self.filter_games_from_csv)
+        # Filter, Clear Filters, and Reset buttons
+        filter_button = ctk.CTkButton(button_frame, text="Save Filter", command=self.filter_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
         filter_button.pack(pady=(0, 5), fill='x')
+
+        clear_filters_button = ctk.CTkButton(button_frame, text="Clear Filters", 
+                                           command=self.clear_filters)
+        clear_filters_button.pack(pady=(0, 5), fill='x')
+
+        # Export button currently commented out, but works
+        '''export_button = ctk.CTkButton(button_frame, text="Export List", 
+                                 command=self.export_filtered_list,
+                                 fg_color="green")
+        export_button.pack(pady=(0, 5), fill='x')'''
 
         show_all_button = ctk.CTkButton(button_frame, text="Reset to Default", 
                                        command=self.show_all_games, fg_color="red")
@@ -517,12 +531,31 @@ class FilterGames:
         self.games_text = ctk.CTkTextbox(list_frame)
         self.games_text.pack(fill='both', expand=True, side='left')
 
-        #scrollbar = ctk.CTkScrollbar(list_frame, command=self.games_text.yview)
-        #scrollbar.pack(side='right', fill='y')
-        #self.games_text.configure(yscrollcommand=scrollbar.set)
+        # Pack status bar last
+        self.status_bar.pack(fill='x', padx=5, pady=(5, 0))
 
         # Initial population of the games list
         self.update_filtered_list()
+
+    def clear_filters(self):
+        """Reset all filters to their default states"""
+        # Reset control type checkboxes
+        for var in self.control_type_vars.values():
+            var.set(0)
+            
+        # Reset dropdowns
+        self.buttons_var.set("Select number of buttons")
+        self.players_var.set("Select number of players")
+        
+        # Reset vertical checkbox
+        self.vertical_checkbox_var.set(0)
+        
+        # Clear search box
+        self.search_var.set("")
+        
+        # Update the filtered list
+        self.update_filtered_list()
+        self.status_bar.configure(text="All filters cleared")
 
     def update_filtered_list(self, *args):
         try:
@@ -535,13 +568,17 @@ class FilterGames:
             # Get current filter settings
             selected_ctrltypes = self.get_selected_control_types()
             selected_buttons = self.buttons_var.get().strip()
-            selected_players = self.players_var.get().strip()  # New player selection
+            selected_players = self.players_var.get().strip()
             vertical_filter = self.vertical_checkbox_var.get()
+            
+            # Update status to show we're working
+            self.status_bar.configure(text="Updating list...")
             
             # Get ROMs in build
             roms_in_build = self.scan_collections_for_roms()
             
             # Read CSV and apply filters
+            self.filtered_games = []  # Store filtered games for export
             games_info = []
             with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
                 reader = csv.DictReader(csv_file)
@@ -554,7 +591,7 @@ class FilterGames:
                     joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
                     vertical = row.get('Vertical')
                     buttons = row.get('Buttons', '0')
-                    players = row.get('numberPlayers', '1')  # Get the Players column, default to '1'
+                    players = row.get('numberPlayers', '1')
 
                     # Convert buttons and players to integers for comparison
                     buttons = int(buttons) if buttons.isdigit() else float('inf')
@@ -581,7 +618,10 @@ class FilterGames:
                     if search_term and search_term not in description.lower() and search_term not in rom_name.lower():
                         continue
 
-                    # Format the display string based on whether there's a description
+                    # Store the full row data for export
+                    self.filtered_games.append(row)
+
+                    # Format the display string
                     if description:
                         display_string = f"{description} ({rom_name})\n"
                     else:
@@ -589,14 +629,52 @@ class FilterGames:
 
                     games_info.append(display_string)
             
-            # Sort and display results
+           # Sort and display results
             games_info.sort()
             self.games_text.insert('1.0', f"Matching Games: {len(games_info)}\n\n")
             for game in games_info:
                 self.games_text.insert('end', game)
             
+            # Update status bar with count
+            self.status_bar.configure(text=f"Found {len(games_info)} matching games")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Error updating filtered list: {str(e)}")
+            self.status_bar.configure(text="Error updating list")
+
+    def export_filtered_list(self):
+        """Export the current filtered list to a CSV file"""
+        if not hasattr(self, 'filtered_games') or not self.filtered_games:
+            messagebox.showinfo("Export", "No games to export")
+            return
+
+        try:
+            # Ask user for save location
+            file_path = filedialog.asksaveasfilename(
+                defaultextension='.csv',
+                filetypes=[('CSV files', '*.csv'), ('All files', '*.*')],
+                initialdir=os.getcwd(),
+                initialfile='filtered_games.csv'
+            )
+            
+            if not file_path:  # User cancelled
+                return
+
+            # Get the fieldnames from the first row
+            fieldnames = self.filtered_games[0].keys()
+
+            # Write to CSV
+            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.filtered_games)
+
+            self.status_bar.configure(text=f"Exported {len(self.filtered_games)} games to CSV")
+            messagebox.showinfo("Export Complete", f"Successfully exported {len(self.filtered_games)} games to:\n{file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Error exporting games: {str(e)}")
+            self.status_bar.configure(text="Error exporting games")
 
     def load_custom_dll(self):
         #import ctypes
@@ -687,6 +765,7 @@ class FilterGames:
 
     # Updated filter_games_from_csv method
     def filter_games_from_csv(self):
+        self.status_bar.configure(text="Saving filters...")
         self.check_output_dir()
         roms_in_build = self.scan_collections_for_roms()
 
@@ -735,13 +814,16 @@ class FilterGames:
                     # Feedback for users
                     if game_count == 0:
                         messagebox.showinfo("No Games Found", "No games matched the selected filters.")
+                        self.status_bar.configure(text="No games matched filters")
                     else:
                         messagebox.showinfo("Success", f"{game_count} games added to {self.output_file}")
+                        self.status_bar.configure(text=f"Saved {game_count} games to filter")
 
         except Exception as e:
             messagebox.showerror("Error", f"Error opening CSV file: {e}")
 
     def show_all_games(self):
+        self.status_bar.configure(text="Resetting to default...")
         try:
             source = "autochanger/include.txt"  # Define the correct source path
             destination = "collections/Arcades/include.txt"  # Define the correct destination path
