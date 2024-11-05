@@ -470,14 +470,13 @@ class FilterGames:
         buttons_dropdown.pack(padx=20, pady=5)
 
         # Players tab content
-        '''
         self.players_var = ctk.StringVar(value="Select number of players")
         self.players_var.trace('w', lambda *args: self.update_filtered_list())
         player_options = ["Select number of players", "1", "2", "3", "4", "5", "6", "7", "8"]
         players_label = ctk.CTkLabel(buttons_tab, text="Number of Players", font=("Arial", 14, "bold"))
         players_label.pack(pady=(10, 5))
         players_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.players_var, values=player_options)
-        players_dropdown.pack(padx=20, pady=5)'''
+        players_dropdown.pack(padx=20, pady=5)
 
         # Vertical tab content
         self.vertical_checkbox_var = tk.IntVar()
@@ -536,7 +535,7 @@ class FilterGames:
             # Get current filter settings
             selected_ctrltypes = self.get_selected_control_types()
             selected_buttons = self.buttons_var.get().strip()
-            #selected_players = self.players_var.get().strip()  # New player selection
+            selected_players = self.players_var.get().strip()  # New player selection
             vertical_filter = self.vertical_checkbox_var.get()
             
             # Get ROMs in build
@@ -555,19 +554,19 @@ class FilterGames:
                     joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
                     vertical = row.get('Vertical')
                     buttons = row.get('Buttons', '0')
-                    ##players = row.get('Players', '1')  # Get the Players column, default to '1'
+                    players = row.get('numberPlayers', '1')  # Get the Players column, default to '1'
 
                     # Convert buttons and players to integers for comparison
                     buttons = int(buttons) if buttons.isdigit() else float('inf')
-                    ##players = int(players) if players.isdigit() else float('inf')
+                    players = int(players) if players.isdigit() else float('inf')
 
                     # Apply filters
                     if vertical_filter and (not vertical or vertical.strip().upper() != "VERTICAL"):
                         continue
                     if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
                         continue
-                    ##if selected_players != "Select number of players" and players != int(selected_players):
-                        ##continue
+                    if selected_players != "Select number of players" and players != int(selected_players):
+                        continue
                     if selected_ctrltypes:
                         matches_control = False
                         for selected_ctrltype in selected_ctrltypes:
@@ -610,7 +609,7 @@ class FilterGames:
 
     def get_csv_file_path(self):
         # Check for an external CSV in the autochanger folder
-        autochanger_csv_path = os.path.join('autochanger', 'MAMEx.csv')
+        autochanger_csv_path = os.path.join('autochanger', 'META.csv')
         if os.path.exists(autochanger_csv_path):
             return autochanger_csv_path
 
@@ -621,7 +620,7 @@ class FilterGames:
             base_path = os.path.dirname(os.path.abspath(__file__))
 
         # Return the path to the bundled CSV
-        return os.path.join(base_path, 'meta', 'hyperlist', 'MAMEx.csv')
+        return os.path.join(base_path, 'meta', 'hyperlist', 'META.csv')
 
     def sanitize_csv_cell(self, cell_content):
         if cell_content:
@@ -697,7 +696,7 @@ class FilterGames:
                 with open(self.output_file, 'w', encoding='utf-8') as f:
                     game_count = 0
                     selected_ctrltypes = self.get_selected_control_types()
-                    #selected_players = self.players_var.get().strip()  # New player selection
+                    selected_players = self.players_var.get().strip()  # New player selection
                     selected_buttons = self.buttons_var.get().strip()
                     vertical_filter = self.vertical_checkbox_var.get()
 
@@ -706,10 +705,10 @@ class FilterGames:
                         rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
                         vertical = row.get('Vertical')
                         buttons = row.get('Buttons')
-                        #players = row.get('Players')  # Get the Players column
+                        players = row.get('numberPlayers')  # Get the Players column
 
                         buttons = int(buttons) if buttons.isdigit() else float('inf')
-                        #players = int(players) if players.isdigit() else float('inf')
+                        players = int(players) if players.isdigit() else float('inf')
 
                         # Check if the ROM is in the current build
                         if rom_name not in roms_in_build:
@@ -720,8 +719,8 @@ class FilterGames:
                             continue
                         if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
                             continue
-                        #if selected_players != "Select number of players" and players != int(selected_players):
-                            #continue
+                        if selected_players != "Select number of players" and players != int(selected_players):
+                            continue
                         if selected_ctrltypes:
                             for selected_ctrltype in selected_ctrltypes:
                                 mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
