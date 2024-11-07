@@ -18,6 +18,11 @@ from threading import Thread, Lock
 import queue
 import ctypes
 from tkinter import messagebox, filedialog
+import configparser
+from typing import List, Optional
+import tkinter.font as tkFont
+from typing import List
+
 
 class FilterGamesApp:
     @staticmethod
@@ -93,8 +98,10 @@ class FilterGamesApp:
         self.advanced_configs = AdvancedConfigs(self.advanced_configs_tab)
 
         # Playlists tab
+        # Playlists tab
         self.playlists_tab = self.tabview.add("Playlists")
-        self.playlists = Playlists(self.playlists_tab)
+        self.playlists = Playlists(self.root, self.playlists_tab)  # Pass root here
+
         
         # Filter Games tab
         self.filter_games_tab = self.tabview.add("Filter Games")
@@ -145,6 +152,105 @@ class FilterGamesApp:
                 ctk.CTkMessageBox.showerror("Error", f"The script does not exist: {script_name}")
         except Exception as e:
             ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
+
+
+class ConfigManager:
+    def __init__(self):
+        self.base_path = os.getcwd()
+        self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
+        self.config = configparser.ConfigParser()
+        self.initialize_config()
+
+    '''cycle_playlist = , and exluded =  can be added manually. I hide them so users dont break it.
+    - If the key is missing in the INI file, use the hardcoded default values.
+    - If the key exists and has values, use those values from the INI file.
+    - If the key exists but has no values (e.g., an empty string), do not use the hardcoded defaults—instead, return an empty list to indicate no values are set.
+    Note: For excluded = this means it will return all results if key exists but no values'''
+    def initialize_config(self):
+        """Initialize the INI file with default values if it doesn't exist."""
+        if not os.path.exists(self.config_path):
+            self.config['Settings'] = {
+                'settings_file': '5_7'  # Will be used to form settings5_7.conf
+            }
+            self.save_config()
+        else:
+            self.config.read(self.config_path)
+
+    def save_config(self):
+        """Save the current configuration to the INI file."""
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, 'w') as configfile:
+            self.config.write(configfile)
+
+    def get_settings_file(self) -> str:
+        """Get the settings file name."""
+        try:
+            settings_value = self.config.get('Settings', 'settings_file', fallback='5_7')
+            return f"settings{settings_value}.conf"
+        except Exception as e:
+            print(f"Error reading settings file: {str(e)}")
+            return "settings5_7.conf"
+
+    def get_cycle_playlist(self) -> List[str]:
+        """Get the cycle playlist configuration based on the specific conditions."""
+        try:
+            if self.config.has_option('Settings', 'cycle_playlist'):
+                playlists = self.config.get('Settings', 'cycle_playlist')
+                if playlists:  # Non-empty value in INI
+                    return [item.strip() for item in playlists.split(',') if item.strip()]
+                else:  # Key exists but is empty
+                    return []
+            else:
+                # Key is missing, use hardcoded default
+                return ["arcader", "consoles", "favorites", "lastplayed"]
+        except Exception as e:
+            print(f"Error reading cycle playlist: {str(e)}")
+            return ["arcader", "consoles", "favorites", "lastplayed"]
+
+    def get_excluded_playlists(self) -> List[str]:
+        """Get the excluded playlists configuration based on the specific conditions."""
+        try:
+            if self.config.has_option('Settings', 'excluded'):
+                excluded = self.config.get('Settings', 'excluded')
+                if excluded:  # Non-empty value in INI
+                    return [item.strip() for item in excluded.split(',') if item.strip()]
+                else:  # Key exists but is empty
+                    return []
+            else:
+                # Key is missing, use hardcoded default
+                return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
+                        "arcades220", "arcader", "arcades", "consoles", "favorites", 
+                        "lastplayed", "settings"]
+        except Exception as e:
+            print(f"Error reading excluded playlists: {str(e)}")
+            return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
+                    "arcades220", "arcader", "arcades", "consoles", "favorites", 
+                    "lastplayed", "settings"]
+
+    def update_cycle_playlist(self, playlists: List[str]):
+        """Update the cycle playlist configuration."""
+        try:
+            self.config.set('Settings', 'cycle_playlist', ', '.join(playlists))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating cycle playlist: {str(e)}")
+
+    def update_excluded_playlists(self, playlists: List[str]):
+        """Update the excluded playlists configuration."""
+        try:
+            self.config.set('Settings', 'excluded', ', '.join(playlists))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating excluded playlists: {str(e)}")
+
+    def update_settings_file(self, settings_value: str):
+        """Update the settings file configuration."""
+        try:
+            self.config.set('Settings', 'settings_file', settings_value)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating settings file: {str(e)}")
+
             
 
 class ExeFileSelector:
@@ -816,7 +922,8 @@ class FilterGames:
                         messagebox.showinfo("No Games Found", "No games matched the selected filters.")
                         self.status_bar.configure(text="No games matched filters")
                     else:
-                        messagebox.showinfo("Success", f"{game_count} games added to {self.output_file}")
+                        ##Removed message box. status bar no outputs results without having to show, and manually press ok.]
+                        #messagebox.showinfo("Success", f"{game_count} games added to {self.output_file}")
                         self.status_bar.configure(text=f"Saved {game_count} games to filter")
 
         except Exception as e:
@@ -844,26 +951,27 @@ class FilterGames:
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process files: {str(e)}")
 
+
 class Playlists:
-    def __init__(self, parent_tab):
+    def __init__(self, root, parent_tab):
+        self.root = root  # Store root reference
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
-        # Replace the hardcoded settings file with the dynamic one
-        settings_file = self.read_settings_file_name()
+        
+        # Initialize the configuration manager
+        self.config_manager = ConfigManager()
+        
+        # Get settings file name from config
+        settings_file = self.config_manager.get_settings_file()
         self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", settings_file)
         
         self.check_vars = []
         self.check_buttons = []
         
-        ## Replaced with a function to retrieve a lsit form autochnagers. if one not found it uses the list below ##
-        # Read excluded playlists from the configuration file
-        self.excluded_playlists = self.read_excluded_playlists()
-        '''self.excluded_playlists = [
-            "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
-            "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
-        ]'''
-        
+        # Read excluded playlists from the configuration
+        self.excluded_playlists = self.config_manager.get_excluded_playlists()
+
         # Playlists associated with each toggle
         #self.genre_playlists = ["beat em ups", "fight club", "old school", "puzzler", "racer", "run n gun", "shoot em ups", "sports", "trackball", "twinsticks", "vector"]
         self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "gunner", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]  # Example, can expand later
@@ -873,26 +981,6 @@ class Playlists:
         self.main_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
-        
-        #Come back top this. No idea why sort is not working.Manu and genre work fine
-        '''
-        # Create a frame for switches and place it at the top
-        self.switch_frame = ctk.CTkFrame(self.main_frame)
-        self.switch_frame.pack(fill="x", padx=10, pady=(10, 5))
-        
-        # Add CTkSwitch widgets in the switch frame
-        self.genre_switch = ctk.CTkSwitch(self.switch_frame, text="Genres", command=self.toggle_genres, onvalue="on", offvalue="off")
-        self.genre_switch.select()  # Default to 'on'
-        self.genre_switch.pack(side="left", padx=5, pady=5)
-
-        self.manufacturer_switch = ctk.CTkSwitch(self.switch_frame, text="Manufacturers", command=self.toggle_manufacturers, onvalue="on", offvalue="off")
-        self.manufacturer_switch.select()  # Default to 'on'
-        self.manufacturer_switch.pack(side="left", padx=5, pady=5)
-
-        self.sort_types_switch = ctk.CTkSwitch(self.switch_frame, text="Sort Types", command=self.toggle_sort_types, onvalue="on", offvalue="off")
-        self.sort_types_switch.select()  # Default to 'on'
-        self.sort_types_switch.pack(side="left", padx=5, pady=5)
-        '''
         # Initialize the toggle state dictionary for each button
         self.toggle_state = {
             "genres": False,       # False means unselected, True means selected
@@ -902,11 +990,24 @@ class Playlists:
         
         # Create a frame for the scrollable checkbox area below the switches
         self.scrollable_checklist = ctk.CTkScrollableFrame(self.main_frame, width=400, height=400)
-        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=10)
+        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=(10, 5))  # Reduced bottom padding
+
+        # Create status message label
+        self.status_label = ctk.CTkLabel(
+            self.main_frame,
+            text="",
+            height=25,
+            fg_color=("gray85", "gray25"),  # Light/dark mode colors
+            corner_radius=8
+        )
+        self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
+        
+        # Hide status label initially
+        self.status_label.pack_forget()
 
         # Populate checkboxes based on available playlist files
         self.populate_checkboxes()
-
+    
         # Create main button frame
         button_frame = ctk.CTkFrame(self.parent_tab)
         button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
@@ -967,56 +1068,116 @@ class Playlists:
         )
         self.sort_type_button.pack(side="left", fill="x", expand=True, padx=2)
 
-
-        # Drop down list version. good if we need to add more
-        '''# Create a frame for the buttons with grid layout
-        button_frame = ctk.CTkFrame(self.parent_tab)
-        button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
-
-        # Configure grid columns to be evenly spaced
-        button_frame.grid_columnconfigure((0, 1), weight=1)
-
-        # Create main action buttons in first row
-        self.create_playlist_button = ctk.CTkButton(
-            button_frame,
-            text="Create Playlist",
-            command=self.create_playlist,
-            fg_color="#4CAF50",
-            hover_color="#45A049"
-        )
-        self.create_playlist_button.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
-
-        self.reset_button = ctk.CTkButton(
-            button_frame,
-            text="Reset Playlists",
-            fg_color="#D32F2F",
-            hover_color="#C62828",
-            command=self.reset_playlists,
-            state="disabled"
-        )
-        self.reset_button.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
-
-        # Create a dropdown menu for category selections
-        self.category_var = ctk.StringVar(value="Select Category")
-        self.category_menu = ctk.CTkOptionMenu(
-            button_frame,
-            values=["All Genres", "All Manufacturers", "All Sort Types"],
-            variable=self.category_var,
-            command=self.handle_category_selection
-        )
-        self.category_menu.grid(row=1, column=0, columnspan=2, padx=2, pady=2, sticky="ew")
-
-    def handle_category_selection(self, choice):
-        if choice == "All Genres":
-            self.activate_special_playlist("genres", self.get_genre_playlists())
-        elif choice == "All Manufacturers":
-            self.activate_special_playlist("manufacturer", self.manufacturer_playlists)
-        elif choice == "All Sort Types":
-            self.activate_special_playlist("sort_type", self.sort_type_playlists)
-
-            # Check if backup file exists and enable/disable button accordingly
-            self.update_reset_button_state()'''
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
                         
+    def read_settings_file_name(self):
+        return self.config_manager.get_settings_file()
+    
+    def read_default_playlists(self):
+        return self.config_manager.get_cycle_playlist()
+    
+    def read_excluded_playlists(self):
+        return self.config_manager.get_excluded_playlists()
+
+    def show_temp_message(self, message):
+         # Create a temporary window to show a message
+        temp_window = tk.Toplevel(self.root)
+        temp_window.title("Message")
+        
+        # Set up the label with the message
+        label = tk.Label(temp_window, text=message, wraplength=250)  # Wrap long messages at 250px width
+        label.pack(pady=20, padx=20)  # Add padding to the label
+
+        # Calculate width based on message content
+        font = tkFont.Font(font=label.cget("font"))
+        text_width = font.measure(message) + 40  # Add some padding
+
+        # Limit the minimum and maximum width
+        window_width = min(max(text_width, 200), 400)  # Min 200, Max 400
+        window_height = 100  # Set a default height; adjust if needed for larger messages
+        
+        # Center the temporary window relative to the main window
+        self.root.update_idletasks()  # Ensure root's dimensions are up-to-date
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+
+        # Calculate position for the temp window to be centered
+        temp_x = main_x + (main_width // 2) - (window_width // 2)
+        temp_y = main_y + (main_height // 2) - (window_height // 2)
+        temp_window.geometry(f"{window_width}x{window_height}+{temp_x}+{temp_y}")
+
+        # Auto-close the temporary window after a brief period (e.g., 2 seconds)
+        temp_window.after(1000, temp_window.destroy)  # 2000ms = 2 seconds
+
+    def show_status_message(self, message, duration=2000):
+        # Show the status label if it's hidden
+        self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
+        
+        # Update the message
+        self.status_label.configure(text=message)
+        
+        # Schedule the message to be hidden
+        self.root.after(duration, self.hide_status_message)
+    
+    def hide_status_message(self):
+        self.status_label.pack_forget()
+
+    def update_conf_file(self, playlist_list):
+        try:
+            # Get default playlists from INI file - these should stay constant
+            default_playlists = self.config_manager.get_cycle_playlist()
+            
+            with open(self.autochanger_conf_path, 'r') as file:
+                lines = file.readlines()
+
+            cycle_playlist_found = False
+            first_playlist_found = False
+            updated_lines = []
+            first_selected_playlist = playlist_list[0] if playlist_list else ""
+
+            for line in lines:
+                if line.startswith("cyclePlaylist ="):
+                    if default_playlists:
+                        new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                    else:
+                        new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
+                    updated_lines.append(new_line)
+                    cycle_playlist_found = True
+                elif line.startswith("firstPlaylist ="):
+                    if default_playlists:
+                        main_default_playlist = default_playlists[0]
+                        new_line = f"firstPlaylist = {main_default_playlist}\n"
+                    else:
+                        new_line = f"firstPlaylist = {first_selected_playlist}\n"
+                    updated_lines.append(new_line)
+                    first_playlist_found = True
+                else:
+                    updated_lines.append(line)
+
+            # Add lines if they weren't found
+            if not cycle_playlist_found:
+                if default_playlists:
+                    updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
+                else:
+                    updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
+            if not first_playlist_found:
+                if default_playlists:
+                    updated_lines.append(f"firstPlaylist = {default_playlists[0]}\n")
+                else:
+                    updated_lines.append(f"firstPlaylist = {first_selected_playlist}\n")
+
+            # Write the updated lines back to the file
+            with open(self.autochanger_conf_path, 'w') as file:
+                file.writelines(updated_lines)
+
+            # Show status message instead of popup
+            self.show_status_message("✓ Playlists updated successfully")
+        except Exception as e:
+            # Show error in status message
+            self.show_status_message(f"⚠️ Error: {str(e)}")
+
     # Gets all playlists not included in manufacturer and sort types
     def get_genre_playlists(self):
         return [name for name, _ in self.check_vars 
@@ -1034,6 +1195,7 @@ class Playlists:
                     self.excluded_playlists.remove(genre)
                     
         self.refresh_checkboxes()
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
     
     def toggle_manufacturers(self):
         if self.manufacturer_switch.get() == "off":
@@ -1048,6 +1210,7 @@ class Playlists:
                     self.excluded_playlists.remove(manufacturer)
 
         self.refresh_checkboxes()
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
     
     def toggle_sort_types(self):
         print(f"Sort Switch State Before: {self.sort_types_switch.get()}")
@@ -1061,6 +1224,7 @@ class Playlists:
                     self.excluded_playlists.remove(sort)
         
         self.refresh_checkboxes()
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
     
     def refresh_checkboxes(self):
         for widget in self.scrollable_checklist.winfo_children():
@@ -1167,30 +1331,12 @@ class Playlists:
 
         # Toggle the button's state for next click
         self.toggle_state[button_type] = not current_state
-
-    def read_settings_file_name(self):
-        try:
-            with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
-                for line in file:
-                    line = line.strip()
-                    if line.startswith("settingsFile ="):
-                        settings_value = line.split("=", 1)[1].strip()
-                        # Only use the custom value if it's not empty
-                        if settings_value:
-                            return f"settings{settings_value}.conf"
-            # If no settings line found or empty value, use default
-            return "settings5_7.conf"
-        except FileNotFoundError:
-            return "settings5_7.conf"  # Default if file not found
-        except Exception as e:
-            print(f"An error occurred while reading settings file name: {str(e)}")
-            return "settings5_7.conf"  # Default if any error occurs
                
     def update_reset_button_state(self):
         """Check if backup settings file exists and update reset button state"""
         try:
-            # Get current settings filename
-            current_settings = self.read_settings_file_name()
+            # Get current settings filename from config manager
+            current_settings = self.config_manager.get_settings_file()
             # Create backup filename
             backup_file = current_settings.replace(".conf", "x.conf")
             # Full path to backup file
@@ -1208,10 +1354,10 @@ class Playlists:
     def reset_playlists(self):
         """Reset the settings by copying the backup settings file (with 'x' suffix) to the current settings file."""
         try:
-            # Get the current settings filename being used (e.g., "settings5_2.conf" or "settings5_7.conf")
-            current_settings = self.read_settings_file_name()
+            # Get the current settings filename from config manager
+            current_settings = self.config_manager.get_settings_file()
             
-            # Create the backup filename by adding 'x' (e.g., "settings5_2x.conf" or "settings5_7x.conf")
+            # Create the backup filename by adding 'x'
             backup_file = current_settings.replace(".conf", "x.conf")
             
             # Path to the backup configuration file
@@ -1226,532 +1372,6 @@ class Playlists:
                 messagebox.showerror("Error", f"Backup configuration file '{backup_file}' not found.")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred during reset: {str(e)}")
-    
-    def read_default_playlists(self):
-        try:
-            with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
-                found_line = False
-                for line in file:
-                    line = line.strip()
-                    if line.startswith("cyclePlaylist ="):
-                        found_line = True
-                        default_playlists = [item.strip() for item in line.split("=", 1)[1].split(",") if item.strip()]
-                        return default_playlists
-                # Only return defaults if line wasn't found at all
-                if not found_line:
-                    return ["arcader", "consoles", "favorites", "lastplayed"]  # Default if line not found
-                return []  # Empty list if line was found but empty
-        except FileNotFoundError:
-            return ["arcader", "consoles", "favorites", "lastplayed"]  # Default if file not found
-        except Exception as e:
-            print(f"An error occurred while reading default playlists: {str(e)}")
-            return []
-    
-    def read_excluded_playlists(self):
-        try:
-            with open(os.path.join("autochanger", "customisation.txt"), 'r') as file:
-                for line in file:
-                    line = line.strip()
-                    if line.startswith("excluded ="):
-                        excluded_playlists = [item.strip() for item in line.split("=", 1)[1].split(",") if item.strip()]
-                        return excluded_playlists
-            return [
-                "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
-                "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
-            ]
-        except FileNotFoundError:
-            return [
-                "arcades40", "arcades60", "arcades80", "arcades120", "arcades150", "arcades220",
-                "arcader", "arcades", "consoles", "favorites", "lastplayed", "settings"
-            ]
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred while reading excluded playlists: {str(e)}")
-            return []
-            
-    def update_conf_file(self, playlist_list):
-        try:
-            default_playlists = self.read_default_playlists()
-            
-            with open(self.autochanger_conf_path, 'r') as file:
-                lines = file.readlines()
-
-            cycle_playlist_found = False
-            first_playlist_found = False
-
-            updated_lines = []
-            first_selected_playlist = playlist_list[0] if playlist_list else ""
-
-            for line in lines:
-                if line.startswith("cyclePlaylist ="):
-                    if default_playlists:
-                        new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
-                    else:
-                        new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
-                    updated_lines.append(new_line)
-                    cycle_playlist_found = True
-                elif line.startswith("firstPlaylist ="):
-                    if default_playlists:
-                        main_default_playlist = default_playlists[0]
-                        new_line = f"firstPlaylist = {main_default_playlist}\n"
-                    else:
-                        new_line = f"firstPlaylist = {first_selected_playlist}\n"
-                    updated_lines.append(new_line)
-                    first_playlist_found = True
-                else:
-                    updated_lines.append(line)
-
-            if not cycle_playlist_found:
-                if default_playlists:
-                    updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
-                else:
-                    updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
-            if not first_playlist_found:
-                if default_playlists:
-                    updated_lines.append(f"firstPlaylist = {default_playlists[0]}\n")
-                else:
-                    updated_lines.append(f"firstPlaylist = {first_selected_playlist}\n")
-
-            with open(self.autochanger_conf_path, 'w') as file:
-                file.writelines(updated_lines)
-
-            messagebox.showinfo("Success", f"Updated Playlist(s): {', '.join(playlist_list)}")
-        except Exception as e:
-            messagebox.showerror("Error", f"An error occurred: {str(e)}")
-
-'''import os
-import cv2
-import time
-import subprocess
-import customtkinter as ctk
-from tkinter import messagebox
-from PIL import Image, ImageTk
-from collections import deque
-from threading import Thread, Lock, Event
-import queue
-
-class RateLimiter:
-    def __init__(self, min_interval=0.3):
-        self.min_interval = min_interval
-        self.last_call = 0
-        self.lock = Lock()
-        
-    def can_proceed(self):
-        with self.lock:
-            current_time = time.time()
-            if current_time - self.last_call >= self.min_interval:
-                self.last_call = current_time
-                return True
-            return False
-
-class VideoManager:
-    def __init__(self, video_path, max_frames_cache=30):
-        self.video_path = video_path
-        self.max_frames_cache = max_frames_cache
-        self.frames_cache = deque(maxlen=max_frames_cache)
-        self.cap = None
-        self.current_frame_index = 0
-        self.total_frames = 0
-        self.lock = Lock()
-        self.is_loading = False
-        self.stop_event = Event()
-        
-        # Initialize video capture in a safe way
-        self._safe_init_capture()
-        
-    def _safe_init_capture(self):
-        """Safely initialize video capture"""
-        try:
-            self.cap = cv2.VideoCapture(self.video_path)
-            if self.cap.isOpened():
-                self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            else:
-                raise Exception("Failed to open video file")
-        except Exception as e:
-            print(f"Error initializing video capture: {e}")
-            self.cap = None
-            
-    def preload_frames(self):
-        """Preload frames in background"""
-        if self.is_loading or self.cap is None:
-            return
-            
-        self.is_loading = True
-        try:
-            with self.lock:
-                while len(self.frames_cache) < self.max_frames_cache and not self.stop_event.is_set():
-                    if self.cap is None or not self.cap.isOpened():
-                        break
-                        
-                    ret, frame = self.cap.read()
-                    if ret:
-                        self.frames_cache.append(frame)
-                    else:
-                        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                        break
-        except Exception as e:
-            print(f"Error preloading frames: {e}")
-        finally:
-            self.is_loading = False
-            
-    def get_frame(self):
-        """Get next frame from cache or video"""
-        try:
-            with self.lock:
-                if self.frames_cache:
-                    frame = self.frames_cache.popleft()
-                    self.current_frame_index += 1
-                    # Trigger preload if cache is getting low
-                    if len(self.frames_cache) < self.max_frames_cache // 2:
-                        Thread(target=self.preload_frames, daemon=True).start()
-                    return frame
-        except Exception as e:
-            print(f"Error getting frame: {e}")
-        return None
-            
-    def release(self):
-        """Release resources"""
-        self.stop_event.set()
-        with self.lock:
-            if self.cap is not None:
-                try:
-                    self.cap.release()
-                except Exception as e:
-                    print(f"Error releasing video capture: {e}")
-                self.cap = None
-            self.frames_cache.clear()
-
-class Themes:
-    def __init__(self, parent_tab):
-        self.parent_tab = parent_tab
-        self.base_path = os.getcwd()
-        
-        # Configuration paths
-        self.theme_folder = os.path.join(self.base_path, "collections", "zzzSettings", "roms")
-        self.video_folder = os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video")
-        
-        # State management
-        self.themes_list = []
-        self.current_theme_index = 0
-        self.video_manager = None
-        self.is_playing = False
-        self.default_size = (640, 480)
-        
-        # Rate limiter for theme switching
-        self.rate_limiter = RateLimiter()
-        
-        # Video state management
-        self.next_video_manager = None
-        self.prev_video_manager = None
-        self.preload_lock = Lock()
-        self.switch_lock = Lock()
-        
-        self._setup_ui()
-        self.parent_tab.after(100, self.load_themes)
-        
-    def _setup_ui(self):
-        """Initialize and configure UI components"""
-        # Main display frame
-        self.display_frame = ctk.CTkFrame(self.parent_tab)
-        self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
-        
-        # Video display
-        self.video_canvas = ctk.CTkCanvas(
-            self.display_frame,
-            width=self.default_size[0],
-            height=self.default_size[1]
-        )
-        self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
-        
-        # Bind resize event
-        self.video_canvas.bind('<Configure>', self._on_resize)
-        
-        # Theme name label with loading indicator
-        self.status_frame = ctk.CTkFrame(self.display_frame)
-        self.status_frame.pack(fill="x", pady=5)
-        
-        self.theme_label = ctk.CTkLabel(self.status_frame, text="")
-        self.theme_label.pack(side="left", padx=5)
-        
-        self.loading_label = ctk.CTkLabel(self.status_frame, text="")
-        self.loading_label.pack(side="right", padx=5)
-        
-        # Button frame
-        self.button_frame = ctk.CTkFrame(self.display_frame)
-        self.button_frame.pack(fill="x", padx=5, pady=5)
-        
-        self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
-        
-        buttons = [
-            ("Previous", self.show_previous_theme, 0),
-            ("Apply Theme", self.run_selected_script, 1, "green", "darkgreen"),
-            ("Next", self.show_next_theme, 2)
-        ]
-        
-        for btn_data in buttons:
-            if len(btn_data) == 3:
-                text, command, col = btn_data
-                fg_color = None
-                hover_color = None
-            else:
-                text, command, col, fg_color, hover_color = btn_data
-                
-            btn = ctk.CTkButton(
-                self.button_frame,
-                text=text,
-                command=command,
-                fg_color=fg_color,
-                hover_color=hover_color,
-                border_width=0,
-                corner_radius=0
-            )
-            btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
-
-    def _preload_adjacent_videos(self):
-        """Preload next and previous videos in background"""
-        if not self.themes_list:
-            return
-            
-        def preload_video(index):
-            if 0 <= index < len(self.themes_list):
-                _, video_path = self.themes_list[index]
-                if video_path and os.path.isfile(video_path):
-                    return VideoManager(video_path)
-            return None
-
-        with self.preload_lock:
-            next_idx = (self.current_theme_index + 1) % len(self.themes_list)
-            prev_idx = (self.current_theme_index - 1) % len(self.themes_list)
-            
-            # Preload next video
-            if self.next_video_manager is None:
-                self.next_video_manager = preload_video(next_idx)
-                if self.next_video_manager:
-                    Thread(target=self.next_video_manager.preload_frames, daemon=True).start()
-            
-            # Preload previous video
-            if self.prev_video_manager is None:
-                self.prev_video_manager = preload_video(prev_idx)
-                if self.prev_video_manager:
-                    Thread(target=self.prev_video_manager.preload_frames, daemon=True).start()
-
-    def _display_frame(self, frame):
-        """Display a frame on the canvas with proper scaling"""
-        if frame is None:
-            return
-            
-        try:
-            # Get current display size
-            canvas_width, canvas_height = self._get_display_size()
-            
-            # Get frame dimensions
-            height, width = frame.shape[:2]
-            
-            # Calculate scaling
-            scale = min(canvas_width/width, canvas_height/height)
-            new_width = max(1, int(width * scale))
-            new_height = max(1, int(height * scale))
-            
-            # Resize frame
-            frame = cv2.resize(frame, (new_width, new_height))
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Convert to PhotoImage
-            image = Image.fromarray(frame)
-            photo = ImageTk.PhotoImage(image=image)
-            
-            # Clear canvas and display new frame
-            self.video_canvas.delete("all")
-            self.video_canvas.create_image(
-                canvas_width//2, canvas_height//2,
-                image=photo, anchor="center"
-            )
-            self.video_canvas.image = photo
-            
-        except Exception as e:
-            print(f"Error displaying frame: {e}")
-
-    def show_current_theme(self):
-        """Display the current theme's video and update UI"""
-        if not self.themes_list:
-            return
-
-        try:
-            # Ensure clean state before switching
-            self._cleanup_video()
-            
-            theme_name, video_path = self.themes_list[self.current_theme_index]
-            display_name = os.path.splitext(theme_name)[0]
-            self.theme_label.configure(text=f"Theme: {display_name}")
-
-            if video_path and os.path.isfile(video_path):
-                # Use preloaded video manager if available
-                if self.next_video_manager and self.next_video_manager.video_path == video_path:
-                    self.video_manager = self.next_video_manager
-                    self.next_video_manager = None
-                elif self.prev_video_manager and self.prev_video_manager.video_path == video_path:
-                    self.video_manager = self.prev_video_manager
-                    self.prev_video_manager = None
-                else:
-                    self.video_manager = VideoManager(video_path)
-                
-                if self.video_manager and self.video_manager.cap and self.video_manager.cap.isOpened():
-                    self.is_playing = True
-                    Thread(target=self.video_manager.preload_frames, daemon=True).start()
-                    self.play_video()
-                    
-                    # Start preloading adjacent videos
-                    Thread(target=self._preload_adjacent_videos, daemon=True).start()
-                else:
-                    self._show_no_video_message()
-            else:
-                self._show_no_video_message()
-                
-        except Exception as e:
-            print(f"Error showing theme: {e}")
-            self._show_error_message()
-
-    def play_video(self):
-        """Play video frame by frame with error handling"""
-        if not self.is_playing or self.video_manager is None:
-            return
-            
-        try:
-            frame = self.video_manager.get_frame()
-            
-            if frame is not None:
-                self._display_frame(frame)
-                self.parent_tab.after(33, self.play_video)
-            else:
-                # Reset video when it ends
-                if self.video_manager and self.video_manager.cap:
-                    self.video_manager.current_frame_index = 0
-                    Thread(target=self.video_manager.preload_frames, daemon=True).start()
-                    self.play_video()
-                    
-        except Exception as e:
-            print(f"Error during video playback: {e}")
-            self._cleanup_video()
-            self._show_error_message()
-
-    def _cleanup_video(self):
-        """Clean up video resources with error handling"""
-        self.is_playing = False
-        
-        try:
-            # Clean up current video
-            if self.video_manager:
-                self.video_manager.release()
-                self.video_manager = None
-            
-            # Clean up preloaded videos
-            if self.next_video_manager:
-                self.next_video_manager.release()
-                self.next_video_manager = None
-            
-            if self.prev_video_manager:
-                self.prev_video_manager.release()
-                self.prev_video_manager = None
-                
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
-
-    def _on_resize(self, event):
-        """Handle window resize events"""
-        if hasattr(self, 'current_frame'):
-            self._display_frame(self.current_frame)
-
-    def _get_display_size(self):
-        """Get the current display size or return default size"""
-        try:
-            width = self.video_canvas.winfo_width()
-            height = self.video_canvas.winfo_height()
-            if width > 1 and height > 1:  # Ensure valid size
-                return width, height
-        except:
-            pass
-        return self.default_size
-
-    def load_themes(self):
-        """Load .bat files and their corresponding videos"""
-        if not os.path.isdir(self.theme_folder):
-            messagebox.showerror("Error", f"Theme folder not found: {self.theme_folder}")
-            return
-
-        self.themes_list = []
-        
-        for filename in os.listdir(self.theme_folder):
-            if filename.endswith(".bat"):
-                theme_name = os.path.splitext(filename)[0]
-                video_path = os.path.join(self.video_folder, f"{theme_name}.mp4")
-                
-                theme_entry = (filename, video_path if os.path.isfile(video_path) else None)
-                self.themes_list.append(theme_entry)
-        
-        if not self.themes_list:
-            messagebox.showwarning("Warning", "No themes found.")
-            return
-            
-        self.show_current_theme()
-
-    def show_previous_theme(self):
-        """Navigate to previous theme with rate limiting"""
-        if not self.rate_limiter.can_proceed():
-            return
-            
-        if self.themes_list:
-            with self.switch_lock:
-                self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
-                self.show_current_theme()
-
-    def show_next_theme(self):
-        """Navigate to next theme with rate limiting"""
-        if not self.rate_limiter.can_proceed():
-            return
-            
-        if self.themes_list:
-            with self.switch_lock:
-                self.current_theme_index = (self.current_theme_index + 1) % len(self.themes_list)
-                self.show_current_theme()
-
-    def run_selected_script(self):
-        """Execute the selected theme script"""
-        if not self.themes_list:
-            return
-
-        script_filename, _ = self.themes_list[self.current_theme_index]
-        script_path = os.path.join(self.theme_folder, script_filename)
-
-        if not os.path.isfile(script_path):
-            messagebox.showerror("Error", f"Script not found: {script_path}")
-            return
-
-        try:
-            result = subprocess.run(
-                ["cmd.exe", "/c", script_path],
-                check=True,
-                text=True,
-                capture_output=True,
-                cwd=self.theme_folder
-            )
-            messagebox.showinfo("Success", "Theme applied successfully!")
-        except subprocess.CalledProcessError as e:
-            messagebox.showerror("Error", f"Failed to apply theme:\n{e.output}")
-    
-    def _show_error_message(self):
-        """Display error message on canvas"""
-        try:
-            self.video_canvas.delete("all")
-            width, height = self._get_display_size()
-            self.video_canvas.create_text(
-                width // 2,
-                height // 2,
-                text="Error playing video",
-                fill="red",
-                font=("Arial", 12)
-            )
-        except Exception as e:
-            print(f"Error showing error message: {e}")
-            '''
 
 class ThemeViewer:
     def __init__(self, video_path=None, image_path=None):
@@ -1857,11 +1477,20 @@ class Themes:
         self.target_fps = 40
         self.frame_interval = 1000 / self.target_fps  # ms
         
+        # Create a theme label to act as a dynamic status bar
+        self.theme_label = tk.Label(parent_tab, text="", font=("Arial", 12), bg="#333", fg="white")
+        self.theme_label.pack(side="bottom", fill="x")  # Place it at the bottom as a status bar
+
         self._setup_ui()
         self.load_themes()
         if self.themes_list:
             self.parent_tab.after(100, self.show_initial_theme)
 
+    def show_status_message(self, message):
+        """Utility to display a status message in the theme label."""
+        self.theme_label.configure(text=message)
+        print(f"Status Update: {message}")
+    
     def cancel_autoplay(self):
         """Cancel any scheduled autoplay"""
         if self.autoplay_after:
@@ -1890,14 +1519,16 @@ class Themes:
                 if success:
                     print("Autoplay started successfully")
                     self.play_button.configure(text="Stop Video")
-                    self.play_video()  # This line was causing the error
+                    self.play_video()  # Start the video playback loop
+                    #self.show_status_message("Autoplay started.")
                 else:
                     print("Failed to start autoplay")
+                    #self.show_status_message("Autoplay failed. Displaying thumbnail.")
                     self.show_thumbnail()
 
     def show_current_theme(self):
-        """Display the current theme's thumbnail"""
-        print("Showing current theme...")
+        """Display the current theme's thumbnail and update status"""
+        print("Showing current theme...")  # Debug print
         if not self.themes_list:
             return
 
@@ -1909,19 +1540,23 @@ class Themes:
 
         theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
-        self.theme_label.configure(text=f"Theme: {display_name}")
+        
+        # Update status to show theme loading
+        self.show_status_message(f"Theme: {display_name}")
 
         # Create viewer with both video and image paths
         self.current_viewer = ThemeViewer(video_path, png_path)
         self.play_button.configure(state="normal" if video_path else "disabled")
         
-        # Show thumbnail and schedule autoplay
+        # Show thumbnail and schedule autoplay if video exists
         self.show_thumbnail()
         if video_path:
             print(f"Video path exists, scheduling autoplay: {video_path}")
             self.schedule_autoplay()
+            self.show_status_message(f"Autoplay scheduled for theme '{display_name}'.")
         else:
             print("No video path available for autoplay")
+            self.show_status_message(f"Theme '{display_name}' loaded without autoplay.")
 
     def force_initial_display(self):
         """Force the initial theme display"""
@@ -1938,7 +1573,9 @@ class Themes:
 
         theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
-        self.theme_label.configure(text=f"Theme: {display_name}")
+        
+        # Update status to show initial theme loading
+        self.show_status_message(f"Theme: {display_name}")
 
         # Initialize viewer
         self.current_viewer = ThemeViewer(video_path, png_path)
@@ -1949,20 +1586,15 @@ class Themes:
             thumbnail = self.current_viewer.extract_thumbnail()
             if thumbnail is not None:
                 print("Thumbnail extracted, displaying...")
-                cache_key = video_path or png_path
-                if cache_key:
-                    self.thumbnail_cache[cache_key] = thumbnail
-                
-                # Force canvas update and display
-                self.parent_tab.update_idletasks()
                 self._display_frame(thumbnail)
-                
-                # Schedule autoplay if video exists
                 if video_path:
                     print(f"Scheduling initial autoplay for: {video_path}")
                     self.schedule_autoplay()
+                    self.show_status_message(f"Theme: {display_name}")
+                    #self.show_status_message(f"Theme '{display_name}' loaded. Autoplay scheduled.")
             else:
                 print("No thumbnail available")
+                self.show_status_message("No video available for this theme.")
                 self._show_no_video_message()
 
     def play_video(self):
@@ -2317,10 +1949,12 @@ class Themes:
         """Execute the selected theme script."""
         if not self.themes_list:
             print("No themes found in themes_list. Exiting function.")
+            self.show_status_message("Error: No themes available!")
             return
 
-        # Get the script path
+        # Get the script filename (without extension)
         script_filename, _, _ = self.themes_list[self.current_theme_index]
+        script_name_without_extension = os.path.splitext(script_filename)[0]  # Remove extension
         script_path = os.path.join(self.theme_folder, script_filename)
 
         # Print the selected theme information for debugging
@@ -2331,9 +1965,13 @@ class Themes:
         print(f"Checking if script exists at path: {script_path}")
         if not os.path.isfile(script_path):
             print(f"Script not found: {script_path}")  # Log the error instead of showing it
+            self.show_status_message(f"Error: Script '{script_name_without_extension}' not found.")
             return
 
         try:
+            # Show status message that the script is being executed
+            self.show_status_message(f"Applying theme '{script_name_without_extension}'...")
+
             # Debugging information
             print(f"Executing script: {script_path}")
             print(f"Working directory: {self.theme_folder}")
@@ -2364,17 +2002,23 @@ class Themes:
             if process.returncode != 0:
                 print(f"Non-critical script error: {process.stderr}")
 
+            # Update status message based on script completion
+            if process.returncode == 0:
+                self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
+            else:
+                self.show_status_message(f"Error: Script '{script_name_without_extension}' encountered an issue.")
+            
         except subprocess.CalledProcessError as e:
             print(f"Subprocess error (CalledProcessError): {e}")
             print(f"Return code: {e.returncode}")
             print(f"Standard output: {e.stdout}")
             print(f"Error output: {e.stderr}")
+            self.show_status_message(f"Error: {e.stderr}")
+
         except Exception as e:
             # Log the error without showing it in the GUI
             print(f"Unexpected error while running script: {str(e)}")
-
-        # Always confirm completion to the user
-        messagebox.showinfo("Success", "Theme applied successfully!")
+            self.show_status_message(f"Unexpected error: {str(e)}")
 
 class AdvancedConfigs:
     def __init__(self, parent_tab):
@@ -2394,50 +2038,29 @@ class AdvancedConfigs:
             "Other": None
         }
 
-        # Map folders to tabs for direct mapping
         self.folder_to_tab_mapping = {
             "- Themes": "Themes",
             "- Themes 2nd Screen": "2nd Screen",
             "- Bezels Glass and Scanlines": "Bezels & Effects"
         }
-
+        
         self.tab_radio_vars = {}
         self.radio_button_script_mapping = {}
-
+        self.radio_buttons = {}  # Store radio buttons for enabling/disabling
+        
+        # Create loading label
+        self.loading_label = ctk.CTkLabel(
+            self.parent_tab,
+            text="Processing...",
+            text_color="gray70"
+        )
+        
         # Create the tab view in the parent tab
         self.tabview = ctk.CTkTabview(self.parent_tab)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
         
         # Populate the tabs and scripts dynamically
         self.populate_tabs_and_scripts()
-        
-        ## This works for displaying an external wide screen video. Have commented out for now ##
-        # Add a canvas for displaying video
-        '''self.video_canvas = tk.Canvas(
-            self.parent_tab,
-            width=400,
-            height=300,
-            bg="#2B2B2B",               # Set a black background
-            highlightthickness=0,     # Remove white outline (default highlight thickness)
-            bd=0                      # Set border width to zero
-        )
-        self.video_canvas.pack(side="right", padx=10, pady=10)
-        
-        # Add a Preview button at the bottom of the parent tab
-        self.preview_button = ctk.CTkButton(
-            self.parent_tab,
-            text="Preview Video",
-            command=self.preview_video  # Link to preview video method
-        )
-        self.preview_button.pack(side="bottom", pady=10, padx=10)'''
-
-        # Add the Configure button at the bottom of the parent tab
-        self.configure_button = ctk.CTkButton(
-            self.parent_tab,
-            text="Configure",
-            command=self.run_selected_script
-        )
-        self.configure_button.pack(side="bottom", pady=10, padx=10)
     
     # Video functions are not used atm. Have commented out the preview button for now. Can add back later
     def preview_video(self):
@@ -2542,13 +2165,11 @@ class AdvancedConfigs:
                 if filename.endswith(".bat") or filename.endswith(".cmd"):
                     added_to_tab = False
 
-                    # Step 1: Direct folder mapping
                     if folder in self.folder_to_tab_mapping:
                         tab_name = self.folder_to_tab_mapping[folder]
                         script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
                         added_to_tab = True
                     
-                    # Step 2: Keyword matching (if not already categorized by folder)
                     if not added_to_tab:
                         for tab, keywords in self.tab_keywords.items():
                             if keywords:
@@ -2560,7 +2181,6 @@ class AdvancedConfigs:
                             if added_to_tab:
                                 break
 
-                    # Step 3: Default to "Other" tab if not matched to any tab yet
                     if not added_to_tab:
                         script_categories["Other"][len(script_categories["Other"]) + 1] = filename
 
@@ -2574,25 +2194,79 @@ class AdvancedConfigs:
                 self.tabview.add(tab_name)
                 self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
                 self.radio_button_script_mapping[tab_name] = scripts
+                self.radio_buttons[tab_name] = []  # Initialize list for this tab's radio buttons
 
                 scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
                 scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
                 for i, script_name in scripts.items():
                     script_label = os.path.splitext(script_name)[0]
-                    ctk.CTkRadioButton(
+                    radio_button = ctk.CTkRadioButton(
                         scrollable_frame,
                         text=script_label,
                         variable=self.tab_radio_vars[tab_name],
-                        value=i
-                    ).pack(anchor="w", padx=20, pady=5)
+                        value=i,
+                        command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+                    )
+                    radio_button.pack(anchor="w", padx=20, pady=5)
+                    self.radio_buttons[tab_name].append(radio_button)  # Store the radio button reference
 
-    def run_selected_script(self):
-        selected_tab = self.tabview.get()
-        selected_value = self.tab_radio_vars[selected_tab].get()
+    def set_gui_state(self, enabled):
+        """Enable or disable all script-related GUI elements without disabling the tabview itself."""
+        # Enable/disable all radio buttons without altering the tab appearance
+        for tab_buttons in self.radio_buttons.values():
+            for button in tab_buttons:
+                button.configure(state="normal" if enabled else "disabled")
 
-        if selected_value in self.radio_button_script_mapping[selected_tab]:
-            script_to_run = self.radio_button_script_mapping[selected_tab][selected_value]
+        # Show/hide loading label for feedback
+        if enabled:
+            self.loading_label.pack_forget()
+        else:
+            self.loading_label.pack(side="bottom", pady=5)
+        
+        # Force GUI update
+        self.parent_tab.update()
+
+    def run_script_threaded(self, script_path):
+        """Run the script in a separate thread and print output in real-time to VS Code terminal."""
+        import threading
+        
+        def script_worker():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                process = subprocess.Popen(
+                    ["cmd.exe", "/c", script_path],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=os.path.dirname(script_path),
+                    startupinfo=startupinfo
+                )
+
+                # Output real-time stdout and stderr
+                for line in process.stdout:
+                    print(line, end='')  # Print each line as it's produced
+
+                for line in process.stderr:
+                    print(line, end='')  # Print each error line as it's produced
+
+                process.wait()  # Ensure process completes
+            finally:
+                # Re-enable the GUI in the main thread
+                self.parent_tab.after(0, lambda: self.set_gui_state(True))
+
+        # Start the script in a separate thread
+        thread = threading.Thread(target=script_worker)
+        thread.daemon = True  # Make thread daemon so it doesn't block program exit
+        thread.start()
+
+    def on_radio_select(self, tab_name, value):
+        """Handler for radio button selection that automatically runs the script"""
+        if value in self.radio_button_script_mapping[tab_name]:
+            script_to_run = self.radio_button_script_mapping[tab_name][value]
 
             script_path = None
             for folder in self.config_folders:
@@ -2605,22 +2279,12 @@ class AdvancedConfigs:
                 messagebox.showerror("Error", f"The script does not exist: {script_to_run}")
                 return
 
-            try:
-                result = subprocess.run(
-                    ["cmd.exe", "/c", script_path],
-                    check=True,
-                    text=True,
-                    capture_output=True,
-                    cwd=os.path.dirname(script_path)
-                )
-                #Surpress success because errors are not tru, and confuse users
-                #messagebox.showinfo("Success", f"'{script_to_run}' executed successfully.\nOutput:\n{result.stdout}")
-            except subprocess.CalledProcessError as cpe:
-                pass#messagebox.showinfo("Info", f"Script ran, but with issues:\nOutput:\n")
-        else:
-            messagebox.showwarning("Warning", "No script is mapped to the selected option.")
+            # Disable GUI and show loading state
+            self.set_gui_state(False)
+            
+            # Run the script in a separate thread
+            self.run_script_threaded(script_path)
                          
-
 # Main application driver
 if __name__ == "__main__":
     # Initialize GUI with customtkinter
