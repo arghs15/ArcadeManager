@@ -153,7 +153,6 @@ class FilterGamesApp:
         except Exception as e:
             ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
 
-
 class ConfigManager:
     def __init__(self):
         self.base_path = os.getcwd()
@@ -249,9 +248,7 @@ class ConfigManager:
             self.config.set('Settings', 'settings_file', settings_value)
             self.save_config()
         except Exception as e:
-            print(f"Error updating settings file: {str(e)}")
-
-            
+            print(f"Error updating settings file: {str(e)}")      
 
 class ExeFileSelector:
     def __init__(self, parent_frame):
@@ -508,7 +505,6 @@ class ExeFileSelector:
                 messagebox.showerror("Error", f"Failed to run {selected_exe}: {e}")
         else:
             messagebox.showinfo("No Selection", "Please select an executable.")
-
 
 class FilterGames:
     def __init__(self, parent_tab):
@@ -950,7 +946,6 @@ class FilterGames:
         
         except Exception as e:
             messagebox.showerror("Error", f"Failed to process files: {str(e)}")
-
 
 class Playlists:
     def __init__(self, root, parent_tab):
@@ -1476,15 +1471,11 @@ class Themes:
         self.last_frame_time = 0
         self.target_fps = 40
         self.frame_interval = 1000 / self.target_fps  # ms
-        
-        # Create a theme label to act as a dynamic status bar
-        self.theme_label = tk.Label(parent_tab, text="", font=("Arial", 12), bg="#333", fg="white")
-        self.theme_label.pack(side="bottom", fill="x")  # Place it at the bottom as a status bar
 
         self._setup_ui()
         self.load_themes()
         if self.themes_list:
-            self.parent_tab.after(100, self.show_initial_theme)
+            self.show_initial_theme()  # Changed to directly call show_initial_theme
 
     def show_status_message(self, message):
         """Utility to display a status message in the theme label."""
@@ -1511,24 +1502,20 @@ class Themes:
             self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
 
     def start_autoplay(self):
-        """Start video playback for autoplay"""
-        print("Attempting to start autoplay...")
+        """Start video playback immediately"""
+        print("Starting autoplay...")
         if self.current_viewer and self.current_viewer.video_path:
             if not self.current_viewer.is_playing:
-                success = self.current_viewer.start_video()
-                if success:
+                if self.current_viewer.start_video():
                     print("Autoplay started successfully")
-                    self.play_button.configure(text="Stop Video")
-                    self.play_video()  # Start the video playback loop
-                    #self.show_status_message("Autoplay started.")
+                    self.play_video()
                 else:
                     print("Failed to start autoplay")
-                    #self.show_status_message("Autoplay failed. Displaying thumbnail.")
                     self.show_thumbnail()
 
     def show_current_theme(self):
-        """Display the current theme's thumbnail and update status"""
-        print("Showing current theme...")  # Debug print
+        """Display the current theme and start video if available"""
+        print("Showing current theme...")
         if not self.themes_list:
             return
 
@@ -1536,27 +1523,22 @@ class Themes:
         self.cancel_autoplay()
         if self.current_viewer and self.current_viewer.is_playing:
             self.current_viewer.stop_video()
-            self.play_button.configure(text="Play Video")
 
         theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
-        
-        # Update status to show theme loading
-        self.show_status_message(f"Theme: {display_name}")
+        self.theme_label.configure(text=f"Theme: {display_name}")
 
         # Create viewer with both video and image paths
         self.current_viewer = ThemeViewer(video_path, png_path)
-        self.play_button.configure(state="normal" if video_path else "disabled")
         
-        # Show thumbnail and schedule autoplay if video exists
+        # Show thumbnail
         self.show_thumbnail()
+        
+        # Start video immediately if available
         if video_path:
-            print(f"Video path exists, scheduling autoplay: {video_path}")
-            self.schedule_autoplay()
-            self.show_status_message(f"Autoplay scheduled for theme '{display_name}'.")
-        else:
-            print("No video path available for autoplay")
-            self.show_status_message(f"Theme '{display_name}' loaded without autoplay.")
+            print("Starting video immediately...")
+            if self.current_viewer.start_video():
+                self.play_video()
 
     def force_initial_display(self):
         """Force the initial theme display"""
@@ -1566,36 +1548,40 @@ class Themes:
             self.show_initial_theme()
 
     def show_initial_theme(self):
-        """Special handling for the first theme display"""
+        """Show the first theme and start video playback"""
         print("Showing initial theme...")
         if not self.themes_list:
             return
 
         theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
-        
-        # Update status to show initial theme loading
-        self.show_status_message(f"Theme: {display_name}")
+        self.theme_label.configure(text=f"Theme: {display_name}")
 
         # Initialize viewer
         self.current_viewer = ThemeViewer(video_path, png_path)
-        self.play_button.configure(state="normal" if video_path else "disabled")
-
+        
         # Force immediate thumbnail extraction and display
-        if self.current_viewer:
-            thumbnail = self.current_viewer.extract_thumbnail()
-            if thumbnail is not None:
-                print("Thumbnail extracted, displaying...")
-                self._display_frame(thumbnail)
-                if video_path:
-                    print(f"Scheduling initial autoplay for: {video_path}")
-                    self.schedule_autoplay()
-                    self.show_status_message(f"Theme: {display_name}")
-                    #self.show_status_message(f"Theme '{display_name}' loaded. Autoplay scheduled.")
-            else:
-                print("No thumbnail available")
-                self.show_status_message("No video available for this theme.")
-                self._show_no_video_message()
+        thumbnail = self.current_viewer.extract_thumbnail()
+        if thumbnail is not None:
+            print("Thumbnail extracted, displaying...")
+            self._display_frame(thumbnail)
+            
+            # Start video immediately if available
+            if video_path:
+                print(f"Starting initial video: {video_path}")
+                if self.current_viewer.start_video():
+                    print("Initial video started, beginning playback...")
+                    self.play_video()
+        else:
+            print("No thumbnail available")
+            self._show_no_video_message()
+
+    def schedule_autoplay(self):
+        """Schedule immediate video autoplay"""
+        self.cancel_autoplay()
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling immediate autoplay...")
+            self.autoplay_after = self.parent_tab.after(100, self.start_autoplay)
 
     def play_video(self):
         """Play video with frame timing control"""
@@ -1608,11 +1594,11 @@ class Themes:
                 frame = self.current_viewer.get_frame()
                 if frame is not None:
                     self._display_frame(frame)
+                    self.last_frame_time = current_time
                 else:
-                    print("No frame available, stopping video")
+                    print("No frame available, restarting video")
                     self.current_viewer.stop_video()
-                    self.play_button.configure(text="Play Video")
-                    self.show_thumbnail()
+                    self.current_viewer.start_video()
                     return
             
             # Schedule next frame
@@ -1621,16 +1607,7 @@ class Themes:
         except Exception as e:
             print(f"Error during video playback: {e}")
             self.current_viewer.stop_video()
-            self.play_button.configure(text="Play Video")
             self.show_thumbnail()
-
-    def schedule_autoplay(self):
-        """Schedule video autoplay after 2 seconds"""
-        self.cancel_autoplay()
-        
-        if self.current_viewer and self.current_viewer.video_path:
-            print("Scheduling autoplay...")
-            self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
 
     def load_themes(self):
         """Load themes and their video/image paths"""
@@ -1654,8 +1631,8 @@ class Themes:
                     self.themes_list.append((filename, None, None))
 
     def show_current_theme(self):
-        """Display the current theme's thumbnail"""
-        print("Showing current theme...")  # Debug print
+        """Display the current theme and start video if available"""
+        print("Showing current theme...")
         if not self.themes_list:
             return
 
@@ -1663,7 +1640,6 @@ class Themes:
         self.cancel_autoplay()
         if self.current_viewer and self.current_viewer.is_playing:
             self.current_viewer.stop_video()
-            self.play_button.configure(text="Play Video")
 
         theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
@@ -1671,11 +1647,15 @@ class Themes:
 
         # Create viewer with both video and image paths
         self.current_viewer = ThemeViewer(video_path, png_path)
-        self.play_button.configure(state="normal" if video_path else "disabled")
         
-        # Show thumbnail and schedule autoplay
+        # Show thumbnail
         self.show_thumbnail()
-        self.schedule_autoplay()
+        
+        # Start video immediately if available
+        if video_path:
+            print("Starting video immediately...")
+            if self.current_viewer.start_video():
+                self.play_video()
 
     def show_thumbnail(self):
         """Display the current theme's thumbnail"""
@@ -1818,25 +1798,19 @@ class Themes:
         
         # Theme name and status
         self.status_frame = ctk.CTkFrame(self.display_frame)
-        self.status_frame.pack(fill="x", pady=5)
-        
+        self.status_frame.pack(fill="x", padx=10, pady=5)  # Use pack here
+    
         self.theme_label = ctk.CTkLabel(self.status_frame, text="")
-        self.theme_label.pack(side="left", padx=5)
+        self.theme_label.pack(side="left", padx=5)  # Use pack here
         
-        # Play/Stop button
-        self.play_button = ctk.CTkButton(
-            self.status_frame,
-            text="Play Video",
-            command=self.toggle_video,
-            width=100
-        )
-        self.play_button.pack(side="right", padx=5)
-        
-        # Navigation frame
-        self.button_frame = ctk.CTkFrame(self.display_frame)
+        # Navigation frame (button frame)
+        self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")  # Transparent background
         self.button_frame.pack(fill="x", padx=5, pady=5)
-        
+
+        # Set grid column configuration for both frames to have the same layout behavior
         self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.status_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
         
         # Navigation and control buttons
         buttons = [
@@ -1860,7 +1834,7 @@ class Themes:
                 fg_color=fg_color,
                 hover_color=hover_color,
                 border_width=0,
-                corner_radius=0
+                #corner_radius=10
             )
             btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
 
