@@ -177,7 +177,7 @@ class ConfigManager:
                 'custom_roms_path': '',
                 'custom_videos_path': '',
                 'custom_logos_path': '',
-                'show_location_controls': 'True'
+                'show_location_controls': 'False'
             }
             self.save_config()
         else:
