@@ -1035,17 +1035,21 @@ class FilterGames:
             if os.path.exists(source):
                 # Copy the file from source to destination
                 shutil.copyfile(source, destination)
-                messagebox.showinfo("Success", f"Copied '{source}' to '{destination}'.")
+                print("Success", f"Copied '{source}' to '{destination}'.")
+                self.status_bar.configure("Success", f"Copied '{source}' to '{destination}'.")
             else:
                 # If source does not exist, delete the file in Arcades if it exists
                 if os.path.exists(destination):
                     os.remove(destination)
-                    messagebox.showinfo("Success", f"'{destination}' has been deleted as the source file was not found.")
+                    print("Success", f"'{destination}' has been deleted as the source file was not found.")
+                    self.status_bar.configure(text=f"Success {destination} has been deleted.")
                 else:
-                    messagebox.showinfo("Info", f"No file to delete. '{destination}' does not exist.")
+                    print("Info", f"No file to delete. '{destination}' does not exist.")
+                    self.status_bar.configure(text=f"No include.txt file to delete. {destination} does not exist.")
         
         except Exception as e:
-            messagebox.showerror("Error", f"Failed to process files: {str(e)}")
+            print("Error", f"Failed to process files: {str(e)}")
+            self.status_bar.configure(text=f"Failed to process files: {str(e)}")
 
 class Playlists:
     def __init__(self, root, parent_tab):
@@ -1462,11 +1466,14 @@ class Playlists:
             if os.path.exists(backup_conf_path):
                 # Copy the backup file to replace the current configuration file
                 shutil.copy(backup_conf_path, self.autochanger_conf_path)
-                messagebox.showinfo("Success", f"Playlists have been reset using {backup_file}")
+                print("Success", f"Playlists have been reset using {backup_file}")
+                self.show_status_message("✓ Playlists have been reset successfully")
             else:
-                messagebox.showerror("Error", f"Backup configuration file '{backup_file}' not found.")
+                print("Error", f"Backup configuration file '{backup_file}' not found.")
+                self.show_status_message("Error Backup configuration file not found.")
         except Exception as e:
-            messagebox.showerror("Error", f"An error occurred during reset: {str(e)}")
+            print("Error", f"An error occurred during reset: {str(e)}")
+            self.show_status_message(f"⚠️ Error: {str(e)}")
 
 class ThemeViewer:
     def __init__(self, video_path=None, image_path=None):

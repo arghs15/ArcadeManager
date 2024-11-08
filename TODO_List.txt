@@ -1,9 +1,13 @@
+Add reset INI (delete)
+Add/Edit entry to CSV
+
+
 DONE - fix first Thumbnail not showing
-IN-PROGRESS remove title from themes screen
+DONE remove title from themes screen
 DONE - add logo to bottom right of thumbnail
-- make sure all warning suppressed
+DONE -  make sure all warning suppressed
 DONE - edit filter games screen. break tabs up to fill area
 DONE - thumbnail/video don't auto resize when full screen unless you click next/previous
 DONE - themes thumbnail use .png file if no video found
-PENDING - Fix slow videos. specially if full size
+DONE - Fix slow videos. specially if full size
 
