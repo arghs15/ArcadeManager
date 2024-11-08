@@ -167,19 +167,119 @@ class ConfigManager:
     Note: For excluded = this means it will return all results if key exists but no values'''
     def initialize_config(self):
         """Initialize the INI file with default values if it doesn't exist."""
-        if not os.path.exists(self.config_path):
+        config_exists = os.path.exists(self.config_path)
+        
+        if not config_exists:
+            # Only create new config file if it doesn't exist
             self.config['Settings'] = {
-                'settings_file': '5_7'  # Will be used to form settings5_7.conf
+                'settings_file': '5_7',
+                'theme_location': 'autochanger',
+                'custom_roms_path': '',
+                'custom_videos_path': '',
+                'custom_logos_path': '',
+                'show_location_controls': 'True'
             }
             self.save_config()
         else:
+            # Just read existing config
             self.config.read(self.config_path)
+            
+            # If Settings section is missing, create it
+            if 'Settings' not in self.config:
+                self.config['Settings'] = {}
+                needs_save = True
+            else:
+                needs_save = False
+                
+            # Only add missing keys if they don't exist
+            defaults = {
+                'theme_location': 'autochanger',
+                'custom_roms_path': '',
+                'custom_videos_path': '',
+                'custom_logos_path': '',
+                'show_location_controls': 'True'
+            }
+            
+            for key, default_value in defaults.items():
+                if key not in self.config['Settings']:
+                    self.config['Settings'][key] = default_value
+                    needs_save = True
+                    
+            # Only save if we added missing keys
+            if needs_save:
+                self.save_config()
+
+    def toggle_location_controls(self):
+        """Toggle the visibility of location control elements"""
+        current_value = self.config.getboolean('Settings', 'show_location_controls', fallback=True)
+        self.config['Settings']['show_location_controls'] = str(not current_value)
+        self.save_config()
 
     def save_config(self):
         """Save the current configuration to the INI file."""
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, 'w') as configfile:
             self.config.write(configfile)
+    
+    def get_theme_paths(self):
+        """Get the paths for theme-related content based on configuration."""
+        theme_location = self.config.get('Settings', 'theme_location', fallback='autochanger')
+        
+        if theme_location == 'custom':
+            custom_paths = {
+                'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
+                'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
+                'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
+            }
+            
+            # Validate custom paths
+            for key, path in custom_paths.items():
+                if not path or not os.path.exists(path):
+                    print(f"Warning: Custom {key} path is invalid or doesn't exist: {path}")
+                    # Fall back to autochanger paths if custom paths are invalid
+                    return self.get_default_paths()
+                    
+            return custom_paths
+            
+        elif theme_location == 'zzzSettings':
+            return {
+                'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
+                'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
+                'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logos")
+            }
+        else:  # Default autochanger paths
+            return self.get_default_paths()
+
+    def get_default_paths(self):
+        """Get the default autochanger paths."""
+        return {
+            'roms': os.path.join(self.base_path, "- Themes"),
+            'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
+            'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
+        }
+
+    def update_theme_location(self, location: str):
+        """Update the theme location configuration."""
+        try:
+            if location not in ['autochanger', 'zzzSettings', 'custom']:
+                raise ValueError("Invalid theme location. Must be 'autochanger', 'zzzSettings', or 'custom'")
+            self.config.set('Settings', 'theme_location', location)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating theme location: {str(e)}")
+
+    def update_custom_paths(self, roms_path: str = None, videos_path: str = None, logos_path: str = None):
+        """Update custom paths in the configuration."""
+        try:
+            if roms_path is not None:
+                self.config.set('Settings', 'custom_roms_path', roms_path)
+            if videos_path is not None:
+                self.config.set('Settings', 'custom_videos_path', videos_path)
+            if logos_path is not None:
+                self.config.set('Settings', 'custom_logos_path', logos_path)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating custom paths: {str(e)}")
 
     def get_settings_file(self) -> str:
         """Get the settings file name."""
@@ -1454,9 +1554,14 @@ class Themes:
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         
+        # Initialize configuration manager
+        self.config_manager = ConfigManager()
+        self.theme_paths = self.config_manager.get_theme_paths()
+        
         # Configuration paths
-        self.theme_folder = os.path.join(self.base_path, "- Themes")
-        self.video_folder = os.path.join(self.base_path, "autochanger", "themes", "video")
+        self.theme_folder = self.theme_paths['roms']  # Updated to use the roms path from theme_paths
+        self.video_folder = self.theme_paths['videos']
+        self.logo_folder = self.theme_paths['logos']
         
         # State management
         self.themes_list = []
@@ -1512,6 +1617,12 @@ class Themes:
                 else:
                     print("Failed to start autoplay")
                     self.show_thumbnail()
+
+    def clear_logo_cache(self):
+        """Clear all cached logo images"""
+        for attr in list(vars(self)):
+            if attr.startswith('logo_cache_'):
+                delattr(self, attr)
 
     def show_current_theme(self):
         """Display the current theme and start video if available"""
@@ -1685,32 +1796,47 @@ class Themes:
             if not force_resize:
                 self.current_frame = frame.copy()
             
+            # Validate input frame
+            if frame is None or frame.size == 0:
+                raise ValueError("Invalid frame: frame is None or empty")
+                
             # Get current display size
             canvas_width = self.video_canvas.winfo_width()
             canvas_height = self.video_canvas.winfo_height()
+            
+            # Ensure minimum display dimensions
+            canvas_width = max(1, canvas_width)
+            canvas_height = max(1, canvas_height)
             
             if canvas_width < 1 or canvas_height < 1:
                 canvas_width, canvas_height = self.default_size
             
             # Get original frame dimensions
             frame_height, frame_width = frame.shape[:2]
+            
+            # Validate frame dimensions
+            if frame_width <= 0 or frame_height <= 0:
+                raise ValueError(f"Invalid frame dimensions: {frame_width}x{frame_height}")
+                
             frame_aspect = frame_width / frame_height
             canvas_aspect = canvas_width / canvas_height
             
             # Calculate new dimensions maintaining aspect ratio
             if canvas_aspect > frame_aspect:
-                # Canvas is wider than frame - fit to height
-                new_height = canvas_height
-                new_width = int(canvas_height * frame_aspect)
+                new_height = max(1, canvas_height)
+                new_width = max(1, int(canvas_height * frame_aspect))
             else:
-                # Canvas is taller than frame - fit to width
-                new_width = canvas_width
-                new_height = int(canvas_width / frame_aspect)
+                new_width = max(1, canvas_width)
+                new_height = max(1, int(canvas_width / frame_aspect))
             
             # Skip frame if falling behind
             if not force_resize and self.current_viewer and self.current_viewer.is_playing:
                 if current_time - self.last_frame_time < self.frame_interval:
                     return
+            
+            # Validate final dimensions before resize
+            if new_width <= 0 or new_height <= 0:
+                raise ValueError(f"Invalid resize dimensions: {new_width}x{new_height}")
             
             # Resize frame maintaining aspect ratio
             if new_width * new_height > 1920 * 1080:
@@ -1721,34 +1847,62 @@ class Themes:
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             main_image = Image.fromarray(frame)
             
-            # Try to load and overlay the logo
+            # Logo handling (rest of the logo code remains the same)
             try:
                 current_theme = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
-                logo_path = os.path.join(self.base_path, "autochanger", "themes", "logo", f"{current_theme}.png")
+                logo_path = os.path.join(self.logo_folder, f"{current_theme}.png")
                 
                 if os.path.exists(logo_path):
-                    if not hasattr(self, f'logo_cache_{current_theme}'):
+                    # Create a cache key that includes the canvas dimensions
+                    cache_key = f'logo_cache_{current_theme}_{new_width}_{new_height}'
+                    
+                    if not hasattr(self, cache_key):
+                        # Load original logo
                         logo_img = Image.open(logo_path)
-                        logo_max_size = min(new_width, new_height) // 3
+                        
+                        # Calculate logo size based on current frame dimensions
+                        logo_max_width = max(1, int(new_width * 0.15))  # 15% of frame width
+                        logo_max_height = max(1, int(new_height * 0.15))  # 15% of frame height
+                        
+                        # Get original logo dimensions
                         logo_w, logo_h = logo_img.size
-                        logo_scale = min(logo_max_size/logo_w, logo_max_size/logo_h)
-                        logo_new_size = (int(logo_w * logo_scale), int(logo_h * logo_scale))
-                        logo_img = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
-                        setattr(self, f'logo_cache_{current_theme}', logo_img)
+                        
+                        # Calculate scale factor maintaining aspect ratio
+                        logo_scale = min(
+                            logo_max_width / logo_w,
+                            logo_max_height / logo_h
+                        )
+                        
+                        # Calculate new logo dimensions
+                        logo_new_size = (
+                            max(1, int(logo_w * logo_scale)),
+                            max(1, int(logo_h * logo_scale))
+                        )
+                        
+                        # Resize logo
+                        resized_logo = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
+                        
+                        # Cache the resized logo
+                        setattr(self, cache_key, resized_logo)
                     else:
-                        logo_img = getattr(self, f'logo_cache_{current_theme}')
+                        resized_logo = getattr(self, cache_key)
                     
-                    padding = 10
-                    pos_x = new_width - logo_img.size[0] - padding
-                    pos_y = new_height - logo_img.size[1] - padding
+                    # Calculate padding based on frame size
+                    padding = max(1, int(min(new_width, new_height) * 0.02))  # 2% of smaller dimension
                     
-                    if logo_img.mode == 'RGBA':
-                        main_image.paste(logo_img, (pos_x, pos_y), logo_img)
+                    # Calculate position
+                    pos_x = new_width - resized_logo.size[0] - padding
+                    pos_y = new_height - resized_logo.size[1] - padding
+                    
+                    # Overlay logo
+                    if resized_logo.mode == 'RGBA':
+                        main_image.paste(resized_logo, (pos_x, pos_y), resized_logo)
                     else:
-                        main_image.paste(logo_img, (pos_x, pos_y))
+                        main_image.paste(resized_logo, (pos_x, pos_y))
+                        
             except Exception as e:
                 print(f"Error loading or applying logo: {e}")
-            
+                
             # Convert to PhotoImage
             photo = ImageTk.PhotoImage(image=main_image)
             
@@ -1798,19 +1952,42 @@ class Themes:
         
         # Theme name and status
         self.status_frame = ctk.CTkFrame(self.display_frame)
-        self.status_frame.pack(fill="x", padx=10, pady=5)  # Use pack here
-    
-        self.theme_label = ctk.CTkLabel(self.status_frame, text="")
-        self.theme_label.pack(side="left", padx=5)  # Use pack here
-        
-        # Navigation frame (button frame)
-        self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")  # Transparent background
-        self.button_frame.pack(fill="x", padx=5, pady=5)
+        self.status_frame.pack(fill="x", padx=10, pady=5)
 
-        # Set grid column configuration for both frames to have the same layout behavior
+        self.theme_label = ctk.CTkLabel(self.status_frame, text="")
+        self.theme_label.pack(side="left", padx=5)
+        
+        # Location selector frame - store as instance variable to control visibility
+        self.location_frame = ctk.CTkFrame(self.display_frame)
+        self.location_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Add location selector dropdown
+        self.location_var = ctk.StringVar(value=self.config_manager.config.get('Settings', 'theme_location', fallback='autochanger'))
+        self.location_dropdown = ctk.CTkOptionMenu(
+            self.location_frame,
+            values=['autochanger', 'zzzSettings', 'custom'],
+            variable=self.location_var,
+            command=self.change_location
+        )
+        self.location_dropdown.pack(side="right", padx=5)
+        
+        ctk.CTkLabel(self.location_frame, text="Theme Location:").pack(side="right", padx=5)
+
+        # Custom paths configuration button
+        self.custom_paths_button = ctk.CTkButton(
+            self.location_frame,
+            text="Configure Custom Paths",
+            command=self.show_custom_paths_dialog
+        )
+        self.custom_paths_button.pack(side="right", padx=5)
+        
+        # Navigation frame - always visible
+        self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
+        self.button_frame.pack(fill="x", padx=5, pady=5)  # Always pack this frame
+
+        # Configure grid layout
         self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
         self.status_frame.grid_columnconfigure((0, 1, 2), weight=1)
-
         
         # Navigation and control buttons
         buttons = [
@@ -1833,10 +2010,104 @@ class Themes:
                 command=command,
                 fg_color=fg_color,
                 hover_color=hover_color,
-                border_width=0,
-                #corner_radius=10
+                border_width=0
             )
             btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
+        
+        # Check config and show/hide location frame
+        self.update_location_frame_visibility()
+
+    def update_location_frame_visibility(self):
+        """Update the visibility of the location frame based on config settings"""
+        show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=True)
+        
+        if show_location_controls:
+            self.location_frame.pack(fill="x", padx=10, pady=5)
+        else:
+            self.location_frame.pack_forget()
+
+    def show_custom_paths_dialog(self):
+        """Show dialog for configuring custom paths"""
+        dialog = ctk.CTkToplevel(self.parent_tab)
+        dialog.title("Configure Custom Paths")
+        dialog.geometry("600x200")
+        dialog.transient(self.parent_tab)
+        dialog.grab_set()
+        
+        # Create entry fields for each path
+        paths = {
+            'ROMs Path': 'custom_roms_path',
+            'Videos Path': 'custom_videos_path',
+            'Logos Path': 'custom_logos_path'
+        }
+        
+        entries = {}
+        
+        for i, (label_text, config_key) in enumerate(paths.items()):
+            frame = ctk.CTkFrame(dialog)
+            frame.pack(fill="x", padx=10, pady=5)
+            
+            ctk.CTkLabel(frame, text=label_text).pack(side="left", padx=5)
+            
+            entry = ctk.CTkEntry(frame, width=400)
+            entry.pack(side="left", padx=5, fill="x", expand=True)
+            entry.insert(0, self.config_manager.config.get('Settings', config_key, fallback=''))
+            
+            entries[config_key] = entry
+            
+            def browse_path(entry_widget):
+                path = filedialog.askdirectory()
+                if path:
+                    entry_widget.delete(0, 'end')
+                    entry_widget.insert(0, path)
+            
+            browse_btn = ctk.CTkButton(
+                frame,
+                text="Browse",
+                command=lambda e=entry: browse_path(e)
+            )
+            browse_btn.pack(side="right", padx=5)
+        
+        def save_paths():
+            self.config_manager.update_custom_paths(
+                roms_path=entries['custom_roms_path'].get(),
+                videos_path=entries['custom_videos_path'].get(),
+                logos_path=entries['custom_logos_path'].get()
+            )
+            if self.location_var.get() == 'custom':
+                self.change_location('custom')
+            dialog.destroy()
+        
+        # Save button
+        ctk.CTkButton(
+            dialog,
+            text="Save",
+            command=save_paths
+        ).pack(pady=10)
+
+    def change_location(self, location):
+        """Handle location change"""
+        # Update configuration
+        self.config_manager.update_theme_location(location)
+        
+        # Update paths
+        self.theme_paths = self.config_manager.get_theme_paths()
+        self.theme_folder = self.theme_paths['roms']  # Update ROM path
+        self.video_folder = self.theme_paths['videos']
+        self.logo_folder = self.theme_paths['logos']
+        
+        # Clear caches
+        self.thumbnail_cache.clear()
+        self.clear_logo_cache()
+        
+        # Reload themes and refresh display
+        self.load_themes()
+        if self.themes_list:
+            self.current_theme_index = 0
+            self.show_current_theme()
+        
+        # Update status
+        self.show_status_message(f"Changed theme location to: {location}")
 
     def handle_resize(self, event=None):
         """Handle window resize events"""
