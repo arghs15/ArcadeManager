@@ -2340,6 +2340,14 @@ class AdvancedConfigs:
         # Set the initial tab view
         self.set_initial_tab()
     
+    def validate_script_exists(self, script_name):
+        """Check if a script exists in any of the config folders"""
+        for folder in self.config_folders:
+            potential_path = os.path.join(self.base_path, folder, script_name)
+            if os.path.isfile(potential_path):
+                return True
+        return False
+
     def set_initial_tab(self):
         """Set the initial tab to Favorites if it contains values, else Themes."""
         initial_tab = "Favorites" if self.favorites else "Themes"
@@ -2388,8 +2396,9 @@ class AdvancedConfigs:
             cwd=os.path.dirname(script_path)
         )
         
-        stdout, stderr = await process.communicate()
-        return process.returncode
+        # Wait for the process to complete
+        await process.communicate()
+        return True  # Return True as script completed running, regardless of errors
 
     async def run_all_favorites_async(self):
         """Run all favorite scripts sequentially with progress tracking"""
@@ -2398,9 +2407,19 @@ class AdvancedConfigs:
 
         self.is_running_all = True
         self.set_gui_state(False)
-        self.show_progress(True)
         
-        total_scripts = len(self.favorites)
+        # Count only existing scripts for progress calculation
+        existing_scripts = [script for script in self.favorites if self.validate_script_exists(script)]
+        total_scripts = len(existing_scripts)
+        
+        if total_scripts == 0:
+            self.show_status("No valid scripts found in favorites!", color="orange")
+            self.is_running_all = False
+            self.set_gui_state(True)
+            return
+
+        # Show single progress bar
+        self.show_progress(True)
         completed = 0
         
         try:
@@ -2413,22 +2432,32 @@ class AdvancedConfigs:
                         break
 
                 if script_path:
+                    # Update progress before running script
+                    self.update_progress(completed, total_scripts, script_name)
+                    
+                    # Run script and wait for it to complete
+                    await self.run_script_async(script_path)
+                    
+                    # Increment progress as script has completed running
                     completed += 1
                     self.update_progress(completed, total_scripts, script_name)
-                    await self.run_script_async(script_path)
 
         finally:
             self.is_running_all = False
             self.set_gui_state(True)
             self.show_progress(False)
-            
-            # Show completion message
-            #messagebox.showinfo("Complete", "All favorite scripts have been executed!")
-            self.show_status("All favorites executed successfully!", color="#2ecc71")  # Green color for success
+            self.show_status("All available favorites executed successfully!", color="#2ecc71")
 
     def run_all_favorites(self):
         """Start the async run_all_favorites operation"""
         asyncio.run(self.run_all_favorites_async())
+
+    def update_progress(self, current, total, script_name):
+        """Update progress bar and label"""
+        progress = current / total if total > 0 else 0
+        self.progress_bar.set(progress)
+        self.progress_label.configure(text=f"Running {current}/{total}: {os.path.splitext(script_name)[0]}")
+        self.parent_tab.update()
 
     def update_favorites_tab(self):
         """Update the contents of the Favorites tab"""
@@ -2463,19 +2492,35 @@ class AdvancedConfigs:
 
         for i, script_name in enumerate(self.favorites, 1):
             script_label = os.path.splitext(script_name)[0]
+            script_exists = self.validate_script_exists(script_name)
             
             # Create frame for radio button and remove button
             frame = ctk.CTkFrame(scrollable_frame)
             frame.pack(fill="x", padx=5, pady=2)
 
+            # Create radio button with different styling based on existence
             radio_button = ctk.CTkRadioButton(
                 frame,
                 text=script_label,
                 variable=self.tab_radio_vars["Favorites"],
                 value=i,
-                command=lambda t="Favorites", v=i: self.on_radio_select(t, v)
+                command=lambda t="Favorites", v=i: self.on_radio_select(t, v),
+                state="normal" if script_exists else "disabled",
+                text_color="gray50" if not script_exists else None
             )
             radio_button.pack(side="left", padx=5)
+
+            # Add warning icon and text for missing scripts
+            if not script_exists:
+                warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+                warning_frame.pack(side="left", padx=2)
+                
+                warning_label = ctk.CTkLabel(
+                    warning_frame,
+                    text="⚠️ Script not found",
+                    text_color="orange"
+                )
+                warning_label.pack(side="left")
 
             remove_button = ctk.CTkButton(
                 frame,
@@ -2485,15 +2530,9 @@ class AdvancedConfigs:
             )
             remove_button.pack(side="right", padx=5)
 
-            self.radio_buttons["Favorites"].append(radio_button)
-            self.radio_button_script_mapping["Favorites"][i] = script_name
-
-    def update_progress(self, current, total, script_name):
-        """Update progress bar and label"""
-        progress = current / total
-        self.progress_bar.set(progress)
-        self.progress_label.configure(text=f"Running {current}/{total}: {os.path.splitext(script_name)[0]}")
-        self.parent_tab.update()
+            if script_exists:
+                self.radio_buttons["Favorites"].append(radio_button)
+                self.radio_button_script_mapping["Favorites"][i] = script_name
     
     # Video functions are not used atm. Have commented out the preview button for now. Can add back later
     def preview_video(self):
