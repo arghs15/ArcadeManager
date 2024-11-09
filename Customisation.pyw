@@ -22,7 +22,8 @@ import configparser
 from typing import List, Optional
 import tkinter.font as tkFont
 from typing import List
-
+import json
+import asyncio
 
 class FilterGamesApp:
     @staticmethod
@@ -2278,10 +2279,11 @@ class AdvancedConfigs:
         self.base_path = os.getcwd()
         self.config_folders = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass and Scanlines"]
         self.tab_keywords = {
-            "Themes": None,  # For direct folder mapping
-            "2nd Screen": None,  # For direct folder mapping
-            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],  # Updated to use keywords too
-            "Overlays": ["OVERLAY"],  # Updated to use keywords too
+            "Favorites": None,
+            "Themes": None,
+            "2nd Screen": None,
+            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],
+            "Overlays": ["OVERLAY"],
             "InigoBeats": ["MUSIC"],
             "Attract": ["Attract", "Scroll"],           
             "Monitor": ["Monitor"],
@@ -2298,8 +2300,20 @@ class AdvancedConfigs:
         
         self.tab_radio_vars = {}
         self.radio_button_script_mapping = {}
-        self.radio_buttons = {}  # Store radio buttons for enabling/disabling
+        self.radio_buttons = {}
+        self.favorite_buttons = {}
+        self.favorites = self.load_favorites()
         
+        # Create status label (hidden by default)
+        self.status_label = ctk.CTkLabel(
+            self.parent_tab,
+            text="",
+            text_color="green",
+            bg_color="transparent",
+            corner_radius=8,
+            font=("", 14, "bold")
+        )
+
         # Create loading label
         self.loading_label = ctk.CTkLabel(
             self.parent_tab,
@@ -2307,12 +2321,179 @@ class AdvancedConfigs:
             text_color="gray70"
         )
         
+        # Create progress bar (hidden by default)
+        self.progress_frame = ctk.CTkFrame(self.parent_tab)
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
+        self.progress_bar.set(0)
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
+        
         # Create the tab view in the parent tab
         self.tabview = ctk.CTkTabview(self.parent_tab)
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
         
+        # Flag to track if scripts are currently running
+        self.is_running_all = False
+        
         # Populate the tabs and scripts dynamically
         self.populate_tabs_and_scripts()
+
+        # Set the initial tab view
+        self.set_initial_tab()
+    
+    def set_initial_tab(self):
+        """Set the initial tab to Favorites if it contains values, else Themes."""
+        initial_tab = "Favorites" if self.favorites else "Themes"
+        self.tabview.set(initial_tab)
+
+    def show_status(self, message, duration=2000, color="green"):
+        """Show a status message that automatically fades out"""
+        # Configure and show the status label
+        self.status_label.configure(text=message, text_color=color)
+        self.status_label.pack(side="bottom", pady=10)
+        self.parent_tab.update()
+        
+        # Schedule the fade out effect
+        def fade_out(alpha=1.0):
+            if alpha <= 0:
+                self.status_label.pack_forget()
+                return
+            
+            # Calculate color with alpha
+            rgb = [int(int(color[i:i+2], 16) * alpha) for i in (1, 3, 5)] if color.startswith('#') else None
+            if rgb:
+                color_with_alpha = f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
+                self.status_label.configure(text_color=color_with_alpha)
+            
+            self.parent_tab.update()
+            self.parent_tab.after(50, lambda: fade_out(alpha - 0.1))
+        
+        # Schedule the start of fade out
+        self.parent_tab.after(duration, lambda: fade_out())
+
+    def show_progress(self, show=True):
+        """Show or hide the progress bar and label"""
+        if show:
+            self.progress_frame.pack(side="bottom", fill="x", padx=10, pady=5)
+            self.progress_label.pack(pady=(0, 5))
+            self.progress_bar.pack(fill="x", padx=10, pady=(0, 5))
+        else:
+            self.progress_frame.pack_forget()
+
+    async def run_script_async(self, script_path):
+        """Run a script and return when it's complete"""
+        process = await asyncio.create_subprocess_exec(
+            "cmd.exe", "/c", script_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=os.path.dirname(script_path)
+        )
+        
+        stdout, stderr = await process.communicate()
+        return process.returncode
+
+    async def run_all_favorites_async(self):
+        """Run all favorite scripts sequentially with progress tracking"""
+        if not self.favorites or self.is_running_all:
+            return
+
+        self.is_running_all = True
+        self.set_gui_state(False)
+        self.show_progress(True)
+        
+        total_scripts = len(self.favorites)
+        completed = 0
+        
+        try:
+            for script_name in self.favorites:
+                script_path = None
+                for folder in self.config_folders:
+                    potential_path = os.path.join(self.base_path, folder, script_name)
+                    if os.path.isfile(potential_path):
+                        script_path = potential_path
+                        break
+
+                if script_path:
+                    completed += 1
+                    self.update_progress(completed, total_scripts, script_name)
+                    await self.run_script_async(script_path)
+
+        finally:
+            self.is_running_all = False
+            self.set_gui_state(True)
+            self.show_progress(False)
+            
+            # Show completion message
+            #messagebox.showinfo("Complete", "All favorite scripts have been executed!")
+            self.show_status("All favorites executed successfully!", color="#2ecc71")  # Green color for success
+
+    def run_all_favorites(self):
+        """Start the async run_all_favorites operation"""
+        asyncio.run(self.run_all_favorites_async())
+
+    def update_favorites_tab(self):
+        """Update the contents of the Favorites tab"""
+        # Clear existing content in Favorites tab
+        for widget in self.tabview.tab("Favorites").winfo_children():
+            widget.destroy()
+
+        # Create scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab("Favorites"), width=400, height=400)
+        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Add "Run All Favorites" button at the top if there are favorites
+        if self.favorites:
+            run_all_frame = ctk.CTkFrame(scrollable_frame)
+            run_all_frame.pack(fill="x", padx=5, pady=5)
+            
+            run_all_button = ctk.CTkButton(
+                run_all_frame,
+                text="Run All Favorites Sequentially",
+                command=self.run_all_favorites
+            )
+            run_all_button.pack(fill="x", padx=5, pady=5)
+
+        # Add favorite scripts
+        if not self.favorites:
+            ctk.CTkLabel(scrollable_frame, text="No favorites added yet").pack(pady=10)
+            return
+
+        self.tab_radio_vars["Favorites"] = tk.IntVar(value=0)
+        self.radio_buttons["Favorites"] = []
+        self.radio_button_script_mapping["Favorites"] = {}
+
+        for i, script_name in enumerate(self.favorites, 1):
+            script_label = os.path.splitext(script_name)[0]
+            
+            # Create frame for radio button and remove button
+            frame = ctk.CTkFrame(scrollable_frame)
+            frame.pack(fill="x", padx=5, pady=2)
+
+            radio_button = ctk.CTkRadioButton(
+                frame,
+                text=script_label,
+                variable=self.tab_radio_vars["Favorites"],
+                value=i,
+                command=lambda t="Favorites", v=i: self.on_radio_select(t, v)
+            )
+            radio_button.pack(side="left", padx=5)
+
+            remove_button = ctk.CTkButton(
+                frame,
+                text="Remove",
+                width=60,
+                command=lambda s=script_name, b=radio_button: self.remove_favorite(s, b),
+            )
+            remove_button.pack(side="right", padx=5)
+
+            self.radio_buttons["Favorites"].append(radio_button)
+            self.radio_button_script_mapping["Favorites"][i] = script_name
+
+    def update_progress(self, current, total, script_name):
+        """Update progress bar and label"""
+        progress = current / total
+        self.progress_bar.set(progress)
+        self.progress_label.configure(text=f"Running {current}/{total}: {os.path.splitext(script_name)[0]}")
+        self.parent_tab.update()
     
     # Video functions are not used atm. Have commented out the preview button for now. Can add back later
     def preview_video(self):
@@ -2438,30 +2619,93 @@ class AdvancedConfigs:
 
         return script_categories
 
+    def load_favorites(self):
+        """Load favorites from a JSON file"""
+        favorites_path = os.path.join(self.base_path, "autochanger", 'favorites.json')
+        try:
+            with open(favorites_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return []
+
+    def save_favorites(self):
+        """Save favorites to a JSON file"""
+        favorites_path = os.path.join(self.base_path, "autochanger", 'favorites.json')
+        with open(favorites_path, 'w') as f:
+            json.dump(self.favorites, f)
+
+    def toggle_favorite(self, tab_name, script_name, button):
+        """Toggle favorite status for a script"""
+        if script_name in self.favorites:
+            self.favorites.remove(script_name)
+            button.configure(text="☆")  # Empty star
+        else:
+            self.favorites.append(script_name)
+            button.configure(text="★")  # Filled star
+        
+        self.save_favorites()
+        self.update_favorites_tab()
+
+    def remove_favorite(self, script_name, button):
+        """Remove a script from favorites"""
+        if script_name in self.favorites:
+            self.favorites.remove(script_name)
+            self.save_favorites()
+            self.update_favorites_tab()
+            
+            # Update the star button in the original tab if it exists
+            for tab_name in self.favorite_buttons:
+                if script_name in self.favorite_buttons[tab_name]:
+                    self.favorite_buttons[tab_name][script_name].configure(text="☆")
+
     def populate_tabs_and_scripts(self):
         script_categories = self.categorize_scripts()
 
         for tab_name, scripts in script_categories.items():
-            if scripts:
+            if scripts or tab_name == "Favorites":  # Always create Favorites tab
                 self.tabview.add(tab_name)
                 self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
                 self.radio_button_script_mapping[tab_name] = scripts
-                self.radio_buttons[tab_name] = []  # Initialize list for this tab's radio buttons
+                self.radio_buttons[tab_name] = []
+                self.favorite_buttons[tab_name] = {}
 
                 scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
                 scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-                for i, script_name in scripts.items():
-                    script_label = os.path.splitext(script_name)[0]
-                    radio_button = ctk.CTkRadioButton(
-                        scrollable_frame,
-                        text=script_label,
-                        variable=self.tab_radio_vars[tab_name],
-                        value=i,
-                        command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
-                    )
-                    radio_button.pack(anchor="w", padx=20, pady=5)
-                    self.radio_buttons[tab_name].append(radio_button)  # Store the radio button reference
+                if tab_name == "Favorites":
+                    self.update_favorites_tab()
+                else:
+                    for i, script_name in scripts.items():
+                        script_label = os.path.splitext(script_name)[0]
+                        
+                        # Create frame for radio button and favorite button
+                        frame = ctk.CTkFrame(scrollable_frame)
+                        frame.pack(fill="x", padx=5, pady=2)
+
+                        radio_button = ctk.CTkRadioButton(
+                            frame,
+                            text=script_label,
+                            variable=self.tab_radio_vars[tab_name],
+                            value=i,
+                            command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+                        )
+                        radio_button.pack(side="left", padx=5)
+
+                        # Add favorite toggle button
+                        favorite_button = ctk.CTkButton(
+                            frame,
+                            text="★" if script_name in self.favorites else "☆",
+                            width=30,
+                            command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
+                        )
+                        favorite_button.pack(side="right", padx=5)
+                        
+                        # Store the button reference for later updates
+                        self.favorite_buttons[tab_name][script_name] = favorite_button
+                        favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button: 
+                                               self.toggle_favorite(t, s, b))
+
+                        self.radio_buttons[tab_name].append(radio_button)
 
     def set_gui_state(self, enabled):
         """Enable or disable all script-related GUI elements without disabling the tabview itself."""
