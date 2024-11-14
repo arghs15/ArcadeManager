@@ -1150,6 +1150,7 @@ class Controls:
         finally:
             print("Keyboard monitoring ended")
 
+
     def create_layout(self):
         # Main container for left and right columns
         self.main_container = ctk.CTkFrame(self.parent)
@@ -1232,23 +1233,19 @@ class Controls:
         )
         self.clear_button.pack(side="left", padx=5)
 
-
-
-
     def show_status_message(self, message, duration=2000):
         # Show the status label if it's hidden
         self.message_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
-        
+
         # Update the message
         self.message_label.configure(text=message)
-        
+
         # Cancel any existing scheduled hide to prevent overlap
         if self.status_message_after_id:
             self.parent.after_cancel(self.status_message_after_id)
-        
+
         # Schedule the message to be hidden
         self.status_message_after_id = self.parent.after(duration, self.hide_status_message)
-
     
     def hide_status_message(self):
         self.message_label.pack_forget()
@@ -1309,12 +1306,17 @@ class Controls:
     def clear_entry(self, control_name):
         """Clear the text in the entry box when it is double-clicked"""
         if control_name in self.control_entries:
-            self.control_entries[control_name].delete(0, "end")
-            self.controls_config[control_name] = []
-            self.show_status_message(f"Control '{control_name}' has been cleared")
+            self.parent.after(0, self._safe_clear_entry, control_name)
         else:
             self.show_status_message(f"Control '{control_name}' is not valid", color="#ff6b6b")
-    
+
+    def _safe_clear_entry(self, control_name):
+        """Safely clear the entry from the main thread"""
+        if control_name in self.control_entries:
+            self.control_entries[control_name].delete(0, "end")
+            self.controls_config[control_name] = []
+            #self.show_status_message(f"Control '{control_name}' has been cleared")
+
     def stop_capture(self):
         """Stop all input capture and clean up threads"""
         print("Stopping capture...")
@@ -1370,8 +1372,9 @@ class Controls:
             for key in self.controls_config:
                 self.controls_config[key] = []
                 if key in self.control_entries:
-                    self.control_entries[key].delete(0, "end")
+                    self.parent.after(0, self._safe_clear_entry, key)
             self.show_status_message("All controls have been cleared")
+
 
     def _safe_update_entry(self, input_name, friendly_name):
         """Safely update the entry from the main thread"""
@@ -1381,7 +1384,7 @@ class Controls:
             entry.configure(state="normal")
 
             # Store internal name in controls_config
-            internal_name = self.friendly_to_internal.get(friendly_name, input_name)
+            internal_name = input_name  # Assume input_name is already the internal name for keyboard inputs
             self.controls_config[self.current_control].append(internal_name)
 
             # Display appropriate name based on toggle
@@ -1393,6 +1396,7 @@ class Controls:
 
             entry.delete(0, "end")
             entry.insert(0, ', '.join(current_display))  # Add space after comma for GUI
+
 
     def cleanup_capture(self):
         """Clean up after capture is complete"""
