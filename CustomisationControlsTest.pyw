@@ -967,6 +967,7 @@ class Controls:
         self.show_friendly_names = False  # New flag for name display toggle
         self.status_fade_after_id = None  # For tracking fade timer
         self.status_message_after_id = None  # For tracking message clear timer
+        self.stop_event = threading.Event()  # Event object to signal the keyboard thread to stop
 
         # Add a reverse mapping from friendly names to internal names
         self.reverse_button_map = {
@@ -1128,27 +1129,72 @@ class Controls:
     def handle_keyboard_input(self):
         """Monitor keyboard input until a key is pressed or capture is stopped"""
         print("Keyboard monitoring started")
-        try:
-            while True:
-                with self.capture_lock:
-                    if not self.capture_active:
-                        print("Keyboard thread - capture inactive, exiting")
+        
+        while not self.stop_event.is_set():
+            try:
+                event = keyboard.read_event(suppress=True)
+                if event.event_type == keyboard.KEY_DOWN:
+                    key_name = event.name.capitalize()
+                    print(f"Got keyboard input: {key_name}")
+                    
+                    if key_name == "Esc":
+                        print("Escape key pressed, canceling capture")
+                        self.stop_capture()
                         return
+                    
+                    self.stop_event.set()
+                    self.parent.after(0, self._safe_update_entry, key_name, key_name)
+                    return
+            except KeyboardInterrupt:
+                # Handle Ctrl+C gracefully
+                print("Keyboard monitoring interrupted")
+                self.stop_capture()
+                return
+            except Exception as e:
+                print(f"Keyboard error: {e}")
+            
+            # Check the stop event flag more frequently
+            if self.stop_event.is_set():
+                break
+            time.sleep(0.001)
+        
+        print("Keyboard monitoring ended")
 
-                try:
-                    event = keyboard.read_event(suppress=True)
-                    if event.event_type == keyboard.KEY_DOWN:
-                        key_name = event.name.capitalize()
-                        print(f"Got keyboard input: {key_name}")
-                        with self.capture_lock:
-                            self.capture_active = False
-                        self.parent.after(0, self._safe_update_entry, key_name, key_name)
-                        return
-                except Exception as e:
-                    print(f"Keyboard error: {e}")
-                time.sleep(0.01)
-        finally:
-            print("Keyboard monitoring ended")
+    def stop_capture(self):
+        """Stop all input capture and clean up threads"""
+        print("Stopping capture...")
+
+        with self.capture_lock:
+            was_active = self.capture_active
+            self.capture_active = False
+
+        if was_active:
+            if self.controller_thread:
+                print("Waiting for controller thread...")
+                self.controller_thread.join(timeout=0.5)
+                if self.controller_thread.is_alive():
+                    print("Warning: Controller thread did not exit cleanly")
+                self.controller_thread = None
+
+            if self.keyboard_thread:
+                print("Waiting for keyboard thread...")
+                self.stop_event.set()
+                self.keyboard_thread.join(timeout=0.5)
+                self.keyboard_thread = None
+                self.stop_event.clear()
+
+        self.cleanup_capture()
+        print("Capture stopped")
+
+    def cleanup_capture(self):
+        """Clean up after capture is complete"""
+        print("Cleanup capture called")
+        if self.current_control:
+            entry = self.control_entries[self.current_control]
+            entry.configure(state="normal")
+            # Revert the border color of the entry to indicate capture is complete
+            entry.configure(border_color="gray", border_width=1)
+        self.current_control = None
 
 
     def create_layout(self):
@@ -1276,7 +1322,6 @@ class Controls:
             entry.delete(0, "end")
             entry.insert(0, ', '.join(display_values))  # Add space after comma for GUI
 
-
     def create_control_frame(self, parent, control_name):
         frame = ctk.CTkFrame(parent)
         frame.pack(fill="x", padx=5, pady=2)
@@ -1295,13 +1340,22 @@ class Controls:
             frame,
             text="Capture",
             width=70,
-            command=lambda cn=control_name, e=entry: self.start_input_capture(cn, e)
+            command=lambda cn=control_name, e=entry: self.toggle_input_capture(cn, e)
         )
         capture_button.pack(side="right", padx=5)
 
         self.control_frames[control_name] = frame
         self.control_entries[control_name] = entry
         print(f"Created control frame for: {control_name}")
+
+    def toggle_input_capture(self, control_name, entry):
+        """Toggle capturing input for a control"""
+        if self.current_control == control_name and self.capture_active:
+            print(f"Canceling capture for {control_name}")
+            self.stop_capture()
+            self.cleanup_capture()
+        else:
+            self.start_input_capture(control_name, entry)
 
     def clear_entry(self, control_name):
         """Clear the text in the entry box when it is double-clicked"""
@@ -1316,65 +1370,6 @@ class Controls:
             self.control_entries[control_name].delete(0, "end")
             self.controls_config[control_name] = []
             #self.show_status_message(f"Control '{control_name}' has been cleared")
-
-    def stop_capture(self):
-        """Stop all input capture and clean up threads"""
-        print("Stopping capture...")
-
-        with self.capture_lock:
-            was_active = self.capture_active
-            self.capture_active = False
-
-        if was_active:
-            if self.controller_thread:
-                print("Waiting for controller thread...")
-                self.controller_thread.join(timeout=0.5)
-                if self.controller_thread.is_alive():
-                    print("Warning: Controller thread did not exit cleanly")
-                self.controller_thread = None
-
-            if self.keyboard_thread:
-                print("Waiting for keyboard thread...")
-                self.keyboard_thread.join(timeout=0.5)
-                if self.keyboard_thread.is_alive():
-                    print("Warning: Keyboard thread did not exit cleanly")
-                self.keyboard_thread = None
-
-        print("Capture stopped")
-
-    def start_input_capture(self, control_name, entry):
-        """Start capturing input for a control"""
-        print(f"Starting capture for {control_name}")
-
-        self.stop_capture()
-
-        self.current_control = control_name
-        with self.capture_lock:
-            self.capture_active = True
-
-        entry.configure(state="disabled")
-        entry.delete(0, "end")
-        entry.insert(0, "Press key or controller button...")
-
-        if not self.controller_thread or not self.controller_thread.is_alive():
-            self.controller_thread = threading.Thread(target=self.monitor_controller_input)
-            self.controller_thread.daemon = True
-            self.controller_thread.start()
-
-        if not self.keyboard_thread or not self.keyboard_thread.is_alive():
-            self.keyboard_thread = threading.Thread(target=self.handle_keyboard_input)
-            self.keyboard_thread.daemon = True
-            self.keyboard_thread.start()
-
-    def clear_all_controls(self):
-        """Clear all control bindings"""
-        if messagebox.askyesno("Confirm Clear", "Are you sure you want to clear all control bindings?"):
-            for key in self.controls_config:
-                self.controls_config[key] = []
-                if key in self.control_entries:
-                    self.parent.after(0, self._safe_clear_entry, key)
-            self.show_status_message("All controls have been cleared")
-
 
     def _safe_update_entry(self, input_name, friendly_name):
         """Safely update the entry from the main thread"""
@@ -1397,15 +1392,47 @@ class Controls:
             entry.delete(0, "end")
             entry.insert(0, ', '.join(current_display))  # Add space after comma for GUI
 
+            # Revert the border color of the entry to indicate capture is complete
+            entry.configure(border_color="gray", border_width=1)
 
-    def cleanup_capture(self):
-        """Clean up after capture is complete"""
-        print("Cleanup capture called")
-        if self.current_control:
-            entry = self.control_entries[self.current_control]
-            entry.configure(state="normal")
-        self.current_control = None
+            self.cleanup_capture()
+
+    def clear_all_controls(self):
+        """Clear all control bindings"""
+        if messagebox.askyesno("Confirm Clear", "Are you sure you want to clear all control bindings?"):
+            for key in self.controls_config:
+                self.controls_config[key] = []
+                if key in self.control_entries:
+                    self.parent.after(0, self._safe_clear_entry, key)
+            self.show_status_message("All controls have been cleared")
+
+    def start_input_capture(self, control_name, entry):
+        """Start capturing input for a control"""
+        print(f"Starting capture for {control_name}")
+
         self.stop_capture()
+
+        self.current_control = control_name
+        with self.capture_lock:
+            self.capture_active = True
+
+        entry.configure(state="disabled")
+        entry.delete(0, "end")
+        entry.insert(0, "Press key or controller button...")
+
+        # Change the border color of the entry to indicate capture is active
+        entry.configure(border_color="white", border_width=2)
+
+        if not self.controller_thread or not self.controller_thread.is_alive():
+            self.controller_thread = threading.Thread(target=self.monitor_controller_input)
+            self.controller_thread.daemon = True
+            self.controller_thread.start()
+
+        if not self.keyboard_thread or not self.keyboard_thread.is_alive():
+            self.stop_event.clear()
+            self.keyboard_thread = threading.Thread(target=self.handle_keyboard_input)
+            self.keyboard_thread.daemon = True
+            self.keyboard_thread.start()
 
     def cleanup(self):
         """Clean up when closing the application"""
@@ -1466,7 +1493,6 @@ class Controls:
 
         # Ensure entries are refreshed based on the current toggle state
         self.refresh_all_entries()
-
 
     def save_config(self):
         try:
