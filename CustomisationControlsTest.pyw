@@ -169,791 +169,6 @@ class FilterGamesApp:
         except Exception as e:
             ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
 
-'''
-class Controls:
-    def __init__(self, parent):
-        self.parent = parent
-        self.current_control = None
-        self.running = True
-        self.controller_thread = None
-        self.keyboard_thread = None
-        self.capture_active = False
-        self.capture_lock = threading.Lock()  # Add thread lock for safety
-        
-        self.controls_config = {
-            'pageUp': 'A',
-            'pageDown': 'Z',
-            'letterDown': 'M,joyButton2,joyButton4',
-            'letterUp': 'N,joyButton1,joyButton5',
-            'favPlaylist': 'F',
-            #'prevCyclePlaylist': 'F1',
-            #'nextCyclePlaylist': 'F2',
-            'addPlaylist': 'I',
-            'removePlaylist': 'O',
-            'random': 'R,joyButton3',
-            'select': '1,Return,joyButton0',
-            'back': 'B',
-            'quit': 'Q,Escape',
-            'togglePlaylist': 'T,joyButton7',
-            'saveFirstPlaylist': 'F',
-            'jbPause': 'P',
-            'kiosk': 'K',
-            'settings': 'joyButton10,S',
-            'quitCombo': 'joyButton6,joyButton7'
-        }
-        
-        self.create_layout()
-        self.load_config()
-        self.check_controller()
-
-    def monitor_controller_input(self):
-        """Monitor controller input until a button is pressed or capture is stopped"""
-        print("Controller monitoring started")
-        try:
-            while True:
-                with self.capture_lock:
-                    if not self.capture_active:
-                        print("Controller thread - capture inactive, exiting")
-                        return
-
-                try:
-                    if not devices.gamepads:
-                        time.sleep(0.1)
-                        continue
-
-                    events = get_gamepad()
-                    for event in events:
-                        with self.capture_lock:
-                            if not self.capture_active:
-                                return
-
-                        if event.ev_type == "Key" and event.state == 1:
-                            button_map = {
-                                "BTN_SOUTH": 0,
-                                "BTN_EAST": 1,
-                                "BTN_WEST": 2,
-                                "BTN_NORTH": 3,
-                                "BTN_TL": 4,
-                                "BTN_TR": 5,
-                                "BTN_SELECT": 6,
-                                "BTN_START": 7,
-                                "BTN_THUMBL": 8,
-                                "BTN_THUMBR": 9,
-                            }
-                            
-                            if event.code in button_map:
-                                button_num = button_map[event.code]
-                                button_name = f"joyButton{button_num}"
-                                print(f"Controller button pressed: {button_name}")
-                                with self.capture_lock:
-                                    self.capture_active = False
-                                self.parent.after(0, self._safe_update_entry, button_name)
-                                return
-
-                    time.sleep(0.01)
-                except Exception as e:
-                    print(f"Controller monitoring error: {e}")
-                    time.sleep(0.1)
-        finally:
-            print("Controller monitoring ended")
-
-    def handle_keyboard_input(self):
-        """Monitor keyboard input until a key is pressed or capture is stopped"""
-        print("Keyboard monitoring started")
-        try:
-            while True:
-                with self.capture_lock:
-                    if not self.capture_active:
-                        print("Keyboard thread - capture inactive, exiting")
-                        return
-
-                try:
-                    event = keyboard.read_event(suppress=True)
-                    if event.event_type == keyboard.KEY_DOWN:
-                        key_name = event.name.capitalize()
-                        print(f"Got keyboard input: {key_name}")
-                        with self.capture_lock:
-                            self.capture_active = False
-                        self.parent.after(0, self._safe_update_entry, key_name)
-                        return
-                except Exception as e:
-                    print(f"Keyboard error: {e}")
-                time.sleep(0.01)
-        finally:
-            print("Keyboard monitoring ended")
-
-    def create_layout(self):
-        self.main_container = ctk.CTkFrame(self.parent)
-        self.main_container.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        self.status_label = ctk.CTkLabel(self.main_container, text="Controller Status: Checking...")
-        self.status_label.pack(pady=5)
-        
-        self.left_column = ctk.CTkFrame(self.main_container)
-        self.left_column.pack(side="left", fill="both", expand=True, padx=5)
-        
-        self.right_column = ctk.CTkFrame(self.main_container)
-        self.right_column.pack(side="right", fill="both", expand=True, padx=5)
-        
-        self.control_frames = {}
-        self.control_entries = {}
-        
-        controls_list = list(self.controls_config.keys())
-        mid_point = len(controls_list) // 2
-        
-        for control in controls_list[:mid_point]:
-            self.create_control_frame(self.left_column, control)
-        
-        for control in controls_list[mid_point:]:
-            self.create_control_frame(self.right_column, control)
-        
-        self.button_frame = ctk.CTkFrame(self.parent)
-        self.button_frame.pack(fill="x", padx=10, pady=5)
-        
-        self.save_button = ctk.CTkButton(
-            self.button_frame,
-            text="Save Controls",
-            command=self.save_config
-        )
-        self.save_button.pack(side="left", padx=5)
-        
-        self.reset_button = ctk.CTkButton(
-            self.button_frame,
-            text="Reset to Defaults",
-            command=self.reset_to_defaults
-        )
-        self.reset_button.pack(side="left", padx=5)
-
-    def create_control_frame(self, parent, control_name):
-        frame = ctk.CTkFrame(parent)
-        frame.pack(fill="x", padx=5, pady=2)
-        
-        label = ctk.CTkLabel(frame, text=control_name)
-        label.pack(side="left", padx=5)
-        
-        entry = ctk.CTkEntry(frame)
-        entry.pack(side="left", fill="x", expand=True, padx=5)
-        entry.insert(0, self.controls_config[control_name])
-        
-        capture_button = ctk.CTkButton(
-            frame,
-            text="Capture",
-            width=70,
-            command=lambda cn=control_name, e=entry: self.start_input_capture(cn, e)
-        )
-        capture_button.pack(side="right", padx=5)
-        
-        self.control_frames[control_name] = frame
-        self.control_entries[control_name] = entry
-
-    def stop_capture(self):
-        """Stop all input capture and clean up threads"""
-        print("Stopping capture...")
-        
-        # Set capture_active to False with lock
-        with self.capture_lock:
-            was_active = self.capture_active
-            self.capture_active = False
-        
-        if was_active:
-            # Wait for threads to finish with timeout
-            if self.controller_thread:
-                print("Waiting for controller thread...")
-                self.controller_thread.join(timeout=0.5)
-                if self.controller_thread.is_alive():
-                    print("Warning: Controller thread did not exit cleanly")
-                self.controller_thread = None
-                
-            if self.keyboard_thread:
-                print("Waiting for keyboard thread...")
-                self.keyboard_thread.join(timeout=0.5)
-                if self.keyboard_thread.is_alive():
-                    print("Warning: Keyboard thread did not exit cleanly")
-                self.keyboard_thread = None
-            
-        print("Capture stopped")
-
-    def start_input_capture(self, control_name, entry):
-        """Start capturing input for a control"""
-        print(f"Starting capture for {control_name}")
-        
-        # Stop any existing capture
-        self.stop_capture()
-        
-        # Set up new capture
-        self.current_control = control_name
-        with self.capture_lock:
-            self.capture_active = True
-        
-        # Configure entry
-        entry.configure(state="disabled")
-        entry.delete(0, "end")
-        entry.insert(0, "Press key or controller button...")
-        
-        # Start new monitoring threads
-        if not self.controller_thread or not self.controller_thread.is_alive():
-            self.controller_thread = threading.Thread(target=self.monitor_controller_input)
-            self.controller_thread.daemon = True
-            self.controller_thread.start()
-        
-        if not self.keyboard_thread or not self.keyboard_thread.is_alive():
-            self.keyboard_thread = threading.Thread(target=self.handle_keyboard_input)
-            self.keyboard_thread.daemon = True
-            self.keyboard_thread.start()
-
-    def handle_input_capture(self, entry):
-        try:
-            while self.waiting_for_input and self.capture_active:
-                # Check for controller input
-                try:
-                    input_name = self.input_queue.get(timeout=0.1)
-                    print(f"Got controller input: {input_name}")
-                    self.waiting_for_input = False  # Stop waiting for input
-                    self.parent.after(0, self.update_entry, entry, input_name)
-                    return
-                except queue.Empty:
-                    pass
-                
-                # Check for keyboard input
-                try:
-                    event = keyboard.read_event(suppress=True)
-                    if event.event_type == keyboard.KEY_DOWN:
-                        key_name = event.name.capitalize()
-                        print(f"Got keyboard input: {key_name}")
-                        self.waiting_for_input = False  # Stop waiting for input
-                        self.capture_active = False  # Stop monitoring
-                        self.parent.after(0, self.update_entry, entry, key_name)
-                        return
-                except Exception as e:
-                    print(f"Keyboard error: {e}")
-                    
-                time.sleep(0.01)
-        except Exception as e:
-            print(f"Error in handle_input_capture: {e}")
-        finally:
-            print("Input capture handler ended")
-            self.cleanup_capture(entry)
-
-    def _safe_update_entry(self, input_name):
-        """Safely update the entry from the main thread"""
-        print(f"Safe update called with: {input_name}")
-        if self.current_control and input_name:
-            entry = self.control_entries[self.current_control]
-            entry.configure(state="normal")
-            entry.delete(0, "end")
-            entry.insert(0, input_name)
-            self.controls_config[self.current_control] = input_name
-            print(f"Updated entry for {self.current_control} with {input_name}")
-        self.cleanup_capture()
-
-    def cleanup_capture(self):
-        """Clean up after capture is complete"""
-        print("Cleanup capture called")
-        if self.current_control:
-            entry = self.control_entries[self.current_control]
-            entry.configure(state="normal")
-        self.current_control = None
-        self.stop_capture()
-
-    def cleanup(self):
-        """Clean up when closing the application"""
-        print("Cleaning up...")
-        self.running = False
-        self.stop_capture()
-        print("Cleanup complete")
-
-    def load_config(self):
-        try:
-            with open("controls1.conf", "r") as f:
-                for line_number, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-
-                    try:
-                        parts = line.split('=', 1)
-                        if len(parts) != 2:
-                            print(f"Warning: Invalid format in line {line_number}: {line}")
-                            continue
-
-                        key = parts[0].strip()
-                        value = parts[1].strip()
-
-                        if key in self.control_entries:
-                            self.control_entries[key].delete(0, "end")
-                            self.control_entries[key].insert(0, value)
-                            self.controls_config[key] = value
-                        else:
-                            print(f"Warning: Unknown control key in line {line_number}: {key}")
-
-                    except Exception as e:
-                        print(f"Error processing line {line_number}: {line}\nError: {str(e)}")
-                        continue
-
-        except FileNotFoundError:
-            # Silently create the configuration file by copying from root-level controls.conf if available
-            self.create_default_config()
-
-        except Exception as e:
-            print(f"Failed to load controls1.conf: {str(e)}")
-
-    def create_default_config(self):
-        """Creates controls1.conf by copying contents from root-level controls.conf if it exists."""
-        try:
-            # Attempt to copy from root-level controls.conf
-            with open("controls.conf", "r") as root_conf:
-                contents = root_conf.read()
-            
-            with open("controls1.conf", "w") as new_conf:
-                new_conf.write(contents)
-            print("controls1.conf created from root-level controls.conf")
-
-        except FileNotFoundError:
-            # Root-level controls.conf doesn't exist, creating controls1.conf with internal defaults
-            with open("controls1.conf", "w") as new_conf:
-                for key, default_value in self.controls_config.items():
-                    new_conf.write(f"{key} = {default_value}\n")
-            print("controls1.conf created with internal defaults")
-
-        except Exception as e:
-            print(f"Failed to create controls1.conf: {str(e)}")
-
-    def save_config(self):
-        try:
-            with open("controls1.conf", "w") as f:
-                for key, entry in self.control_entries.items():
-                    value = entry.get()
-                    f.write(f"{key} = {value}\n")
-            messagebox.showinfo("Success", "Controls saved successfully!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save controls: {e}")
-
-    def reset_to_defaults(self):
-        for key, default_value in self.controls_config.items():
-            if key in self.control_entries:
-                self.control_entries[key].delete(0, "end")
-                self.control_entries[key].insert(0, default_value)
-
-    def cleanup(self):
-        print("Cleaning up...")
-        self.running = False
-        self.waiting_for_input = False
-        self.capture_active = False
-        
-        if self.controller_thread and self.controller_thread.is_alive():
-            print("Waiting for controller thread to end...")
-            self.controller_thread.join(timeout=1.0)
-        print("Cleanup complete")
-
-    def check_controller(self):
-        if not self.running:
-            return
-            
-        try:
-            gamepads = [device for device in devices.gamepads]
-            if gamepads:
-                self.status_label.configure(
-                    text=f"Controller Status: Connected ({len(gamepads)} found)"
-                )
-            else:
-                self.status_label.configure(text="Controller Status: Not Connected")
-        except Exception as e:
-            self.status_label.configure(text=f"Controller Status: Error ({str(e)})")
-        
-        self.parent.after(1000, self.check_controller)
-'''
-
-'''class Controls:
-    def __init__(self, parent):
-        self.parent = parent
-        self.current_control = None
-        self.running = True
-        self.controller_thread = None
-        self.keyboard_thread = None
-        self.capture_active = False
-        self.capture_lock = threading.Lock()
-        self.input_queue = queue.Queue()
-
-        self.controls_config = {
-            'pageUp': ['A'],
-            'pageDown': ['Z'],
-            'letterDown': ['M', 'joyButton2', 'joyButton4'],
-            'letterUp': ['N', 'joyButton1', 'joyButton5'],
-            'favPlaylist': ['F'],
-            'addPlaylist': ['I'],
-            'removePlaylist': ['O'],
-            'random': ['R', 'joyButton3'],
-            'select': ['1', 'Return', 'joyButton0'],
-            'back': ['B'],
-            'quit': ['Q', 'Escape'],
-            'togglePlaylist': ['T', 'joyButton7'],
-            'saveFirstPlaylist': ['F'],
-            'jbPause': ['P'],
-            'kiosk': ['K'],
-            'settings': ['joyButton10', 'S'],
-            'quitCombo': ['joyButton6', 'joyButton7']
-        }
-
-        self.create_layout()
-        self.load_config()
-        self.check_controller()
-
-    def monitor_controller_input(self):
-        """Monitor controller input until a button is pressed or capture is stopped"""
-        print("Controller monitoring started")
-        try:
-            while True:
-                with self.capture_lock:
-                    if not self.capture_active:
-                        print("Controller thread - capture inactive, exiting")
-                        return
-
-                try:
-                    if not devices.gamepads:
-                        time.sleep(0.1)
-                        continue
-
-                    events = get_gamepad()
-                    for event in events:
-                        with self.capture_lock:
-                            if not self.capture_active:
-                                return
-
-                        # Handle button events
-                        if event.ev_type == "Key" and event.state == 1:
-                            button_map = {
-                                "BTN_SOUTH": 0,
-                                "BTN_EAST": 1,
-                                "BTN_WEST": 2,
-                                "BTN_NORTH": 3,
-                                "BTN_TL": 4,
-                                "BTN_TR": 5,
-                                "BTN_SELECT": 6,
-                                "BTN_START": 7,
-                                "BTN_THUMBL": 8,
-                                "BTN_THUMBR": 9,
-                                "BTN_THUMBL2": 12,  # L3
-                                "BTN_THUMBR2": 13,  # R3
-                            }
-
-                            if event.code in button_map:
-                                button_num = button_map[event.code]
-                                button_name = f"joyButton{button_num}"
-                                print(f"Controller button pressed: {button_name}")
-                                with self.capture_lock:
-                                    self.capture_active = False
-                                self.parent.after(0, self._safe_update_entry, button_name)
-                                return
-
-                        # Handle L2 and R2 analog trigger events
-                        elif event.ev_type == "Absolute":
-                            # Define thresholds to consider analog triggers as "pressed"
-                            analog_threshold = 10  # Customize this threshold as needed
-
-                            if event.code == "ABS_Z":  # L2 trigger
-                                if event.state > analog_threshold:
-                                    print("Controller analog trigger pressed: joyButton10 (L2)")
-                                    with self.capture_lock:
-                                        self.capture_active = False
-                                    self.parent.after(0, self._safe_update_entry, "joyButton10")
-                                    return
-
-                            elif event.code == "ABS_RZ":  # R2 trigger
-                                if event.state > analog_threshold:
-                                    print("Controller analog trigger pressed: joyButton11 (R2)")
-                                    with self.capture_lock:
-                                        self.capture_active = False
-                                    self.parent.after(0, self._safe_update_entry, "joyButton11")
-                                    return
-
-                    time.sleep(0.01)
-                except Exception as e:
-                    print(f"Controller monitoring error: {e}")
-                    time.sleep(0.1)
-        finally:
-            print("Controller monitoring ended")
-
-
-    def handle_keyboard_input(self):
-        """Monitor keyboard input until a key is pressed or capture is stopped"""
-        print("Keyboard monitoring started")
-        try:
-            while True:
-                with self.capture_lock:
-                    if not self.capture_active:
-                        print("Keyboard thread - capture inactive, exiting")
-                        return
-
-                try:
-                    event = keyboard.read_event(suppress=True)
-                    if event.event_type == keyboard.KEY_DOWN:
-                        key_name = event.name.capitalize()
-                        print(f"Got keyboard input: {key_name}")
-                        with self.capture_lock:
-                            self.capture_active = False
-                        self.parent.after(0, self._safe_update_entry, key_name)
-                        return
-                except Exception as e:
-                    print(f"Keyboard error: {e}")
-                time.sleep(0.01)
-        finally:
-            print("Keyboard monitoring ended")
-
-    def create_layout(self):
-        self.main_container = ctk.CTkFrame(self.parent)
-        self.main_container.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.status_label = ctk.CTkLabel(self.main_container, text="Controller Status: Checking...")
-        self.status_label.pack(pady=5)
-
-        self.left_column = ctk.CTkFrame(self.main_container)
-        self.left_column.pack(side="left", fill="both", expand=True, padx=5)
-
-        self.right_column = ctk.CTkFrame(self.main_container)
-        self.right_column.pack(side="right", fill="both", expand=True, padx=5)
-
-        self.control_frames = {}
-        self.control_entries = {}
-
-        controls_list = list(self.controls_config.keys())
-        mid_point = len(controls_list) // 2
-
-        for control in controls_list[:mid_point]:
-            self.create_control_frame(self.left_column, control)
-
-        for control in controls_list[mid_point:]:
-            self.create_control_frame(self.right_column, control)
-
-        self.button_frame = ctk.CTkFrame(self.parent)
-        self.button_frame.pack(fill="x", padx=10, pady=5)
-
-        self.save_button = ctk.CTkButton(
-            self.button_frame,
-            text="Save Controls",
-            command=self.save_config
-        )
-        self.save_button.pack(side="left", padx=5)
-
-        self.reset_button = ctk.CTkButton(
-            self.button_frame,
-            text="Reset to Defaults",
-            command=self.reset_to_defaults
-        )
-        self.reset_button.pack(side="left", padx=5)
-
-    def create_control_frame(self, parent, control_name):
-        frame = ctk.CTkFrame(parent)
-        frame.pack(fill="x", padx=5, pady=2)
-
-        label = ctk.CTkLabel(frame, text=control_name)
-        label.pack(side="left", padx=5)
-
-        entry = ctk.CTkEntry(frame)
-        entry.pack(side="left", fill="x", expand=True, padx=5)
-        entry.insert(0, ', '.join(self.controls_config[control_name]))
-
-        capture_button = ctk.CTkButton(
-            frame,
-            text="Capture",
-            width=70,
-            command=lambda cn=control_name, e=entry: self.start_input_capture(cn, e)
-        )
-        capture_button.pack(side="right", padx=5)
-
-        self.control_frames[control_name] = frame
-        self.control_entries[control_name] = entry
-
-    def stop_capture(self):
-        """Stop all input capture and clean up threads"""
-        print("Stopping capture...")
-
-        with self.capture_lock:
-            was_active = self.capture_active
-            self.capture_active = False
-
-        if was_active:
-            if self.controller_thread:
-                print("Waiting for controller thread...")
-                self.controller_thread.join(timeout=0.5)
-                if self.controller_thread.is_alive():
-                    print("Warning: Controller thread did not exit cleanly")
-                self.controller_thread = None
-
-            if self.keyboard_thread:
-                print("Waiting for keyboard thread...")
-                self.keyboard_thread.join(timeout=0.5)
-                if self.keyboard_thread.is_alive():
-                    print("Warning: Keyboard thread did not exit cleanly")
-                self.keyboard_thread = None
-
-        print("Capture stopped")
-
-    def start_input_capture(self, control_name, entry):
-        """Start capturing input for a control"""
-        print(f"Starting capture for {control_name}")
-
-        self.stop_capture()
-
-        self.current_control = control_name
-        with self.capture_lock:
-            self.capture_active = True
-
-        entry.configure(state="disabled")
-        entry.delete(0, "end")
-        entry.insert(0, "Press key or controller button...")
-
-        if not self.controller_thread or not self.controller_thread.is_alive():
-            self.controller_thread = threading.Thread(target=self.monitor_controller_input)
-            self.controller_thread.daemon = True
-            self.controller_thread.start()
-
-        if not self.keyboard_thread or not self.keyboard_thread.is_alive():
-            self.keyboard_thread = threading.Thread(target=self.handle_keyboard_input)
-            self.keyboard_thread.daemon = True
-            self.keyboard_thread.start()
-
-    def _safe_update_entry(self, input_name):
-        """Safely update the entry from the main thread"""
-        print(f"Safe update called with: {input_name}")
-        if self.current_control and input_name:
-            entry = self.control_entries[self.current_control]
-            entry.configure(state="normal")
-            current_values = entry.get().split(', ')
-            if current_values == ['']:
-                current_values = []
-            current_values.append(input_name)
-            entry.delete(0, "end")
-            entry.insert(0, ','.join(current_values))
-            self.controls_config[self.current_control] = current_values
-            print(f"Updated entry for {self.current_control} with {input_name}")
-        self.cleanup_capture()
-
-    def cleanup_capture(self):
-        """Clean up after capture is complete"""
-        print("Cleanup capture called")
-        if self.current_control:
-            entry = self.control_entries[self.current_control]
-            entry.configure(state="normal")
-        self.current_control = None
-        self.stop_capture()
-
-    def cleanup(self):
-        """Clean up when closing the application"""
-        print("Cleaning up...")
-        self.running = False
-        self.stop_capture()
-        print("Cleanup complete")
-
-    def load_config(self):
-        try:
-            with open("controls1.conf", "r") as f:
-                for line_number, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-
-                    try:
-                        parts = line.split('=', 1)
-                        if len(parts) != 2:
-                            print(f"Warning: Invalid format in line {line_number}: {line}")
-                            continue
-
-                        key = parts[0].strip()
-                        value = parts[1].strip()
-
-                        if key in self.control_entries:
-                            self.control_entries[key].delete(0, "end")
-                            self.control_entries[key].insert(0, value)
-                            self.controls_config[key] = value.split(', ')
-                        else:
-                            print(f"Warning: Unknown control key in line {line_number}: {key}")
-
-                    except Exception as e:
-                        print(f"Error processing line {line_number}: {line}\nError: {str(e)}")
-                        continue
-
-        except FileNotFoundError:
-            self.create_default_config()
-
-        except Exception as e:
-            print(f"Failed to load controls1.conf: {str(e)}")
-
-    def create_default_config(self):
-        """Creates controls1.conf by copying contents from root-level controls.conf if it exists."""
-        try:
-            with open("controls.conf", "r") as root_conf:
-                contents = root_conf.read()
-
-            with open("controls1.conf", "w") as new_conf:
-                new_conf.write(contents)
-            print("controls1.conf created from root-level controls.conf")
-
-        except FileNotFoundError:
-            with open("controls1.conf", "w") as new_conf:
-                for key, default_values in self.controls_config.items():
-                    new_conf.write(f"{key} = {', '.join(default_values)}\n")
-            print("controls1.conf created with internal defaults")
-
-        except Exception as e:
-            print(f"Failed to create controls1.conf: {str(e)}")
-
-    def save_config(self):
-        try:
-            with open("controls1.conf", "w") as f:
-                for key, entry in self.control_entries.items():
-                    value = entry.get()
-                    f.write(f"{key} = {value}\n")
-            messagebox.showinfo("Success", "Controls saved successfully!")
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save controls: {e}")
-
-    def reset_to_defaults(self):
-        """Reset control settings to defaults by loading from controls.conf or using internal defaults."""
-
-        # First try to load from controls.conf if it exists
-        try:
-            with open("controls.conf", "r") as root_conf:
-                contents = root_conf.readlines()
-
-            # Parse and apply values from the root config file
-            for line in contents:
-                key, value = line.strip().split(" = ")
-                value_list = value.split(", ")
-                if key in self.control_entries:
-                    self.control_entries[key].delete(0, "end")
-                    self.control_entries[key].insert(0, ', '.join(value_list))
-
-            print("Settings reset to defaults from controls.conf")
-
-        except FileNotFoundError:
-            # If controls.conf is not found, use internal defaults from controls_config
-            print("controls.conf not found. Resetting to internal default values.")
-            for key, default_values in self.controls_config.items():
-                if key in self.control_entries:
-                    self.control_entries[key].delete(0, "end")
-                    self.control_entries[key].insert(0, ', '.join(default_values))
-
-        except Exception as e:
-            print(f"Failed to reset controls to defaults: {str(e)}")
-
-    def check_controller(self):
-        if not self.running:
-            return
-
-        try:
-            gamepads = [device for device in devices.gamepads]
-            if gamepads:
-                self.status_label.configure(
-                    text=f"Controller Status: Connected ({len(gamepads)} found)"
-                )
-            else:
-                self.status_label.configure(text="Controller Status: Not Connected")
-        except Exception as e:
-            self.status_label.configure(text=f"Controller Status: Error ({str(e)})")
-
-        self.parent.after(1000, self.check_controller)
-'''
-
 class Controls:
     def __init__(self, parent):
         self.parent = parent
@@ -968,6 +183,25 @@ class Controls:
         self.status_fade_after_id = None  # For tracking fade timer
         self.status_message_after_id = None  # For tracking message clear timer
         self.stop_event = threading.Event()  # Event object to signal the keyboard thread to stop
+        self.config_manager = ConfigManager()  # Add ConfigManager instance
+
+        # Add list of controls to exclude
+        self.excluded_controls = [
+            "settings", "deadZone", "left", "right", "up", "down", "prevCyclePlaylist", "nextCyclePlaylist", "nextPlaylist", "prevPlaylist" # Example excluded control
+            # Add more excluded control names here
+        ]
+
+        # Add list of controls to add
+        self.controls_add = [
+            "" # Example add control
+            # Add more added control names here
+        ]
+
+        # Append additional excluded controls from config
+        self.excluded_controls.extend(self.config_manager.get_exclude_append())
+
+        # Append additional added controls from config
+        self.controls_add.extend(self.config_manager.get_controls_add())
 
         # Add a reverse mapping from friendly names to internal names
         self.reverse_button_map = {
@@ -985,25 +219,8 @@ class Controls:
             "joyButton11": "ABS_RZ",    # R2
         }
         
-        self.controls_config = {
-            'pageUp': ['A'],
-            'pageDown': ['Z'],
-            'letterDown': ['M', 'joyButton2', 'joyButton4'],
-            'letterUp': ['N', 'joyButton1', 'joyButton5'],
-            'favPlaylist': ['F'],
-            'addPlaylist': ['I'],
-            'removePlaylist': ['O'],
-            'random': ['R', 'joyButton3'],
-            'select': ['1', 'Return', 'joyButton0'],
-            'back': ['B'],
-            'quit': ['Q', 'Escape'],
-            'togglePlaylist': ['T', 'joyButton7'],
-            'saveFirstPlaylist': ['F'],
-            'jbPause': ['P'],
-            'kiosk': ['K'],
-            'settings': ['joyButton10', 'S'],
-            'quitCombo': ['joyButton6', 'joyButton7']
-        }
+        # Initialize controls_config as empty dict - will be populated from config file
+        self.controls_config = {}
 
         self.button_map = {
             "BTN_SOUTH": 0,
@@ -1053,12 +270,13 @@ class Controls:
             "R2": "joyButton11",
         }
 
-        self.control_frames = {}  # Initialize control_frames dictionary
+        self.control_frames = {}
         self.control_entries = {}
 
-        self.create_layout()
+        # Load config before creating layout
         self.load_config()
-        self.refresh_all_entries()  # Ensure entries are refreshed on initialization
+        self.create_layout()
+        self.refresh_all_entries()
         self.check_controller()
 
     def monitor_controller_input(self):
@@ -1127,38 +345,35 @@ class Controls:
             print("Controller monitoring ended")
     
     def handle_keyboard_input(self):
-        """Monitor keyboard input until a key is pressed or capture is stopped"""
+        """Monitor keyboard input until a key is pressed or capture is stopped."""
         print("Keyboard monitoring started")
-        
-        while not self.stop_event.is_set():
-            try:
+        try:
+            while not self.stop_event.is_set():
                 event = keyboard.read_event(suppress=True)
                 if event.event_type == keyboard.KEY_DOWN:
                     key_name = event.name.capitalize()
                     print(f"Got keyboard input: {key_name}")
-                    
+
                     if key_name == "Esc":
                         print("Escape key pressed, canceling capture")
-                        self.stop_capture()
+                        self.stop_event.set()  # Signal stop event
+                        self.parent.after(0, self.stop_capture)  # Safely stop capture from GUI context
                         return
-                    
+
                     self.stop_event.set()
                     self.parent.after(0, self._safe_update_entry, key_name, key_name)
                     return
-            except KeyboardInterrupt:
-                # Handle Ctrl+C gracefully
-                print("Keyboard monitoring interrupted")
-                self.stop_capture()
-                return
-            except Exception as e:
-                print(f"Keyboard error: {e}")
-            
-            # Check the stop event flag more frequently
-            if self.stop_event.is_set():
-                break
-            time.sleep(0.001)
-        
+
+        except KeyboardInterrupt:
+            # Handle Ctrl+C gracefully
+            print("Keyboard monitoring interrupted")
+            self.parent.after(0, self.stop_capture)
+            return
+        except Exception as e:
+            print(f"Keyboard error: {e}")
+
         print("Keyboard monitoring ended")
+
 
     def stop_capture(self):
         """Stop all input capture and clean up threads"""
@@ -1220,6 +435,14 @@ class Controls:
         self.name_toggle.pack(side="right", padx=5)
         self.name_toggle.deselect()  # Default to internal names (off)
 
+        # Add information button to display instructions
+        self.info_button = ctk.CTkButton(
+            self.top_frame,
+            text="Info",
+            command=self.show_instructions
+        )
+        self.info_button.pack(side="right", padx=5)
+
         # Left and right columns for control frames
         self.left_column = ctk.CTkFrame(self.main_container)
         self.left_column.pack(side="left", fill="both", expand=True, padx=5)
@@ -1278,6 +501,96 @@ class Controls:
             command=self.clear_all_controls
         )
         self.clear_button.pack(side="left", padx=5)
+
+        delete_button = ctk.CTkButton(
+            self.button_frame,
+            text="Delete Custom Config",
+            command=self.delete_config_file
+        )
+        delete_button.pack(side="left", padx=5)
+
+    def show_instructions(self):
+        """Display a pop-up with instructions."""
+
+        # Create a new pop-up window
+        info_window = ctk.CTkToplevel(self.parent)
+        info_window.title("Instructions")
+        info_window.geometry("800x500")
+
+        # Ensure the pop-up stays on top
+        info_window.transient(self.parent)  # Set it to be transient to the parent
+        info_window.lift()  # Bring it to the front
+        info_window.focus_force()  # Give it focus
+
+        # Center the pop-up window on the screen
+        window_width = 800
+        window_height = 500
+        screen_width = info_window.winfo_screenwidth()
+        screen_height = info_window.winfo_screenheight()
+        x_coordinate = (screen_width // 2) - (window_width // 2)
+        y_coordinate = (screen_height // 2) - (window_height // 2)
+        info_window.geometry(f"{window_width}x{window_height}+{x_coordinate}+{y_coordinate}")
+
+        # Add a bold title
+        title_label = ctk.CTkLabel(
+            info_window, 
+            text="Instructions", 
+            font=("Arial", 20, "bold")  # Adjust the font size and make it bold
+        )
+        title_label.pack(pady=(10, 5))  # Add some padding around the title
+
+        # Create a scrollable frame for content
+        content_frame = ctk.CTkScrollableFrame(info_window)
+        content_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Define instruction items with heading and explanation
+        instructions = [
+            ("Clear a Single Setting:", "Double-click the left mouse button in the text area."),
+            ("Clear All Settings:", "Use the 'Clear All' button."),
+            ("Capture:", "Click 'Capture' to input a button or keyboard key. * The 'Capture' button must be pressed for each input."),
+            ("Cancel Capture:", "Click the 'Capture' button again or press 'ESC' to cancel input."),
+            ("Type:", "You can also type directly in the text area, but using the 'Capture' button is recommended."),
+            ("Delete Custom Configuration:", "Deletes the controls1.conf file and reverts to using standard controls from controls.conf."),
+            ("Reset to Defaults:", "Takes the values from controls.conf and applies them to the GUI."),
+            ("Save Controls:", "When you click 'Save Controls,' the controls1.conf file will be created.")
+        ]
+
+
+        # Display instructions with formatted headings
+        for heading, explanation in instructions:
+            # Heading in bold
+            heading_label = ctk.CTkLabel(
+                content_frame, 
+                text=heading, 
+                font=("Arial", 16, "bold")
+            )
+            heading_label.pack(anchor="w", pady=(5, 0))
+
+            # Explanation in normal font
+            explanation_label = ctk.CTkLabel(
+                content_frame, 
+                text=explanation, 
+                font=("Arial", 14)
+            )
+            explanation_label.pack(anchor="w", padx=10, pady=(0, 5))
+
+    def delete_config_file(self):
+        """Delete the controls file specified in the ini file."""
+        # Get the controls file path from the ini configuration
+        config_file_path = self.config_manager.get_controls_file()
+        
+        try:
+            # Check if the file exists
+            if os.path.exists(config_file_path):
+                os.remove(config_file_path)
+                print(f"{config_file_path} has been deleted.")
+                self.show_status_message(f"{config_file_path} has been deleted.")
+            else:
+                print(f"{config_file_path} does not exist.")
+                self.show_status_message(f"{config_file_path} does not exist.")
+        except Exception as e:
+            print(f"Error deleting {config_file_path}: {e}")
+            self.show_status_message(f"Error deleting {config_file_path}: {e}")
 
     def show_status_message(self, message, duration=2000):
         # Show the status label if it's hidden
@@ -1441,64 +754,85 @@ class Controls:
         self.stop_capture()
         print("Cleanup complete")
 
-    def load_config(self):
-        try:
-            with open("controls1.conf", "r") as f:
-                for line_number, line in enumerate(f, 1):
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-
-                    try:
-                        parts = line.split('=', 1)
-                        if len(parts) != 2:
-                            print(f"Warning: Invalid format in line {line_number}: {line}")
-                            continue
-
-                        key = parts[0].strip()
-                        value = parts[1].strip()
-                        internal_values = value.split(',')  # No space after comma for config file
-
-                        if key in self.control_entries:
-                            # Store internal values in controls_config
-                            self.controls_config[key] = internal_values
-
-                            # Convert to friendly names if needed for display
-                            display_values = []
-                            for val in internal_values:
-                                if val.startswith('joyButton') and self.show_friendly_names:
-                                    button_code = self.reverse_button_map.get(val)
-                                    if button_code:
-                                        friendly_name = self.friendly_names.get(button_code, val)
-                                        display_values.append(friendly_name)
-                                    else:
-                                        display_values.append(val)
-                                else:
-                                    display_values.append(val)
-
-                            # Update the entry display
-                            self.control_entries[key].delete(0, "end")
-                            self.control_entries[key].insert(0, ', '.join(display_values))  # Add space after comma for GUI
-                        else:
-                            print(f"Warning: Unknown control key in line {line_number}: {key}")
-
-                    except Exception as e:
-                        print(f"Error processing line {line_number}: {line}\nError: {str(e)}")
-                        continue
-
-        except FileNotFoundError:
-            self.create_default_config()
-        except Exception as e:
-            print(f"Failed to load controls1.conf: {str(e)}")
-
-        # Ensure entries are refreshed based on the current toggle state
+    def set_excluded_controls(self, excluded_list):
+        """Set the list of controls to exclude"""
+        self.excluded_controls = excluded_list
+        # Reload config to apply new exclusions
+        self.load_config()
+        # Recreate layout with new config
+        for widget in self.main_container.winfo_children():
+            widget.destroy()
+        self.create_layout()
         self.refresh_all_entries()
 
-    def save_config(self):
+    def load_config(self):
+        """Load configuration from specified controls file or create it from controls.conf"""
+        controls_file = self.config_manager.get_controls_file()
+        
         try:
-            with open("controls1.conf", "w") as f:
+            # First try to load the specified controls file
+            self.load_config_from_file(controls_file)
+        except FileNotFoundError:
+            # If specified file doesn't exist, try to create it from controls.conf
+            try:
+                self.load_config_from_file("controls.conf")
+                # Save the loaded config to the specified file
+                #self.save_config()
+                print(f"Created {controls_file} from controls.conf")
+            except FileNotFoundError:
+                print(f"Neither {controls_file} nor controls.conf found. Please create a config file.")
+                return
+            except Exception as e:
+                print(f"Error loading controls.conf: {str(e)}")
+                return
+
+    def load_config_from_file(self, filename):
+        """Load configuration from specified file"""
+        self.controls_config.clear()  # Clear existing config
+        
+        with open(filename, "r") as f:
+            for line_number, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                try:
+                    parts = line.split('=', 1)
+                    if len(parts) != 2:
+                        print(f"Warning: Invalid format in line {line_number}: {line}")
+                        continue
+
+                    key = parts[0].strip()
+                    
+                    # Skip if this control is in the excluded list, unless it's in controlsAdd
+                    controls_add = self.config_manager.get_controls_add()
+                    if key in self.excluded_controls and key not in controls_add:
+                        print(f"Skipping excluded control: {key}")
+                        continue
+                        
+                    value = parts[1].strip()
+                    self.controls_config[key] = [v.strip() for v in value.split(',')]
+
+                except Exception as e:
+                    print(f"Error processing line {line_number}: {line}\nError: {str(e)}")
+                    continue
+
+        print(f"Successfully loaded configuration from {filename}")
+
+    def save_config(self):
+        """Save configuration to specified controls file"""
+        controls_file = self.config_manager.get_controls_file()
+        try:
+            with open(controls_file, "w") as f:
+                # First write excluded controls as comments
+                for excluded in self.excluded_controls:
+                    f.write(f"# Excluded: {excluded}\n")
+                
+                # Then write active controls
+                controls_add = self.config_manager.get_controls_add()
                 for key, values in self.controls_config.items():
-                    f.write(f"{key} = {','.join(values)}\n")
+                    if key not in self.excluded_controls or key in controls_add:
+                        f.write(f"{key}={','.join(values)}\n")
             self.show_status_message("Controls saved successfully!")
         except Exception as e:
             self.show_status_message(f"Failed to save controls: {e}", color="#ff6b6b")
@@ -1606,8 +940,9 @@ class Controls:
             print(f"Failed to reset controls to defaults: {str(e)}")
             self.show_status_message(f"Failed to reset controls: {str(e)}", color="#ff6b6b")
 
+        ## Commented out for now, so it doesnt auto save, as I want to only create custom control file once users manually saves
         # Save the configuration after resetting
-        self.save_config()
+        #self.save_config()
 
     def check_controller(self):
         if not self.running:
@@ -1654,6 +989,14 @@ class ConfigManager:
                 'custom_logos_path': '',
                 'show_location_controls': 'False'
             }
+
+            # Add new Controls section with defaults
+            self.config['Controls'] = {
+                'controls_file': 'controls1.conf',
+                'excludeAppend': '',
+                'controlsAdd': ''
+            }
+
             self.save_config()
         else:
             # Just read existing config
@@ -1665,9 +1008,14 @@ class ConfigManager:
                 needs_save = True
             else:
                 needs_save = False
+
+            # If Controls section is missing, create it
+            if 'Controls' not in self.config:
+                self.config['Controls'] = {}
+                needs_save = True
                 
             # Only add missing keys if they don't exist
-            defaults = {
+            settings_defaults = {
                 'theme_location': 'autochanger',
                 'custom_roms_path': '',
                 'custom_videos_path': '',
@@ -1675,14 +1023,63 @@ class ConfigManager:
                 'show_location_controls': 'True'
             }
             
-            for key, default_value in defaults.items():
+            controls_defaults = {
+                'controls_file': 'controls1.conf',
+                'excludeAppend': '',
+                'controlsAdd': ''
+            }
+            
+            for key, default_value in settings_defaults.items():
                 if key not in self.config['Settings']:
                     self.config['Settings'][key] = default_value
+                    needs_save = True
+            
+            for key, default_value in controls_defaults.items():
+                if key not in self.config['Controls']:
+                    self.config['Controls'][key] = default_value
                     needs_save = True
                     
             # Only save if we added missing keys
             if needs_save:
                 self.save_config()
+
+    def get_controls_file(self) -> str:
+        """Get the controls file name."""
+        return self.config.get('Controls', 'controls_file', fallback='controls1.conf')
+
+    def get_exclude_append(self) -> List[str]:
+        """Get the list of additional controls to exclude."""
+        exclude_str = self.config.get('Controls', 'excludeAppend', fallback='')
+        return [item.strip() for item in exclude_str.split(',') if item.strip()]
+
+    def get_controls_add(self) -> List[str]:
+        """Get the list of controls to add (ignoring exclude list)."""
+        controls_str = self.config.get('Controls', 'controlsAdd', fallback='')
+        return [item.strip() for item in controls_str.split(',') if item.strip()]
+
+    def update_controls_file(self, filename: str):
+        """Update the controls file name."""
+        try:
+            self.config.set('Controls', 'controls_file', filename)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating controls file: {str(e)}")
+
+    def update_exclude_append(self, controls: List[str]):
+        """Update the excludeAppend list."""
+        try:
+            self.config.set('Controls', 'excludeAppend', ', '.join(controls))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating excludeAppend: {str(e)}")
+
+    def update_controls_add(self, controls: List[str]):
+        """Update the controlsAdd list."""
+        try:
+            self.config.set('Controls', 'controlsAdd', ', '.join(controls))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating controlsAdd: {str(e)}")
 
     def toggle_location_controls(self):
         """Toggle the visibility of location control elements"""
