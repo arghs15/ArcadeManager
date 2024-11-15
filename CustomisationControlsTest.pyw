@@ -826,10 +826,10 @@ class Controls:
             with open(controls_file, "w") as f:
                 # First write excluded controls as comments
                 for excluded in self.excluded_controls:
-                    f.write(f"# Excluded: {excluded}\n")
+                    #f.write(f"# Excluded: {excluded}\n")
                 
                 # Then write active controls
-                controls_add = self.config_manager.get_controls_add()
+                    controls_add = self.config_manager.get_controls_add()
                 for key, values in self.controls_config.items():
                     if key not in self.excluded_controls or key in controls_add:
                         f.write(f"{key}={','.join(values)}\n")
@@ -942,7 +942,7 @@ class Controls:
 
         ## Commented out for now, so it doesnt auto save, as I want to only create custom control file once users manually saves
         # Save the configuration after resetting
-        #self.save_config()
+        self.save_config()
 
     def check_controller(self):
         if not self.running:
