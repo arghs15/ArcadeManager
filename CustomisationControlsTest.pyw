@@ -211,8 +211,8 @@ class Controls:
             "joyButton3": "BTN_NORTH",  # Y
             "joyButton4": "BTN_TL",     # L1
             "joyButton5": "BTN_TR",     # R1
-            "joyButton6": "BTN_SELECT", # Select
-            "joyButton7": "BTN_START",  # Start
+            "joyButton6": "BTN_START",  # Start
+            "joyButton7": "BTN_SELECT", # Select
             "joyButton8": "BTN_THUMBL", # L3
             "joyButton9": "BTN_THUMBR", # R3
             "joyButton10": "ABS_Z",     # L2
@@ -229,8 +229,8 @@ class Controls:
             "BTN_NORTH": 3,
             "BTN_TL": 4,
             "BTN_TR": 5,
-            "BTN_SELECT": 6,
-            "BTN_START": 7,
+            "BTN_SELECT": 7,
+            "BTN_START": 6,
             "BTN_THUMBL": 8,
             "BTN_THUMBR": 9,
             "BTN_THUMBL2": 12,  # L3
@@ -262,8 +262,8 @@ class Controls:
             "Y": "joyButton3",
             "L1": "joyButton4",
             "R1": "joyButton5",
-            "Select": "joyButton6",
-            "Start": "joyButton7",
+            "Select": "joyButton7",
+            "Start": "joyButton6",
             "L3": "joyButton8",
             "R3": "joyButton9",
             "L2": "joyButton10",
@@ -279,6 +279,8 @@ class Controls:
         self.refresh_all_entries()
         self.check_controller()
 
+    ''' hidden controller monitor function
+    ## Code to allow R2, and L2 to be used. Keep
     def monitor_controller_input(self):
         """Monitor controller input until a button is pressed or capture is stopped"""
         print("Controller monitoring started")
@@ -343,7 +345,76 @@ class Controls:
                     time.sleep(0.1)
         finally:
             print("Controller monitoring ended")
+    '''
     
+    def monitor_controller_input(self):
+        """Monitor controller input until a button is pressed or capture is stopped"""
+        print("Controller monitoring started")
+        last_trigger_time = 0
+        debounce_interval = 0.5  # Time interval in seconds to debounce trigger events
+
+        try:
+            while True:
+                with self.capture_lock:
+                    if not self.capture_active:
+                        print("Controller thread - capture inactive, exiting")
+                        return
+
+                try:
+                    if not devices.gamepads:
+                        time.sleep(0.1)
+                        continue
+
+                    events = get_gamepad()
+                    current_time = time.time()
+
+                    for event in events:
+                        with self.capture_lock:
+                            if not self.capture_active:
+                                return
+
+                        # Handle button events
+                        if event.ev_type == "Key" and event.state == 1:
+                            if event.code in self.button_map:
+                                button_num = self.button_map[event.code]
+                                button_name = f"joyButton{button_num}"
+                                friendly_name = self.friendly_names.get(event.code, button_name)
+                                print(f"Controller button pressed: {friendly_name}")
+                                with self.capture_lock:
+                                    self.capture_active = False
+                                self.parent.after(0, self._safe_update_entry, button_name, friendly_name)
+                                return
+
+                        # Handle L2 and R2 analog trigger events
+                        elif event.ev_type == "Absolute":
+                            # Define thresholds to consider analog triggers as "pressed"
+                            analog_threshold = 10  # Customize this threshold as needed
+
+                            if event.code == "ABS_Z":  # L2 trigger
+                                if event.state > analog_threshold and (current_time - last_trigger_time) > debounce_interval:
+                                    print("L2 trigger pressed: Reserved for cycle playlist")
+                                    self.show_status_message("L2 is reserved for cycle playlist.\nPlease make another selection.")
+                                    last_trigger_time = current_time
+                                    # Do not exit the loop, keep capture active
+                                    continue
+
+                            elif event.code == "ABS_RZ":  # R2 trigger
+                                if event.state > analog_threshold and (current_time - last_trigger_time) > debounce_interval:
+                                    print("R2 trigger pressed: Reserved for cycle playlist")
+                                    self.show_status_message("R2 is reserved for cycle playlist.\nPlease make another selection.")
+                                    last_trigger_time = current_time
+                                    # Do not exit the loop, keep capture active
+                                    continue
+
+                    time.sleep(0.01)
+                except Exception as e:
+                    print(f"Controller monitoring error: {e}")
+                    time.sleep(0.1)
+        finally:
+            print("Controller monitoring ended")
+
+    ''' Hiden handle keyboard function
+    # previous function before removing s, and F1, F2
     def handle_keyboard_input(self):
         """Monitor keyboard input until a key is pressed or capture is stopped."""
         print("Keyboard monitoring started")
@@ -359,6 +430,55 @@ class Controls:
                         self.stop_event.set()  # Signal stop event
                         self.parent.after(0, self.stop_capture)  # Safely stop capture from GUI context
                         return
+
+                    self.stop_event.set()
+                    self.parent.after(0, self._safe_update_entry, key_name, key_name)
+                    return
+
+        except KeyboardInterrupt:
+            # Handle Ctrl+C gracefully
+            print("Keyboard monitoring interrupted")
+            self.parent.after(0, self.stop_capture)
+            return
+        except Exception as e:
+            print(f"Keyboard error: {e}")
+
+        print("Keyboard monitoring ended")
+    '''
+
+    def handle_keyboard_input(self):
+        """Monitor keyboard input until a key is pressed or capture is stopped."""
+        print("Keyboard monitoring started")
+        try:
+            while not self.stop_event.is_set():
+                event = keyboard.read_event(suppress=True)
+                if event.event_type == keyboard.KEY_DOWN:
+                    key_name = event.name.capitalize()
+                    print(f"Got keyboard input: {key_name}")
+
+                    if key_name == "Esc":
+                        print("Escape key pressed, canceling capture")
+                        self.stop_event.set()  # Signal stop event
+                        self.parent.after(0, self.stop_capture)  # Safely stop capture from GUI context
+                        return
+
+                    if key_name == "S":
+                        print("S key pressed: Reserved for settings")
+                        self.show_status_message("S is reserved for settings.\nPlease make another selection.")
+                        # Do not exit the loop, keep capture active
+                        continue
+
+                    if key_name == "F1":
+                        print("F1 key pressed: Reserved for prevPlaylist")
+                        self.show_status_message("F1 is reserved for prevPlaylist.\nPlease make another selection.")
+                        # Do not exit the loop, keep capture active
+                        continue
+
+                    if key_name == "F2":
+                        print("F2 key pressed: Reserved for nextPlaylist")
+                        self.show_status_message("F2 is reserved for nextPlaylist.\nPlease make another selection.")
+                        # Do not exit the loop, keep capture active
+                        continue
 
                     self.stop_event.set()
                     self.parent.after(0, self._safe_update_entry, key_name, key_name)
@@ -550,9 +670,9 @@ class Controls:
             ("Capture:", "Click 'Capture' to input a button or keyboard key. * The 'Capture' button must be pressed for each input."),
             ("Cancel Capture:", "Click the 'Capture' button again or press 'ESC' to cancel input."),
             ("Type:", "You can also type directly in the text area, but using the 'Capture' button is recommended."),
-            ("Delete Custom Configuration:", "Deletes the controls1.conf file and reverts to using standard controls from controls.conf."),
+            ("Delete Custom Configuration:", "Deletes the controls5.conf file and reverts to using standard controls from controls.conf."),
             ("Reset to Defaults:", "Takes the values from controls.conf and applies them to the GUI."),
-            ("Save Controls:", "When you click 'Save Controls,' the controls1.conf file will be created.")
+            ("Save Controls:", "When you click 'Save Controls,' the controls5.conf file will be created.")
         ]
 
 
@@ -838,23 +958,23 @@ class Controls:
             self.show_status_message(f"Failed to save controls: {e}", color="#ff6b6b")
 
     def create_default_config(self):
-        """Creates controls1.conf by copying contents from root-level controls.conf if it exists."""
+        """Creates controls5.conf by copying contents from root-level controls.conf if it exists."""
         try:
             with open("controls.conf", "r") as root_conf:
                 contents = root_conf.read()
 
-            with open("controls1.conf", "w") as new_conf:
+            with open("controls5.conf", "w") as new_conf:
                 new_conf.write(contents)
-            print("controls1.conf created from root-level controls.conf")
+            print("controls5.conf created from root-level controls.conf")
 
         except FileNotFoundError:
-            with open("controls1.conf", "w") as new_conf:
+            with open("controls5.conf", "w") as new_conf:
                 for key, default_values in self.controls_config.items():
                     new_conf.write(f"{key} = {','.join(default_values)}\n")  # No space after comma for config file
-            print("controls1.conf created with internal defaults")
+            print("controls5.conf created with internal defaults")
 
         except Exception as e:
-            print(f"Failed to create controls1.conf: {str(e)}")
+            print(f"Failed to create controls5.conf: {str(e)}")
 
     def reset_to_defaults(self):
         """Reset control settings to defaults by loading from controls.conf or using internal defaults."""
@@ -992,7 +1112,7 @@ class ConfigManager:
 
             # Add new Controls section with defaults
             self.config['Controls'] = {
-                'controls_file': 'controls1.conf',
+                'controls_file': 'controls5.conf',
                 'excludeAppend': '',
                 'controlsAdd': ''
             }
@@ -1024,7 +1144,7 @@ class ConfigManager:
             }
             
             controls_defaults = {
-                'controls_file': 'controls1.conf',
+                'controls_file': 'controls5.conf',
                 'excludeAppend': '',
                 'controlsAdd': ''
             }
@@ -1045,7 +1165,7 @@ class ConfigManager:
 
     def get_controls_file(self) -> str:
         """Get the controls file name."""
-        return self.config.get('Controls', 'controls_file', fallback='controls1.conf')
+        return self.config.get('Controls', 'controls_file', fallback='controls5.conf')
 
     def get_exclude_append(self) -> List[str]:
         """Get the list of additional controls to exclude."""
