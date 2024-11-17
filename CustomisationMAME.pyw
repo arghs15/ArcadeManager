@@ -28,6 +28,8 @@ import threading
 import keyboard
 import time
 from inputs import get_gamepad, devices
+import xml.etree.ElementTree as ET
+from collections import defaultdict
 
 class FilterGamesApp:
     @staticmethod
@@ -93,7 +95,7 @@ class FilterGamesApp:
         self.tabview.pack(expand=True, fill="both")
         
         # Check if the zzzSettings folder exists before adding the Themes tab
-        self.zzz_settings_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
+        self.zzz_settings_path = os.path.join(os.getcwd(), "autochanger", "themes")
         if self.check_zzz_settings_folder():
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)
@@ -115,6 +117,11 @@ class FilterGamesApp:
         self.controls_tab = self.tabview.add("Controls")
         self.controls = Controls(self.controls_tab)
     
+        config_path = "emulators/mame/cfg/default.cfg"
+        self.MameControlConfig_tab = self.tabview.add("MAME")
+        self.MameControlConfig = MameControlConfig(self.MameControlConfig_tab, config_path)
+    
+
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -168,6 +175,558 @@ class FilterGamesApp:
                 ctk.CTkMessageBox.showerror("Error", f"The script does not exist: {script_name}")
         except Exception as e:
             ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
+
+
+class MameControlConfig:
+    def __init__(self, parent, config_path):
+        self.parent = parent
+        self.config_path = config_path
+        self.capture_active = False
+        self.capture_lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.controller_thread = None
+        self.keyboard_thread = None
+        self.current_control = None
+        self.control_entries = {}
+        self.running = True
+        self.input_queue = queue.Queue()
+        self.status_fade_after_id = None
+        self.status_message_after_id = None
+        self.config_manager = ConfigManager()
+        
+        # Initialize control categories
+        self.control_categories = {
+            "Player 1": ["P1_JOYSTICK", "P1_BUTTON", "P1_START", "P1_SELECT"],
+            "Player 2": ["P2_JOYSTICK", "P2_BUTTON", "P2_START", "P2_SELECT"],
+            "UI Controls": ["UI_UP", "UI_DOWN", "UI_LEFT", "UI_RIGHT", "UI_SELECT", "UI_CANCEL"],
+            "System": ["COIN1", "COIN2", "START1", "START2"],
+            "Special": ["P1_LIGHTGUN", "P1_PEDAL", "P1_PADDLE", "P1_TRACKBALL"]
+        }
+        
+        # Load current mappings
+        self.current_mappings = self.load_mame_config()
+        
+        # Create the GUI
+        self.create_layout()
+        
+        # Button mapping for controller input
+        self.button_map = {
+            "BTN_SOUTH": 1,
+            "BTN_EAST": 2,
+            "BTN_NORTH": 3,
+            "BTN_WEST": 4,
+            "BTN_TL": 5,
+            "BTN_TR": 6,
+            "BTN_START": 7,
+            "BTN_SELECT": 8,
+        }
+        
+        self.friendly_names = {
+            "BTN_SOUTH": "A Button",
+            "BTN_EAST": "B Button",
+            "BTN_NORTH": "X Button",
+            "BTN_WEST": "Y Button",
+            "BTN_TL": "Left Bumper",
+            "BTN_TR": "Right Bumper",
+            "BTN_START": "Start Button",
+            "BTN_SELECT": "Select Button",
+        }
+
+    def load_mame_config(self):
+        """Load and parse the MAME config file"""
+        try:
+            tree = ET.parse(self.config_path)
+            root = tree.getroot()
+            mappings = defaultdict(dict)
+            
+            # Find the input section
+            input_section = root.find(".//input")
+            if input_section is not None:
+                for port in input_section.findall("port"):
+                    port_type = port.get("type")
+                    # Get the standard sequence if it exists
+                    seq = port.find("./newseq[@type='standard']")
+                    if seq is not None:
+                        mappings[port_type]["standard"] = seq.text
+                    
+                    # Get increment/decrement sequences if they exist
+                    inc_seq = port.find("./newseq[@type='increment']")
+                    if inc_seq is not None:
+                        mappings[port_type]["increment"] = inc_seq.text
+                        
+                    dec_seq = port.find("./newseq[@type='decrement']")
+                    if dec_seq is not None:
+                        mappings[port_type]["decrement"] = dec_seq.text
+            
+            return mappings
+        except Exception as e:
+            print(f"Error loading MAME config: {e}")
+            return defaultdict(dict)
+
+    def create_layout(self):
+        """Create the tabbed interface for different control categories"""
+        self.notebook = ctk.CTkTabview(self.parent)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create tabs for each category
+        for category in self.control_categories:
+            tab = self.notebook.add(category)
+            self.create_category_frame(tab, category)
+            
+        # Add status frame and buttons at the bottom
+        self.create_status_and_buttons()
+
+    def create_category_frame(self, parent, category):
+        """Create a scrollable frame for each category of controls"""
+        # Create a container frame
+        container = ctk.CTkFrame(parent)
+        container.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Create a scrollable frame
+        scrollable_frame = ctk.CTkScrollableFrame(container)
+        scrollable_frame.pack(fill="both", expand=True)
+        
+        # Add controls for this category
+        for control_prefix in self.control_categories[category]:
+            matching_controls = [ctrl for ctrl in self.current_mappings.keys() 
+                               if ctrl.startswith(control_prefix)]
+            
+            for control in matching_controls:
+                self.create_control_entry(scrollable_frame, control)
+
+    def create_control_entry(self, parent, control):
+        """Create an entry for a single control"""
+        frame = ctk.CTkFrame(parent)
+        frame.pack(fill="x", padx=5, pady=2)
+
+        # Display control name
+        label = ctk.CTkLabel(frame, text=control.replace("_", " "))
+        label.grid(row=0, column=0, sticky="w", padx=5)
+
+        # Create entry box
+        entry = ctk.CTkEntry(frame, width=200)
+        entry.grid(row=0, column=1, sticky="ew", padx=5)
+
+        # Set default or existing mapping
+        mapping = self.current_mappings.get(control, {}).get("standard", "")
+        if mapping:  # Only try to insert if there's actually a mapping
+            try:
+                entry.delete(0, "end")  # Clear any existing content first
+                entry.insert("0", mapping)  # Use string "0" instead of integer
+            except Exception as e:
+                print(f"Error setting initial mapping for {control}: {e}")
+
+        # Add capture and clear buttons
+        capture_button = ctk.CTkButton(
+            frame,
+            text="Capture",
+            command=lambda c=control, e=entry: self.start_capture(c, e)
+        )
+        capture_button.grid(row=0, column=2, sticky="e", padx=5)
+
+        clear_button = ctk.CTkButton(
+            frame,
+            text="Clear",
+            command=lambda e=entry: self.clear_entry(e)
+        )
+        clear_button.grid(row=0, column=3, sticky="e", padx=5)
+
+        # Configure grid weights
+        frame.grid_columnconfigure(1, weight=1)
+
+        # Save reference for updates
+        self.control_entries[control] = entry
+        return entry
+
+    def _safe_update_entry(self, input_code, friendly_name=None):
+        """Update entry with captured input in MAME format"""
+        if self.current_control and self.current_control in self.control_entries:
+            entry = self.control_entries[self.current_control]
+            entry.configure(state="normal")
+
+            # If the input code is already in MAME format, use it directly
+            if input_code.startswith("JOYCODE"):
+                mame_code = input_code
+            # Convert joyButton format to MAME format
+            elif input_code.startswith("joy"):
+                button_num = input_code.replace("joyButton", "")
+                mame_code = f"JOYCODE_1_BUTTON{button_num}"
+            # Handle keyboard input
+            else:
+                mame_code = f"KEYCODE_{input_code.upper()}"
+
+            try:
+                # Get the current text in the entry
+                current_text = entry.get()
+
+                # Append the new input code separated by ' OR ' if there is existing text
+                if current_text:
+                    new_text = f"{current_text} OR {mame_code}"
+                else:
+                    new_text = mame_code
+
+                entry.delete("0", "end")  # Use string "0" instead of integer
+                entry.insert("0", new_text)  # Use string "0" instead of integer
+            except Exception as e:
+                print(f"Error updating entry: {e}")
+
+            self.cleanup_capture()
+
+    def clear_entry(self, entry):
+        """Clear the content of an entry box"""
+        try:
+            entry.delete("0", "end")  # Use string "0" instead of integer
+            self.show_status_message("Entry cleared successfully")
+        except Exception as e:
+            print(f"Error clearing entry: {e}")
+            self.show_status_message(f"Error clearing entry: {e}")
+
+
+
+    def create_status_and_buttons(self):
+        """Create status frame and bottom buttons"""
+        # Status frame
+        self.status_frame = ctk.CTkFrame(self.parent, height=35)
+        self.status_frame.pack(fill="x", padx=10, pady=(5, 0))
+        
+        self.status_label = ctk.CTkLabel(self.parent, text="Controller Status: Checking...")
+        self.status_label.pack(side="left", pady=5, padx=5)
+        
+        self.message_label = ctk.CTkLabel(
+            self.status_frame,
+            text="",
+            height=25
+        )
+        self.message_label.pack(fill="x", padx=10, pady=5)
+        
+        # Button frame
+        button_frame = ctk.CTkFrame(self.parent)
+        button_frame.pack(fill="x", padx=10, pady=5)
+        
+        save_button = ctk.CTkButton(
+            button_frame,
+            text="Save Configuration",
+            command=self.save_config
+        )
+        save_button.pack(side="left", padx=5)
+
+    def save_config(self):
+        """Save the current configuration back to the MAME config file"""
+        try:
+            # Load the config file
+            tree = ET.parse(self.config_path)
+            root = tree.getroot()
+            input_section = root.find(".//input")
+            
+            if input_section is None:
+                raise ValueError("Input section not found in the config file")
+            
+            # Update controls
+            for control, entry in self.control_entries.items():
+                port = input_section.find(f"./port[@type='{control}']")
+                if port is not None:
+                    seq = port.find("./newseq[@type='standard']")
+                    if seq is not None:
+                        seq.text = entry.get()
+            
+            # Write changes to a temporary file
+            temp_file = self.config_path + ".tmp"
+            tree.write(temp_file)
+            
+            # Replace original with the temporary file
+            os.replace(temp_file, self.config_path)
+            self.show_status_message("Configuration saved successfully")
+        except Exception as e:
+            self.show_status_message(f"Error saving configuration: {e}")
+
+    def start_capture(self, control, entry):
+        """Start capturing input for a control"""
+        print(f"Starting capture for control: {control}")
+        
+        # First ensure any existing capture is properly stopped
+        self.stop_capture()
+        
+        # Wait a brief moment for threads to clean up
+        time.sleep(0.1)
+        
+        self.current_control = control
+        entry.configure(state="disabled")  # Lock entry
+        entry.configure(border_color="blue", border_width=2)  # Visual feedback
+        
+        with self.capture_lock:
+            self.capture_active = True
+        
+        # Reset stop event
+        self.stop_event.clear()
+        
+        # Start new capture threads
+        self.controller_thread = threading.Thread(target=self.monitor_controller_input)
+        self.controller_thread.daemon = True
+        self.controller_thread.start()
+        
+        self.keyboard_thread = threading.Thread(target=self.handle_keyboard_input)
+        self.keyboard_thread.daemon = True
+        self.keyboard_thread.start()
+        
+        self.show_status_message(f"Capturing input for {control}...")
+
+    def stop_capture(self):
+        """Stop all input capture and clean up threads"""
+        print("Stopping capture...")
+        
+        # Signal threads to stop
+        self.stop_event.set()
+        
+        with self.capture_lock:
+            self.capture_active = False
+        
+        # Wait for threads to finish with timeout
+        if self.controller_thread and self.controller_thread.is_alive():
+            self.controller_thread.join(timeout=0.5)
+            self.controller_thread = None
+        
+        if self.keyboard_thread and self.keyboard_thread.is_alive():
+            self.keyboard_thread.join(timeout=0.5)
+            self.keyboard_thread = None
+        
+        # Clean up the UI state
+        self.cleanup_capture()
+        print("Capture stopped")
+    
+    def cleanup_capture(self):
+        """Clean up after capture is complete"""
+        print("Cleanup capture called")
+        if self.current_control and self.current_control in self.control_entries:
+            entry = self.control_entries[self.current_control]
+            entry.configure(state="normal")
+            entry.configure(border_color="gray", border_width=1)
+        
+        # Reset all capture-related state
+        self.current_control = None
+        self.capture_active = False
+        self.stop_event.clear()
+
+    def handle_keyboard_input(self):
+        """Monitor keyboard input until a key is pressed or capture is stopped."""
+        print("Keyboard monitoring started")
+        try:
+            while not self.stop_event.is_set():
+                event = keyboard.read_event(suppress=True)
+                if event.event_type == keyboard.KEY_DOWN:
+                    key_name = event.name.capitalize()
+                    print(f"Got keyboard input: {key_name}")
+                    
+                    if key_name == "Esc":
+                        print("Escape key pressed, canceling capture")
+                        self.stop_event.set()
+                        self.parent.after(0, self.stop_capture)
+                        return
+                    
+                    # Stop capture and update entry
+                    self.stop_event.set()
+                    self.parent.after(0, self._safe_update_entry, key_name, key_name)
+                    return
+                
+                time.sleep(0.01)  # Small sleep to prevent CPU hogging
+                
+        except Exception as e:
+            print(f"Keyboard error: {e}")
+        finally:
+            print("Keyboard monitoring ended")
+
+    def monitor_controller_input(self):
+        """Monitor controller input until a button is pressed or capture is stopped"""
+        print("Controller monitoring started")
+        
+        # Define deadzone for analog sticks
+        DEADZONE = 20000
+        
+        # Track previous states to detect changes
+        last_states = {
+            'ABS_HAT0X': 0,
+            'ABS_HAT0Y': 0,
+            'ABS_X': 0,
+            'ABS_Y': 0,
+            'ABS_RX': 0,
+            'ABS_RY': 0
+        }
+        
+        try:
+            while not self.stop_event.is_set():
+                if not devices.gamepads:
+                    time.sleep(0.1)
+                    continue
+
+                events = get_gamepad()
+                for event in events:
+                    if self.stop_event.is_set():
+                        return
+
+                    print(f"Debug - Event: {event.ev_type} Code: {event.code} State: {event.state}")
+
+                    # Handle button events (A, B, X, Y, etc.)
+                    if event.ev_type == "Key" and event.state == 1:
+                        if event.code in self.button_map:
+                            button_num = self.button_map[event.code]
+                            button_name = f"joyButton{button_num}"
+                            friendly_name = self.friendly_names.get(event.code, button_name)
+                            print(f"Controller button pressed: {friendly_name}")
+
+                            self.stop_event.set()
+                            self.parent.after(0, self._safe_update_entry, button_name, friendly_name)
+                            return
+
+                    # Handle D-pad events
+                    elif event.ev_type == "Absolute" and event.code.startswith("ABS_HAT0"):
+                        if event.state != last_states[event.code]:
+                            last_states[event.code] = event.state
+                            
+                            if event.code == "ABS_HAT0X":
+                                if event.state == -1:
+                                    self.stop_event.set()
+                                    self.parent.after(0, self._safe_update_entry, "JOYCODE_1_LEFT", "D-pad Left")
+                                    return
+                                elif event.state == 1:
+                                    self.stop_event.set()
+                                    self.parent.after(0, self._safe_update_entry, "JOYCODE_1_RIGHT", "D-pad Right")
+                                    return
+                            elif event.code == "ABS_HAT0Y":
+                                if event.state == -1:
+                                    self.stop_event.set()
+                                    self.parent.after(0, self._safe_update_entry, "JOYCODE_1_UP", "D-pad Up")
+                                    return
+                                elif event.state == 1:
+                                    self.stop_event.set()
+                                    self.parent.after(0, self._safe_update_entry, "JOYCODE_1_DOWN", "D-pad Down")
+                                    return
+
+                    # Handle analog sticks
+                    elif event.ev_type == "Absolute" and event.code in ["ABS_X", "ABS_Y", "ABS_RX", "ABS_RY"]:
+                        if abs(event.state) > DEADZONE and event.state != last_states[event.code]:
+                            last_states[event.code] = event.state
+                            
+                            if event.code == "ABS_X":
+                                direction = "RIGHT" if event.state > 0 else "LEFT"
+                                mame_code = f"JOYCODE_1_XAXIS_{direction}"
+                                friendly_name = f"Left Stick {direction.lower()}"
+                            elif event.code == "ABS_Y":
+                                # Invert Y axis
+                                direction = "UP" if event.state < 0 else "DOWN"
+                                mame_code = f"JOYCODE_1_YAXIS_{direction}"
+                                friendly_name = f"Left Stick {direction.lower()}"
+                            elif event.code == "ABS_RX":
+                                direction = "RIGHT" if event.state > 0 else "LEFT"
+                                mame_code = f"JOYCODE_1_RXAXIS_{direction}"
+                                friendly_name = f"Right Stick {direction.lower()}"
+                            elif event.code == "ABS_RY":
+                                # Invert Y axis
+                                direction = "UP" if event.state < 0 else "DOWN"
+                                mame_code = f"JOYCODE_1_RYAXIS_{direction}"
+                                friendly_name = f"Right Stick {direction.lower()}"
+                            
+                            self.stop_event.set()
+                            self.parent.after(0, self._safe_update_entry, mame_code, friendly_name)
+                            return
+
+                time.sleep(0.01)  # Small sleep to prevent CPU hogging
+
+        except Exception as e:
+            print(f"Controller error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            print("Controller monitoring ended")
+            self.cleanup_capture()
+    def _handle_analog_trigger(self, event):
+        """Handle analog trigger input"""
+        analog_threshold = 10
+        
+        if event.code == "ABS_Z" and event.state > analog_threshold:  # L2 trigger
+            button_name = "joyButton10"
+            friendly_name = "L2 Trigger"
+            
+        elif event.code == "ABS_RZ" and event.state > analog_threshold:  # R2 trigger
+            button_name = "joyButton11"
+            friendly_name = "R2 Trigger"
+            
+        else:
+            return False
+        
+        print(f"Analog trigger pressed: {friendly_name}")
+        self.stop_event.set()
+        self.parent.after(0, self._safe_update_entry, button_name, friendly_name)
+        return True
+    
+    def cleanup_capture(self):
+        """Clean up after capture is complete"""
+        print("Cleanup capture called")
+        if self.current_control:
+            entry = self.control_entries[self.current_control]
+            entry.configure(state="normal")
+            # Revert the border color of the entry to indicate capture is complete
+            entry.configure(border_color="gray", border_width=1)
+        self.current_control = None
+    
+    def check_controller(self):
+        if not self.running:
+            return
+
+        try:
+            gamepads = [device for device in devices.gamepads]
+            if gamepads:
+                controller_name = gamepads[0].name
+                self.status_label.configure(
+                    text=f"Controller Status: Connected ({controller_name})"
+                )
+            else:
+                self.status_label.configure(text="Controller Status: Not Connected")
+        except Exception as e:
+            self.status_label.configure(text=f"Controller Status: Error ({str(e)})")
+
+        self.parent.after(1000, self.check_controller)
+
+    # Include the monitor_controller_input, handle_keyboard_input, and other 
+    # support methods from your original class here...
+    # They can remain largely unchanged, just updating the _safe_update_entry
+    # method to handle MAME-specific input formatting
+
+    def show_status_message(self, message, duration=2000):
+        # Show the status label if it's hidden
+        self.message_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
+
+        # Update the message
+        self.message_label.configure(text=message)
+
+        # Cancel any existing scheduled hide to prevent overlap
+        if self.status_message_after_id:
+            self.parent.after_cancel(self.status_message_after_id)
+
+        # Schedule the message to be hidden
+        self.status_message_after_id = self.parent.after(duration, self.hide_status_message)
+    
+    def hide_status_message(self):
+        self.message_label.pack_forget()
+
+
+    def show_status_message(self, message, duration=3000, color=None):
+        """Show a status message for a specified duration"""
+        default_color = "#ffffff"  # Adjust as needed for your UI
+        color = color or default_color
+        self.status_label.configure(text=message, fg_color=color)
+        self.parent.after(duration, lambda: self.message_label.configure(text=""))
+
+
+    def _safe_clear_entry(self, control_name):
+        """Safely clear the entry from the main thread"""
+        print(f"_safe_clear_entry called with control_name: {control_name}")
+        if control_name in self.control_entries:
+            print(f"Clearing entry for control_name: {control_name}")
+            self.control_entries[control_name].delete(0, "end")
+            self.controls_config[control_name] = []
+            #self.show_status_message(f"Control '{control_name}' has been cleared")
+        else:
+            print(f"control_name '{control_name}' is not valid in _safe_clear_entry")
+
 
 class Controls:
     def __init__(self, parent):
@@ -804,6 +1363,15 @@ class Controls:
             self.controls_config[control_name] = []
             #self.show_status_message(f"Control '{control_name}' has been cleared")
 
+    def clear_all_controls(self):
+        """Clear all control bindings"""
+        if messagebox.askyesno("Confirm Clear", "Are you sure you want to clear all control bindings?"):
+            for key in self.controls_config:
+                self.controls_config[key] = []
+                if key in self.control_entries:
+                    self.parent.after(0, self._safe_clear_entry, key)
+            self.show_status_message("All controls have been cleared")
+
     def _safe_update_entry(self, input_name, friendly_name):
         """Safely update the entry from the main thread"""
         print(f"Safe update called with: {input_name} (friendly: {friendly_name})")
@@ -829,15 +1397,6 @@ class Controls:
             entry.configure(border_color="gray", border_width=1)
 
             self.cleanup_capture()
-
-    def clear_all_controls(self):
-        """Clear all control bindings"""
-        if messagebox.askyesno("Confirm Clear", "Are you sure you want to clear all control bindings?"):
-            for key in self.controls_config:
-                self.controls_config[key] = []
-                if key in self.control_entries:
-                    self.parent.after(0, self._safe_clear_entry, key)
-            self.show_status_message("All controls have been cleared")
 
     def start_input_capture(self, control_name, entry):
         """Start capturing input for a control"""
