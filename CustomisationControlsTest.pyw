@@ -112,8 +112,8 @@ class FilterGamesApp:
         self.filter_games = FilterGames(self.filter_games_tab)
 
         # Controls tab
-        self.controls_tab = self.tabview.add("Controls")
-        self.controls = Controls(self.controls_tab)
+        ##self.controls_tab = self.tabview.add("Controls")
+        ##self.controls = Controls(self.controls_tab)
     
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -1163,6 +1163,13 @@ class ConfigManager:
             if needs_save:
                 self.save_config()
 
+    def get_playlist_location(self):
+        """Get the playlist location setting from INI file"""
+        try:
+            return self.config.get('Settings', 'PlaylistLocation', fallback='S')
+        except:
+            return 'S'  # Default to 'S' if setting not found
+
     def get_controls_file(self) -> str:
         """Get the controls file name."""
         return self.config.get('Controls', 'controls_file', fallback='controls5.conf')
@@ -2045,7 +2052,7 @@ class FilterGames:
 
 class Playlists:
     def __init__(self, root, parent_tab):
-        self.root = root  # Store root reference
+        self.root = root
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
@@ -2053,65 +2060,77 @@ class Playlists:
         # Initialize the configuration manager
         self.config_manager = ConfigManager()
         
-        # Get settings file name from config
-        settings_file = self.config_manager.get_settings_file()
-        self.autochanger_conf_path = os.path.join(self.base_path, "autochanger", settings_file)
+        # Get playlist location setting from INI
+        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S' or 'U'
+        
+        # Set up paths
+        if self.playlist_location == 'S':
+            # Original behavior - use settings file from config
+            settings_file = self.config_manager.get_settings_file()
+            self.settings_file_path = os.path.join(self.base_path, "autochanger", settings_file)
+            self.autochanger_conf_path = self.settings_file_path
+        else:
+            # Use custom settings file
+            self.settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+            self.custom_settings_path = os.path.join(self.base_path, "autochanger", "settingsCustomisation.conf")
+            self.autochanger_conf_path = self.custom_settings_path
         
         self.check_vars = []
         self.check_buttons = []
-        
-        # Read excluded playlists from the configuration
         self.excluded_playlists = self.config_manager.get_excluded_playlists()
-
-        # Playlists associated with each toggle
-        #self.genre_playlists = ["beat em ups", "fight club", "old school", "puzzler", "racer", "run n gun", "shoot em ups", "sports", "trackball", "twinsticks", "vector"]
-        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "gunner", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]  # Example, can expand later
-        self.sort_type_playlists = ["ctrltype", "manufacturer", "numberplayers", "year"]  # Example, can expand later
+        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "gunner", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]
+        self.sort_type_playlists = ["ctrltype", "manufacturer", "numberplayers", "year"]
         
-        # Create a main frame for all content
-        self.main_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # Create UI elements
+        self.create_ui_elements()
         
-        # Initialize the toggle state dictionary for each button
+        # Set up custom settings if needed
+        if self.playlist_location == 'U':
+            self.setup_custom_settings()
+            
+        # Initialize the toggle state dictionary
         self.toggle_state = {
-            "genres": False,       # False means unselected, True means selected
+            "genres": False,
             "manufacturer": False,
             "sort_type": False
         }
         
-        # Create a frame for the scrollable checkbox area below the switches
+        # Populate checkboxes
+        self.populate_checkboxes()
+        self.update_reset_button_state()
+
+    def create_ui_elements(self):
+        """Create all UI elements"""
+        # Create a main frame for all content
+        self.main_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
+        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create a frame for the scrollable checkbox area
         self.scrollable_checklist = ctk.CTkScrollableFrame(self.main_frame, width=400, height=400)
-        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=(10, 5))  # Reduced bottom padding
+        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=(10, 5))
 
         # Create status message label
         self.status_label = ctk.CTkLabel(
             self.main_frame,
             text="",
             height=25,
-            fg_color=("gray85", "gray25"),  # Light/dark mode colors
+            fg_color=("gray85", "gray25"),
             corner_radius=8
         )
         self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
-        
-        # Hide status label initially
-        self.status_label.pack_forget()
+        self.status_label.pack_forget()  # Hide initially
 
-        # Populate checkboxes based on available playlist files
-        self.populate_checkboxes()
-    
-        # Create main button frame
+        # Create button frames
         button_frame = ctk.CTkFrame(self.parent_tab)
         button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
-        # Create top frame for main actions
         top_button_frame = ctk.CTkFrame(button_frame)
         top_button_frame.pack(fill="x", padx=2, pady=2)
 
-        # Create bottom frame for categories
         bottom_button_frame = ctk.CTkFrame(button_frame)
         bottom_button_frame.pack(fill="x", padx=2, pady=2)
 
-        # Create main action buttons in top frame - side by side
+        # Create main action buttons
         self.create_playlist_button = ctk.CTkButton(
             top_button_frame,
             text="Create Playlist",
@@ -2131,7 +2150,7 @@ class Playlists:
         )
         self.reset_button.pack(side="left", fill="x", expand=True, padx=2)
 
-        # Create category buttons in bottom frame
+        # Create category buttons
         self.genres_button = ctk.CTkButton(
             bottom_button_frame,
             text="All Genres",
@@ -2159,8 +2178,65 @@ class Playlists:
         )
         self.sort_type_button.pack(side="left", fill="x", expand=True, padx=2)
 
-        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
-                        
+    def setup_custom_settings(self):
+        """Set up custom settings file and backup if they don't exist"""
+        try:
+            # Create autochanger directory if it doesn't exist
+            autochanger_dir = os.path.join(self.base_path, "autochanger")
+            os.makedirs(autochanger_dir, exist_ok=True)
+            
+            # Check for original settings.conf in Arcades folder
+            arcade_settings = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+            if os.path.exists(arcade_settings):
+                # Create settingsCustomisation.conf if it doesn't exist
+                if not os.path.exists(self.custom_settings_path):
+                    shutil.copy2(arcade_settings, self.custom_settings_path)
+                    self.show_status_message("✓ Created settingsCustomisation.conf backup")
+            else:
+                self.show_status_message("⚠️ Original settings.conf not found in Arcades folder")
+                
+        except Exception as e:
+            self.show_status_message(f"⚠️ Error setting up custom settings: {str(e)}")
+
+    def update_conf_file(self, playlist_list):
+        try:
+            target_file = self.settings_file_path if self.playlist_location == 'U' else self.autochanger_conf_path
+            
+            # Get default playlists from INI file
+            default_playlists = self.config_manager.get_cycle_playlist()
+            
+            with open(target_file, 'r') as file:
+                lines = file.readlines()
+
+            cycle_playlist_found = False
+            updated_lines = []
+            
+            for line in lines:
+                if line.startswith("cyclePlaylist ="):
+                    if default_playlists:
+                        new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                    else:
+                        new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
+                    updated_lines.append(new_line)
+                    cycle_playlist_found = True
+                else:
+                    updated_lines.append(line)
+
+            # Add cyclePlaylist if not found
+            if not cycle_playlist_found:
+                if default_playlists:
+                    updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
+                else:
+                    updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
+
+            # Write the updated lines back to the file
+            with open(target_file, 'w') as file:
+                file.writelines(updated_lines)
+
+            self.show_status_message("✓ Playlists updated successfully")
+        except Exception as e:
+            self.show_status_message(f"⚠️ Error: {str(e)}")
+                    
     def read_settings_file_name(self):
         return self.config_manager.get_settings_file()
     
@@ -2214,60 +2290,6 @@ class Playlists:
     
     def hide_status_message(self):
         self.status_label.pack_forget()
-
-    def update_conf_file(self, playlist_list):
-        try:
-            # Get default playlists from INI file - these should stay constant
-            default_playlists = self.config_manager.get_cycle_playlist()
-            
-            with open(self.autochanger_conf_path, 'r') as file:
-                lines = file.readlines()
-
-            cycle_playlist_found = False
-            first_playlist_found = False
-            updated_lines = []
-            first_selected_playlist = playlist_list[0] if playlist_list else ""
-
-            for line in lines:
-                if line.startswith("cyclePlaylist ="):
-                    if default_playlists:
-                        new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
-                    else:
-                        new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
-                    updated_lines.append(new_line)
-                    cycle_playlist_found = True
-                elif line.startswith("firstPlaylist ="):
-                    if default_playlists:
-                        main_default_playlist = default_playlists[0]
-                        new_line = f"firstPlaylist = {main_default_playlist}\n"
-                    else:
-                        new_line = f"firstPlaylist = {first_selected_playlist}\n"
-                    updated_lines.append(new_line)
-                    first_playlist_found = True
-                else:
-                    updated_lines.append(line)
-
-            # Add lines if they weren't found
-            if not cycle_playlist_found:
-                if default_playlists:
-                    updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
-                else:
-                    updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
-            if not first_playlist_found:
-                if default_playlists:
-                    updated_lines.append(f"firstPlaylist = {default_playlists[0]}\n")
-                else:
-                    updated_lines.append(f"firstPlaylist = {first_selected_playlist}\n")
-
-            # Write the updated lines back to the file
-            with open(self.autochanger_conf_path, 'w') as file:
-                file.writelines(updated_lines)
-
-            # Show status message instead of popup
-            self.show_status_message("✓ Playlists updated successfully")
-        except Exception as e:
-            # Show error in status message
-            self.show_status_message(f"⚠️ Error: {str(e)}")
 
     # Gets all playlists not included in manufacturer and sort types
     def get_genre_playlists(self):
@@ -2443,29 +2465,29 @@ class Playlists:
             self.reset_button.configure(state="disabled")
 
     def reset_playlists(self):
-        """Reset the settings by copying the backup settings file (with 'x' suffix) to the current settings file."""
+        """Reset the settings based on playlist location setting"""
         try:
-            # Get the current settings filename from config manager
-            current_settings = self.config_manager.get_settings_file()
-            
-            # Create the backup filename by adding 'x'
-            backup_file = current_settings.replace(".conf", "x.conf")
-            
-            # Path to the backup configuration file
-            backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
-
-            # Check if the backup file exists
-            if os.path.exists(backup_conf_path):
-                # Copy the backup file to replace the current configuration file
-                shutil.copy(backup_conf_path, self.autochanger_conf_path)
-                print("Success", f"Playlists have been reset using {backup_file}")
-                self.show_status_message("✓ Playlists have been reset successfully")
+            if self.playlist_location == 'S':
+                # Original behavior
+                current_settings = self.config_manager.get_settings_file()
+                backup_file = current_settings.replace(".conf", "x.conf")
+                backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
+                
+                if os.path.exists(backup_conf_path):
+                    shutil.copy2(backup_conf_path, self.autochanger_conf_path)
+                    self.show_status_message("✓ Playlists have been reset successfully")
+                else:
+                    self.show_status_message("⚠️ Backup configuration file not found")
             else:
-                print("Error", f"Backup configuration file '{backup_file}' not found.")
-                self.show_status_message("Error Backup configuration file not found.")
+                # For 'U' mode, copy settingsCustomisation.conf to collections/Arcades/settings.conf
+                if os.path.exists(self.custom_settings_path):
+                    arcade_settings = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+                    shutil.copy2(self.custom_settings_path, arcade_settings)
+                    self.show_status_message("✓ Settings reset to custom defaults")
+                else:
+                    self.show_status_message("⚠️ settingsCustomisation.conf not found")
         except Exception as e:
-            print("Error", f"An error occurred during reset: {str(e)}")
-            self.show_status_message(f"⚠️ Error: {str(e)}")
+            self.show_status_message(f"⚠️ Error during reset: {str(e)}")
 
 class ThemeViewer:
     def __init__(self, video_path=None, image_path=None):
