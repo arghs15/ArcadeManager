@@ -57,7 +57,7 @@ class FilterGamesApp:
         # Set window icon - handles both development and PyInstaller
         try:
             # First try the bundled path
-            icon_path = self.resource_path("Potion.ico")
+            icon_path = self.resource_path("icon.ico")
             
             # For Windows: set both the window icon and taskbar icon
             if os.name == 'nt':  # Windows
