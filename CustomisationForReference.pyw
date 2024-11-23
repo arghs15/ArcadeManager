@@ -28,7 +28,6 @@ import threading
 import keyboard
 import time
 from inputs import get_gamepad, devices
-import fnmatch
 
 class FilterGamesApp:
     @staticmethod
@@ -47,13 +46,7 @@ class FilterGamesApp:
         self.root.title("Customisation")
         self.root.geometry("1920x1080")  # Set the initial size (you can adjust as needed)
         self.root.resizable(True, True)  # Enable window resizing
-
-        # Initialize the configuration manager
-        self.config_manager = ConfigManager()
         
-        # Get playlist location setting from INI
-        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S', 'D', or 'U'
-
         # Set window icon - handles both development and PyInstaller
         try:
             # First try the bundled path
@@ -100,9 +93,7 @@ class FilterGamesApp:
         self.tabview.pack(expand=True, fill="both")
         
         # Check if the zzzSettings folder exists before adding the Themes tab
-        self.zzz_auto_path = os.path.join(os.getcwd(), "autochanger", "themes")
-        self.zzz_set_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
-        self.zzz_shutdwn_path = os.path.join(os.getcwd(), "collections", "zzzShutdown")
+        self.zzz_settings_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
         if self.check_zzz_settings_folder():
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)
@@ -117,18 +108,13 @@ class FilterGamesApp:
         self.playlists = Playlists(self.root, self.playlists_tab)  # Pass root here
 
         # Filter Games tab
-        self.filter_games_tab = self.tabview.add("Filter Arcades")
+        self.filter_games_tab = self.tabview.add("Filter Games")
         self.filter_games = FilterGames(self.filter_games_tab)
 
         # Controls tab
-        if self.playlist_location == 'U':
-            self.controls_tab = self.tabview.add("Controls")
-            self.controls = Controls(self.controls_tab)
-            self.view_games_tab = self.tabview.add("All Games")
-            self.view_games = ViewRoms(self.view_games_tab)
-            print(f"Current build_type from config: {self.playlist_location}")
-            print(f"Adding Controls Tab")
-        
+        ##self.controls_tab = self.tabview.add("Controls")
+        ##self.controls = Controls(self.controls_tab)
+    
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -144,21 +130,11 @@ class FilterGamesApp:
         self.root.destroy()
 
     def check_zzz_settings_folder(self):
-        """Check if at least one of the required themes folders exists."""
-        # Check if any of the paths exist
-        if os.path.isdir(self.zzz_auto_path):
-            print(f"Found themes folder: {self.zzz_auto_path}")
-            return True
-        elif os.path.isdir(self.zzz_set_path):
-            print(f"Found zzzSettings folder: {self.zzz_set_path}")
-            return True
-        elif os.path.isdir(self.zzz_shutdwn_path):
-            print(f"Found zzzShutdown folder: {self.zzz_shutdwn_path}")
-            return True
-        
-        # If none of the paths exist, return False
-        print(f"Warning: No themes folders found. Will remove Themes tab")
-        return False      
+        """Check if the zzzSettings folder exists."""
+        if not os.path.isdir(self.zzz_settings_path):
+            print(f"Warning: zzzSettings folder not found at: {self.zzz_settings_path}")
+            return False
+        return True
     
     def add_appearance_mode_frame(self):
         appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
@@ -501,30 +477,6 @@ class Controls:
                     if key_name == "F2":
                         print("F2 key pressed: Reserved for nextPlaylist")
                         self.show_status_message("F2 is reserved for nextPlaylist.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 8":
-                        print("Numpad 8 key pressed: Reserved for up")
-                        self.show_status_message("Numpad 8 key pressed: Reserved for up.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 2":
-                        print("Numpad 2 key pressed: Reserved for down")
-                        self.show_status_message("Numpad 2 key pressed: Reserved for down.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 4":
-                        print("Numpad 4 key pressed: Reserved for left")
-                        self.show_status_message("Numpad 4 key pressed: Reserved for left.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 6":
-                        print("Numpad 6 key pressed: Reserved for right")
-                        self.show_status_message("Numpad 6 key pressed: Reserved for right.\nPlease make another selection.")
                         # Do not exit the loop, keep capture active
                         continue
 
@@ -1136,7 +1088,6 @@ class ConfigManager:
         self.base_path = os.getcwd()
         self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
         self.config = configparser.ConfigParser()
-        self._build_type = None  # Internal storage for build type
         self.initialize_config()
 
     '''cycle_playlist = , and exluded =  can be added manually. I hide them so users dont break it.
@@ -1147,17 +1098,31 @@ class ConfigManager:
     def initialize_config(self):
         """Initialize the INI file with default values if it doesn't exist."""
         config_exists = os.path.exists(self.config_path)
-        
+
+        # Helper function to determine build type
+        def get_build_type():
+            shutdown_path = os.path.join(self.base_path, "collections", "zzzShutdown")
+            autochanger_path = os.path.join(self.base_path, "- Themes")
+            
+            if os.path.exists(shutdown_path):
+                return 'U'
+            elif os.path.exists(autochanger_path):
+                return 'S'
+            return ''  # Return empty string if neither exists
+
         if not config_exists:
+            # Only create new config file if it doesn't exist
             self.config['Settings'] = {
                 'settings_file': '5_7',
-                'theme_location': 'autochanger',
+                'build_type': get_build_type(),
+                'theme_location': '',  # Changed to empty by default
                 'custom_roms_path': '',
                 'custom_videos_path': '',
                 'custom_logos_path': '',
                 'show_location_controls': 'False'
             }
 
+            # Add new Controls section with defaults
             self.config['Controls'] = {
                 'controls_file': 'controls5.conf',
                 'excludeAppend': '',
@@ -1166,20 +1131,37 @@ class ConfigManager:
 
             self.save_config()
         else:
+            # Just read existing config
             self.config.read(self.config_path)
             
+            # If Settings section is missing, create it
             if 'Settings' not in self.config:
                 self.config['Settings'] = {}
                 needs_save = True
             else:
                 needs_save = False
 
+            # If Controls section is missing, create it
             if 'Controls' not in self.config:
                 self.config['Controls'] = {}
                 needs_save = True
+
+            # Check build_type and theme_location
+            current_build_type = self.config['Settings'].get('build_type', '')
+            current_theme_location = self.config['Settings'].get('theme_location', '')
+            
+            # Only update build_type if theme_location isn't manually set
+            if not current_theme_location:
+                detected_build_type = get_build_type()
+                if detected_build_type != current_build_type:
+                    self.config['Settings']['build_type'] = detected_build_type
+                    self.config['Settings']['theme_location'] = ''  # Clear theme_location
+                    needs_save = True
+                    print(f"Updating build_type to: {detected_build_type}")  # Debug print
                 
+            # Only add missing keys if they don't exist
             settings_defaults = {
-                'theme_location': 'autochanger',
+                'theme_location': '',  # Empty by default
                 'custom_roms_path': '',
                 'custom_videos_path': '',
                 'custom_logos_path': '',
@@ -1202,250 +1184,81 @@ class ConfigManager:
                     self.config['Controls'][key] = default_value
                     needs_save = True
                     
+            # Only save if we added missing keys
             if needs_save:
                 self.save_config()
 
-        # Determine build type during initialization
-        self._determine_build_type()
-        self.playlist_location = self.get_playlist_location()
+    def check_theme_folder(self):
+        """Check if the configured theme folder exists"""
+        # First check if there's a manual theme_location set
+        theme_location = self.config.get('Settings', 'theme_location', fallback='')
+        if theme_location:
+            if theme_location == 'custom':
+                # For custom paths, check if the custom roms path exists
+                custom_paths = self.get_theme_paths()
+                return os.path.exists(custom_paths['roms'])
+            elif theme_location == 'zzzSettings':
+                # Check zzzSettings path
+                return os.path.exists(os.path.join(os.getcwd(), "collections", "zzzSettings"))
+            elif theme_location == 'zzzShutdown':
+                # Check zzzShutdown path
+                return os.path.exists(os.path.join(os.getcwd(), "collections", "zzzShutdown"))
+            elif theme_location == 'autochanger':
+                # Check autochanger path
+                return os.path.exists(os.path.join(os.getcwd(), "- Themes"))
+        else:
+            # Use build_type if no manual theme_location is set
+            build_type = self.config.get('Settings', 'build_type', fallback='')
+            if build_type == 'U':
+                return os.path.exists(os.path.join(os.getcwd(), "collections", "zzzShutdown"))
+            elif build_type == 'S':
+                return os.path.exists(os.path.join(os.getcwd(), "- Themes"))
+        return False
 
-    def save_config(self):
-        """Save the current configuration to the INI file."""
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, 'w') as configfile:
-            self.config.write(configfile)
-    
     def get_theme_paths(self):
         """Get the paths for theme-related content based on configuration."""
-        # Check if theme_location is explicitly set in config
-        theme_location = self.config.get('Settings', 'theme_location', fallback='autochanger')
-        
-        print(f"\n=== Theme Path Resolution ===")
-        print(f"Theme location setting: {theme_location}")
-        print(f"Current build type: {self._build_type}")
-        
-        # First handle non-autochanger locations
-        if theme_location != 'autochanger':
-            if theme_location == 'custom':
-                custom_paths = {
-                    'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
-                    'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
-                    'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
-                }
-                
-                # Validate custom paths
-                print("\nValidating custom paths:")
-                all_valid = True
-                for key, path in custom_paths.items():
-                    exists = os.path.exists(path) if path else False
-                    print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND OR EMPTY'}")
-                    if not path or not exists:
-                        all_valid = False
-                
-                # Only use custom paths if ALL paths exist and are non-empty
-                if all_valid:
-                    print("\n✓ Using custom paths")
-                    return custom_paths
-                else:
-                    print("\n✗ Some custom paths invalid or missing, falling back to dynamic paths")
-                    return self.get_dynamic_paths()
-                    
-            elif theme_location == 'zzzSettings':
-                paths = {
-                    'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logos")
-                }
-                print("\nValidating zzzSettings paths:")
-                all_valid = self._validate_and_log_paths(paths)
-                if all_valid:
-                    print("\n✓ Using zzzSettings paths")
-                    return paths
-                print("\n✗ Some zzzSettings paths missing, falling back to dynamic paths")
-                
-            elif theme_location == 'zzzShutdown':
-                paths = {
+        theme_location = self.config.get('Settings', 'theme_location', fallback='')
+        build_type = self.config.get('Settings', 'build_type', fallback='')
+
+        print(f"Debug - Using theme_location: {theme_location}, build_type: {build_type}")  
+
+        # First handle build_type if no manual theme_location is set
+        if not theme_location:
+            if build_type == 'U':
+                return {
                     'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
                     'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
                     'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logos")
                 }
-                print("\nValidating zzzShutdown paths:")
-                all_valid = self._validate_and_log_paths(paths)
-                if all_valid:
-                    print("\n✓ Using zzzShutdown paths")
-                    return paths
-                print("\n✗ Some zzzShutdown paths missing, falling back to dynamic paths")
-        
-        # If we get here, use dynamic paths
-        print("\nFalling back to dynamic path resolution")
-        return self.get_dynamic_paths()
-
-    def _validate_and_log_paths(self, paths):
-        """Helper method to validate paths and log their status."""
-        all_valid = True
-        for key, path in paths.items():
-            exists = os.path.exists(path)
-            print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-            if not exists:
-                all_valid = False
-        return all_valid
-
-    def get_dynamic_paths(self):
-        """
-        Dynamically check paths based on build type
-        """
-        print(f"\n=== Dynamic Path Resolution ===")
-        print(f"Using build type: {self._build_type}")
-
-        path_configs = {
-            'D': {
-                'roms': os.path.join(self.base_path, "- Themes"),
-                'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-                'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-            },
-            'U': {
-                'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
-                'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logo")
-            },
-            'S': {
+            elif build_type == 'S':
+                return self.get_default_paths()
+            return self.get_default_paths()  # fallback if build_type is empty
+            
+        # Then handle theme_location if it's set
+        if theme_location == 'custom':
+            custom_paths = {
+                'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
+                'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
+                'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
+            }           
+            return custom_paths            
+        elif theme_location == 'zzzSettings':
+            return {
                 'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
                 'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo")
+                'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logos")
             }
-        }
-
-        # First try paths for current build type
-        paths = path_configs.get(self._build_type, path_configs['S'])
-        print(f"\nChecking paths for build type {self._build_type}:")
-        all_valid = self._validate_and_log_paths(paths)
-            
-        if all_valid:
-            print(f"\n✓ Using paths for build type: {self._build_type}")
-            return paths
-
-        # If current build type paths don't exist, try others in order
-        print("\nTrying fallback paths:")
-        for build_type in ['D', 'U', 'S']:
-            if build_type != self._build_type:
-                paths = path_configs[build_type]
-                print(f"\nChecking {build_type} paths:")
-                all_valid = self._validate_and_log_paths(paths)
-                    
-                if all_valid:
-                    print(f"\n✓ Using fallback paths for build type: {build_type}")
-                    return paths
-
-        # If no valid paths found, return default
-        print("\n✗ No valid paths found, using default paths")
-        return self.get_default_paths()
-
-    def _determine_build_type(self):
-        """
-        Internally determine the build type based on directory structure.
-        This is now separate from the INI file.
-        """
-        print("\nDetermining build type based on directory structure:")
-        
-        path_configs = [
-            {
-                'build_type': 'D',
-                'paths': {
-                    'roms': os.path.join(self.base_path, "- Themes"),
-                    'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-                    'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-                }
-            },
-            {
-                'build_type': 'U',
-                'paths': {
-                    'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logo")
-                }
-            },
-            {
-                'build_type': 'S',
-                'paths': {
-                    'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo")
-                }
-            }
-        ]
-
-        for config in path_configs:
-            print(f"\nChecking paths for build type {config['build_type']}:")
-            if all(os.path.exists(path) for path in config['paths'].values()):
-                print(f"Found valid paths for build type: {config['build_type']}")
-                self._build_type = config['build_type']
-                return
-
-        print("No valid build type found, defaulting to 'S'")
-        self._build_type = 'S'
-
-    def get_build_type(self):
-        """Get the internally stored build type."""
-        return self._build_type
-
-    def get_dynamic_paths(self):
-        """
-        Dynamically check paths in order: autochanger (D) -> zzzShutdown (U) -> zzzSettings (S)
-        Returns the first set of valid paths found.
-        """
-        print(f"Current build_type: {self._build_type}")
-        print(f"Base path: {self.base_path}")
-
-        path_configs = {
-            'D': {
-                'roms': os.path.join(self.base_path, "- Themes"),
-                'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-                'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-            },
-            'U': {
+        elif theme_location == 'zzzShutdown':
+            return {
                 'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
                 'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logo")
-            },
-            'S': {
-                'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo")
+                'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logos")
             }
-        }
+        elif theme_location == 'autochanger':
+            return self.get_default_paths()
 
-        # First try paths for current build type
-        paths = path_configs.get(self._build_type, path_configs['S'])
-        print(f"\nTrying paths for build type {self._build_type}:")
-        for key, path in paths.items():
-            exists = os.path.exists(path)
-            print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-            
-        if all(os.path.exists(path) for path in paths.values()):
-            print(f"Using paths for build type: {self._build_type}")
-            return paths
-
-        # If current build type paths don't exist, try others in order
-        print("\nTrying fallback paths:")
-        for build_type in ['D', 'U', 'S']:
-            if build_type != self._build_type:
-                paths = path_configs[build_type]
-                print(f"\nChecking {build_type} paths:")
-                for key, path in paths.items():
-                    exists = os.path.exists(path)
-                    print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-                    
-                if all(os.path.exists(path) for path in paths.values()):
-                    print(f"Using fallback paths for build type: {build_type}")
-                    return paths
-
-        # If no valid paths found, return default
-        print("\nNo valid paths found, using default paths")
+        # Final fallback
         return self.get_default_paths()
-
-    def _validate_paths(self, paths):
-        """Helper method to validate if all paths in a set exist."""
-        return all(os.path.exists(path) for path in paths.values() if path)
 
     def get_default_paths(self):
         """Get the default autochanger paths."""
@@ -1458,8 +1271,8 @@ class ConfigManager:
     def update_theme_location(self, location: str):
         """Update the theme location configuration."""
         try:
-            if location not in ['autochanger', 'zzzSettings', 'custom']:
-                raise ValueError("Invalid theme location. Must be 'autochanger', 'zzzSettings', or 'custom'")
+            if location not in ['autochanger', 'zzzSettings', 'zzzShutdown', 'custom']:
+                raise ValueError("Invalid theme location. Must be 'autochanger', 'zzzSettings', 'zzzShutdown',or 'custom'")
             self.config.set('Settings', 'theme_location', location)
             self.save_config()
         except Exception as e:
@@ -1479,8 +1292,11 @@ class ConfigManager:
             print(f"Error updating custom paths: {str(e)}")
 
     def get_playlist_location(self):
-        """Get the playlist location based on internal build type"""
-        return self._build_type
+        """Get the playlist location setting from INI file"""
+        try:
+            return self.config.get('Settings', 'build_type', fallback='S')
+        except:
+            return 'S'  # Default to 'S' if setting not found
 
     def get_controls_file(self) -> str:
         """Get the controls file name."""
@@ -1526,6 +1342,12 @@ class ConfigManager:
         self.config['Settings']['show_location_controls'] = str(not current_value)
         self.save_config()
 
+    def save_config(self):
+        """Save the current configuration to the INI file."""
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, 'w') as configfile:
+            self.config.write(configfile)
+
     def get_settings_file(self) -> str:
         """Get the settings file name."""
         try:
@@ -1538,25 +1360,18 @@ class ConfigManager:
     def get_cycle_playlist(self) -> List[str]:
         """Get the cycle playlist configuration based on the specific conditions."""
         try:
-            # If the playlist location is 'U', return only "all" and "favs"
-            if self.playlist_location == 'U':
-                return ["all", "favorites", "lastplayed"]  # Only these playlists for 'U'
-
-            # For 'S' and 'D', check if the 'cycle_playlist' option exists in the config
             if self.config.has_option('Settings', 'cycle_playlist'):
                 playlists = self.config.get('Settings', 'cycle_playlist')
                 if playlists:  # Non-empty value in INI
                     return [item.strip() for item in playlists.split(',') if item.strip()]
-                else:  # If the key exists but is empty
+                else:  # Key exists but is empty
                     return []
             else:
-                # If the 'cycle_playlist' key is missing, use a default playlist list
+                # Key is missing, use hardcoded default
                 return ["arcader", "consoles", "favorites", "lastplayed"]
-
         except Exception as e:
             print(f"Error reading cycle playlist: {str(e)}")
-            return ["arcader", "consoles", "favorites", "lastplayed"]  # Default in case of error
-
+            return ["arcader", "consoles", "favorites", "lastplayed"]
 
     def get_excluded_playlists(self) -> List[str]:
         """Get the excluded playlists configuration based on the specific conditions."""
@@ -1841,7 +1656,7 @@ class ExeFileSelector:
             current_exe = None
 
         print(f"Base path: {base_path}")
-        #print(f"Files in directory: {os.listdir(base_path)}")
+        print(f"Files in directory: {os.listdir(base_path)}")
         return [f for f in os.listdir(base_path) if f.endswith('.exe') and f != current_exe]
 
     def run_selected_exe(self):
@@ -2314,19 +2129,19 @@ class Playlists:
         self.config_manager = ConfigManager()
         
         # Get playlist location setting from INI
-        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S', 'D', or 'U'
+        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S' or 'U'
         
         # Set up paths
-        if self.playlist_location == 'U':
-            # Use Universe settings file
-            self.settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
-            self.custom_settings_path = os.path.join(self.base_path, "autochanger", "settingsCustomisation.conf")
-            self.autochanger_conf_path = self.custom_settings_path
-        else:
+        if self.playlist_location == 'S':
             # Original behavior - use settings file from config
             settings_file = self.config_manager.get_settings_file()
             self.settings_file_path = os.path.join(self.base_path, "autochanger", settings_file)
-            self.autochanger_conf_path = self.settings_file_path     
+            self.autochanger_conf_path = self.settings_file_path
+        else:
+            # Use custom settings file
+            self.settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+            self.custom_settings_path = os.path.join(self.base_path, "autochanger", "settingsCustomisation.conf")
+            self.autochanger_conf_path = self.custom_settings_path
         
         self.check_vars = []
         self.check_buttons = []
@@ -2699,49 +2514,29 @@ class Playlists:
         self.toggle_state[button_type] = not current_state
                
     def update_reset_button_state(self):
-        """Check if backup settings file exists and update reset button state."""
+        """Check if backup settings file exists and update reset button state"""
         try:
-            if self.playlist_location == 'U':
-                # For 'U' location, always enable the reset defaults button
+            # Get current settings filename from config manager
+            current_settings = self.config_manager.get_settings_file()
+            # Create backup filename
+            backup_file = current_settings.replace(".conf", "x.conf")
+            # Full path to backup file
+            backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
+            
+            # Enable button if backup exists, disable if it doesn't
+            if os.path.exists(backup_conf_path):
                 self.reset_button.configure(state="normal")
             else:
-                # For 'S' and 'D', check if backup exists
-                current_settings = self.config_manager.get_settings_file()
-                backup_file = current_settings.replace(".conf", "x.conf")
-                backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
-                
-                # Enable button if backup exists, disable if it doesn't
-                if os.path.exists(backup_conf_path):
-                    self.reset_button.configure(state="normal")
-                else:
-                    self.reset_button.configure(state="disabled")
-        
+                self.reset_button.configure(state="disabled")
         except Exception as e:
             print(f"Error checking backup file: {str(e)}")
             self.reset_button.configure(state="disabled")
 
     def reset_playlists(self):
-        """Reset the settings based on playlist location setting."""
+        """Reset the settings based on playlist location setting"""
         try:
-            if self.playlist_location == 'U':
-                # For 'U' mode, update CyclePlaylist with a hardcoded value
-                try:
-                    hardcoded_cycle_playlist = (
-                        "all,favorites,lastplayed,01 old school,02 beat em up,03 run n gun, "
-                        "04 fight club,05 shoot n up,06 racer,year,manufacturer,ctrltype,numberplayers"
-                    )
-                    settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
-                    
-                    if os.path.exists(settings_file_path):
-                        # Update CyclePlaylist in settings.conf
-                        self.update_cycle_playlist_value(settings_file_path, hardcoded_cycle_playlist)
-                        self.show_status_message("✓ CyclePlaylist successfully reset to custom value")
-                    else:
-                        self.show_status_message("⚠️ settings.conf not found in collections/Arcades")
-                except Exception as e:
-                    self.show_status_message(f"⚠️ Error during reset for U: {str(e)}")
-            else:
-                # Common behavior for 'S' and 'D' modes
+            if self.playlist_location == 'S':
+                # Original behavior
                 current_settings = self.config_manager.get_settings_file()
                 backup_file = current_settings.replace(".conf", "x.conf")
                 backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
@@ -2751,32 +2546,16 @@ class Playlists:
                     self.show_status_message("✓ Playlists have been reset successfully")
                 else:
                     self.show_status_message("⚠️ Backup configuration file not found")
+            else:
+                # For 'U' mode, copy settingsCustomisation.conf to collections/Arcades/settings.conf
+                if os.path.exists(self.custom_settings_path):
+                    arcade_settings = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+                    shutil.copy2(self.custom_settings_path, arcade_settings)
+                    self.show_status_message("✓ Settings reset to custom defaults")
+                else:
+                    self.show_status_message("⚠️ settingsCustomisation.conf not found")
         except Exception as e:
             self.show_status_message(f"⚠️ Error during reset: {str(e)}")
-
-    def update_cycle_playlist_value(self, file_path, new_value):
-        """Update the cyclePlaylist value in the configuration file."""
-        try:
-            updated_lines = []
-            found = False
-
-            with open(file_path, "r") as file:
-                for line in file:
-                    if line.strip().startswith("cyclePlaylist ="):
-                        updated_lines.append(f"cyclePlaylist = {new_value}\n")
-                        found = True
-                    else:
-                        updated_lines.append(line)
-
-            # If CyclePlaylist was not found, add it to the file
-            if not found:
-                updated_lines.append(f"cyclePlaylist = {new_value}\n")
-
-            # Write the updated configuration back to the file
-            with open(file_path, "w") as file:
-                file.writelines(updated_lines)
-        except Exception as e:
-            raise Exception(f"Failed to update cyclePlaylist: {str(e)}")
 
 class ThemeViewer:
     def __init__(self, video_path=None, image_path=None):
@@ -3579,22 +3358,7 @@ class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
-        self.config_manager = ConfigManager()  # Assuming ConfigManager instance is available
-        self.playlist_location = self.config_manager.get_playlist_location()  # Get location ('S', 'D', or 'U')
-
-        # Define base config folders for non-'U' mode
-        self.config_folders_default = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass and Scanlines"]
-
-        # Define config folders for 'U' mode
-        self.config_folders_u = ["- Advanced Configs", "- Mods", "- Themes 2nd Screen", "- Themes Arcade", "- Themes Console", "- Themes Home"]
-
-        # Choose the appropriate config folders based on 'playlist_location'
-        if self.playlist_location == 'U':
-            self.config_folders = self.config_folders_u
-        else:
-            self.config_folders = self.config_folders_default
-
-        # Define base keywords
+        self.config_folders = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass and Scanlines"]
         self.tab_keywords = {
             "Favorites": None,
             "Themes": None,
@@ -3608,39 +3372,12 @@ class AdvancedConfigs:
             "Front End": ["FRONT END"],
             "Other": None
         }
-        
-        # Modify keywords for 'U' mode if necessary
-        if self.playlist_location == 'U':
-            self.tab_keywords = {
-            "Favorites": None,
-            "Themes": None,
-            "2nd Screen": None,
-            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],
-            "Overlays": ["OVERLAY"],
-            "InigoBeats": ["MUSIC"],
-            "Attract": ["Attract", "Scroll"],           
-            "Monitor": ["Monitor"],
-            "Splash": ["Splash"],
-            "Front End": ["FRONT END"],
-            "Other": None
-        }
 
-        # Define folder to tab mapping
         self.folder_to_tab_mapping = {
-                "- Themes": "Themes",
-                "- Themes 2nd Screen": "2nd Screen",
-                "- Bezels Glass and Scanlines": "Bezels & Effects"
+            "- Themes": "Themes",
+            "- Themes 2nd Screen": "2nd Screen",
+            "- Bezels Glass and Scanlines": "Bezels & Effects"
         }
-        
-        # Modify folder_to_tab_mapping for 'U' mode to include new mappings
-        if self.playlist_location == 'U':
-            self.folder_to_tab_mapping.update({
-                "- Themes Arcade": "Themes",
-                "- Themes Console": "Themes",
-                "- Themes Home": "Themes",
-                "- Themes 2nd Screen": "2nd Screen",
-                "- Bezels Glass and Scanlines": "Bezels & Effects"
-            })
         
         self.tab_radio_vars = {}
         self.radio_button_script_mapping = {}
@@ -3681,34 +3418,8 @@ class AdvancedConfigs:
         # Populate the tabs and scripts dynamically
         self.populate_tabs_and_scripts()
 
-    def set_initial_tab(self):
-        """Set the initial tab to Favorites if it contains values, else the first available tab."""
-        available_tabs = self.tabview.winfo_children()
-        if not available_tabs:
-            return
-            
-        # Try to set to Favorites first
-        if self.favorites and "Favorites" in self.tab_radio_vars:
-            try:
-                self.tabview.set("Favorites")
-                return
-            except ValueError:
-                pass
-                
-        # Try to set to Themes if available
-        if "Themes" in self.tab_radio_vars:
-            try:
-                self.tabview.set("Themes")
-                return
-            except ValueError:
-                pass
-                
-        # Fall back to the first available tab
-        try:
-            first_tab = next(iter(self.tab_radio_vars.keys()))
-            self.tabview.set(first_tab)
-        except (StopIteration, ValueError):
-            pass  # No tabs available
+        # Set the initial tab view
+        self.set_initial_tab()
     
     def validate_script_exists(self, script_name):
         """Check if a script exists in any of the config folders"""
@@ -3717,6 +3428,11 @@ class AdvancedConfigs:
             if os.path.isfile(potential_path):
                 return True
         return False
+
+    def set_initial_tab(self):
+        """Set the initial tab to Favorites if it contains values, else Themes."""
+        initial_tab = "Favorites" if self.favorites else "Themes"
+        self.tabview.set(initial_tab)
 
     def show_status(self, message, duration=2000, color="green"):
         """Show a status message that automatically fades out"""
@@ -4002,26 +3718,23 @@ class AdvancedConfigs:
                 if filename.endswith(".bat") or filename.endswith(".cmd"):
                     added_to_tab = False
 
-                    # Check if folder has a mapping and if the mapped tab exists
                     if folder in self.folder_to_tab_mapping:
-                        tab_name = self.folder_to_tab_mapping.get(folder)
-                        if tab_name in script_categories:
-                            script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
-                            added_to_tab = True
+                        tab_name = self.folder_to_tab_mapping[folder]
+                        script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
+                        added_to_tab = True
                     
                     if not added_to_tab:
                         for tab, keywords in self.tab_keywords.items():
                             if keywords:
                                 for keyword in keywords:
                                     if keyword.lower() in filename.lower():
-                                        if tab in script_categories:
-                                            script_categories[tab][len(script_categories[tab]) + 1] = filename
-                                            added_to_tab = True
-                                            break
+                                        script_categories[tab][len(script_categories[tab]) + 1] = filename
+                                        added_to_tab = True
+                                        break
                             if added_to_tab:
                                 break
 
-                    if not added_to_tab and "Other" in script_categories:
+                    if not added_to_tab:
                         script_categories["Other"][len(script_categories["Other"]) + 1] = filename
 
         return script_categories
@@ -4068,59 +3781,51 @@ class AdvancedConfigs:
     def populate_tabs_and_scripts(self):
         script_categories = self.categorize_scripts()
 
-        # Create tabs only for categories that have scripts or are Favorites
         for tab_name, scripts in script_categories.items():
-            if scripts or tab_name == "Favorites":
-                try:
-                    self.tabview.add(tab_name)
-                    self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
-                    self.radio_button_script_mapping[tab_name] = scripts
-                    self.radio_buttons[tab_name] = []
-                    self.favorite_buttons[tab_name] = {}
+            if scripts or tab_name == "Favorites":  # Always create Favorites tab
+                self.tabview.add(tab_name)
+                self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
+                self.radio_button_script_mapping[tab_name] = scripts
+                self.radio_buttons[tab_name] = []
+                self.favorite_buttons[tab_name] = {}
 
-                    scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
-                    scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+                scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
+                scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-                    if tab_name == "Favorites":
-                        self.update_favorites_tab()
-                    else:
-                        for i, script_name in scripts.items():
-                            script_label = os.path.splitext(script_name)[0]
-                            
-                            # Create frame for radio button and favorite button
-                            frame = ctk.CTkFrame(scrollable_frame)
-                            frame.pack(fill="x", padx=5, pady=2)
+                if tab_name == "Favorites":
+                    self.update_favorites_tab()
+                else:
+                    for i, script_name in scripts.items():
+                        script_label = os.path.splitext(script_name)[0]
+                        
+                        # Create frame for radio button and favorite button
+                        frame = ctk.CTkFrame(scrollable_frame)
+                        frame.pack(fill="x", padx=5, pady=2)
 
-                            radio_button = ctk.CTkRadioButton(
-                                frame,
-                                text=script_label,
-                                variable=self.tab_radio_vars[tab_name],
-                                value=i,
-                                command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
-                            )
-                            radio_button.pack(side="left", padx=5)
+                        radio_button = ctk.CTkRadioButton(
+                            frame,
+                            text=script_label,
+                            variable=self.tab_radio_vars[tab_name],
+                            value=i,
+                            command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+                        )
+                        radio_button.pack(side="left", padx=5)
 
-                            # Add favorite toggle button
-                            favorite_button = ctk.CTkButton(
-                                frame,
-                                text="★" if script_name in self.favorites else "☆",
-                                width=30,
-                                command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
-                            )
-                            favorite_button.pack(side="right", padx=5)
-                            
-                            # Store the button reference for later updates
-                            self.favorite_buttons[tab_name][script_name] = favorite_button
-                            favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button: 
-                                                   self.toggle_favorite(t, s, b))
+                        # Add favorite toggle button
+                        favorite_button = ctk.CTkButton(
+                            frame,
+                            text="★" if script_name in self.favorites else "☆",
+                            width=30,
+                            command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
+                        )
+                        favorite_button.pack(side="right", padx=5)
+                        
+                        # Store the button reference for later updates
+                        self.favorite_buttons[tab_name][script_name] = favorite_button
+                        favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button: 
+                                               self.toggle_favorite(t, s, b))
 
-                            self.radio_buttons[tab_name].append(radio_button)
-                except Exception as e:
-                    print(f"Error creating tab {tab_name}: {str(e)}")
-                    continue
-
-        # Set initial tab after all tabs are created
-        self.set_initial_tab()
+                        self.radio_buttons[tab_name].append(radio_button)
 
     def set_gui_state(self, enabled):
         """Enable or disable all script-related GUI elements without disabling the tabview itself."""
@@ -4196,331 +3901,6 @@ class AdvancedConfigs:
             # Run the script in a separate thread
             self.run_script_threaded(script_path)
                          
-class ViewRoms:
-    def __init__(self, parent_tab):
-        # Define font settings at the top of the class
-        self.list_font = ("Arial", 14)  # Changed from 12 to 14
-        self.label_font = ("Arial", 12)   # Added for labels
-        self.button_font = ("Arial", 12)  # Added for buttons
-        
-        self.rom_descriptions = {}  # Make sure this is initialized
-
-        self.parent_tab = parent_tab
-        
-        # Main container
-        main_container = ctk.CTkFrame(self.parent_tab)
-        main_container.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Filter controls frame
-        filter_frame = ctk.CTkFrame(main_container)
-        filter_frame.pack(fill='x', padx=5, pady=5)
-        
-        # Collection dropdown with custom font
-        collection_label = ctk.CTkLabel(filter_frame, text="Collection:", font=self.label_font)
-        collection_label.pack(side='left', padx=5)
-        
-        self.collection_var = tk.StringVar(value="All Collections")
-        self.collection_dropdown = ctk.CTkOptionMenu(
-            filter_frame,
-            variable=self.collection_var,
-            values=["All Collections"],
-            command=self.handle_collection_change,
-            font=self.button_font  # Added font for dropdown
-        )
-        self.collection_dropdown.pack(side='left', padx=5)
-
-        # Search frame with custom fonts
-        search_frame = ctk.CTkFrame(main_container)
-        search_frame.pack(fill='x', padx=5, pady=5)
-        
-        search_label = ctk.CTkLabel(search_frame, text="Search ROMs:", font=self.label_font)
-        search_label.pack(side='left', padx=5)
-        
-        self.search_var = tk.StringVar()
-        self.search_var.trace('w', self.filter_roms)
-        search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var, font=self.button_font)
-        search_entry.pack(side='left', fill='x', expand=True, padx=5)
-
-        # Button frame with custom fonts
-        button_frame = ctk.CTkFrame(search_frame)
-        button_frame.pack(side='right', padx=5)
-
-        # Sort toggle with custom font
-        self.sort_var = tk.StringVar(value="Name")
-        self.sort_toggle = ctk.CTkSegmentedButton(
-            button_frame, 
-            values=["Name", "Collection"], 
-            variable=self.sort_var, 
-            command=self.handle_sort_change,
-            font=self.button_font  # Added font for toggle
-        )
-        self.sort_toggle.pack(side='right', padx=(0, 5))
-
-        # Clear filters button with custom font
-        clear_button = ctk.CTkButton(
-            button_frame, 
-            text="Clear All", 
-            command=self.clear_filters, 
-            width=70,
-            font=self.button_font  # Added font for button
-        )
-        clear_button.pack(side='right', padx=5)
-
-        # ROM list frame
-        list_frame = ctk.CTkFrame(main_container)
-        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
-
-        # ROM listbox with custom font
-        self.rom_listbox = ctk.CTkTextbox(
-            list_frame, 
-            font=self.list_font  # Using the custom list font
-        )
-        self.rom_listbox.pack(fill='both', expand=True, side='left')
-
-        # Status bar with custom font
-        self.status_bar = ctk.CTkLabel(
-            main_container, 
-            text="Ready", 
-            anchor='w',
-            font=self.label_font  # Added font for status bar
-        )
-        self.status_bar.pack(fill='x', padx=5, pady=(5, 0))
-
-        # Store collections data
-        self.rom_list = []
-        self.rom_collections = {}
-        self.rom_descriptions = {}
-        
-        # Populate ROM list and collection dropdown
-        self.load_initial_data()
-
-    def load_initial_data(self):
-        """Load initial ROM data and populate collection dropdown"""
-        try:
-            # Load ROM descriptions first, before filtering anything
-            self.rom_descriptions = {}
-            csv_path = self.get_csv_file_path()
-            with open(csv_path, newline='', encoding='utf-8') as csv_file:
-                reader = csv.DictReader(csv_file)
-                for row in reader:
-                    rom_name = row.get('ROM Name', '').strip()
-                    description = row.get('Description', '').strip()
-                    if rom_name and description:  # Remove the self.rom_list check
-                        self.rom_descriptions[rom_name] = description
-            
-            # Get ROM list and collections
-            self.rom_list, self.rom_collections = self.scan_collections_for_roms()
-            
-            # Get unique collections and sort them
-            collections = sorted(set(self.rom_collections.values()))
-            
-            # Update dropdown values
-            self.collection_dropdown.configure(
-                values=["All Collections"] + collections
-            )
-            
-            # Populate initial ROM list
-            self.populate_rom_list()
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error loading initial data: {str(e)}")
-            self.status_bar.configure(text="Error loading initial data")
-
-    def get_csv_file_path(self):
-        # Check for an external CSV in the autochanger folder
-        autochanger_csv_path = os.path.join('autochanger', 'META.csv')
-        if os.path.exists(autochanger_csv_path):
-            return autochanger_csv_path
-
-        # If not found, use the bundled CSV in the executable (from --addfile)
-        if getattr(sys, 'frozen', False):  # When running as a bundled executable
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-
-        # Return the path to the bundled CSV
-        return os.path.join(base_path, 'meta', 'hyperlist', 'META.csv')
-
-
-    def scan_collections_for_roms(self, excluded_collections=None, excluded_roms=None):
-        root_dir = os.getcwd()
-        collections_dir = os.path.join(root_dir, 'collections')
-        rom_list = []
-        rom_collections = {}  # Modified to store lists of collections
-        duplicate_roms = {}  # Track duplicates for debugging
-        
-        # Default exclude lists
-        default_collection_excludes = [
-            "*Collection*", "*zzzRecord*", "*zzzSettings*", "*zzzShutdown*", 
-            "*PCGameLauncher*", "*FBNeo*", "*SETTINGS AURA*", "*SETTINGS BEZELS*",
-            "*MAME*"
-        ]
-        
-        default_rom_excludes = []
-        
-        if excluded_collections is None:
-            excluded_collections = []
-        excluded_collections.extend(default_collection_excludes)
-        
-        if excluded_roms is None:
-            excluded_roms = []
-        excluded_roms.extend(default_rom_excludes)
-
-        def matches_exclude_pattern(name, patterns):
-            return any(
-                fnmatch.fnmatch(name.lower(), pattern.lower()) 
-                for pattern in patterns
-            )
-
-        # First pass: gather all ROMs and their locations
-        for collection_name in os.listdir(collections_dir):
-            if matches_exclude_pattern(collection_name, excluded_collections):
-                continue
-            
-            collection_path = os.path.join(collections_dir, collection_name)
-            settings_path = os.path.join(collection_path, 'settings.conf')
-            
-            if os.path.isdir(collection_path) and os.path.isfile(settings_path):
-                rom_folder = None
-                extensions = []
-
-                with open(settings_path, 'r') as settings_file:
-                    for line in settings_file:
-                        line = line.strip()
-                        if line.startswith("#"):
-                            continue
-                        if line.startswith("list.path"):
-                            rom_folder = line.split("=", 1)[1].strip()
-                            rom_folder = os.path.join(root_dir, rom_folder)
-                        elif line.startswith("list.extensions"):
-                            ext_line = line.split("=", 1)[1].strip()
-                            extensions = [ext.strip() for ext in ext_line.split(",")]
-
-                if not rom_folder or not os.path.isdir(rom_folder):
-                    rom_folder = os.path.join(collection_path, 'roms')
-                
-                if rom_folder and extensions and os.path.isdir(rom_folder):
-                    for file in os.listdir(rom_folder):
-                        file_path = os.path.join(rom_folder, file)
-                        if os.path.isfile(file_path) and any(file.endswith(ext) for ext in extensions):
-                            filename_without_extension = os.path.splitext(file)[0]
-                            
-                            if matches_exclude_pattern(filename_without_extension, excluded_roms):
-                                continue
-                            
-                            # Initialize rom entry if it doesn't exist
-                            if filename_without_extension not in rom_collections:
-                                rom_collections[filename_without_extension] = {
-                                    'collections': set(),  # Using set instead of list
-                                    'paths': []
-                                }
-                            
-                            # Add this collection and path if not already present
-                            rom_collections[filename_without_extension]['collections'].add(collection_name)
-                            if file_path not in rom_collections[filename_without_extension]['paths']:
-                                rom_collections[filename_without_extension]['paths'].append(file_path)
-                            
-                            # Add collection name to ROM's display name
-                            collection_with_rom = f"{filename_without_extension} ({collection_name})"
-                            if collection_with_rom not in rom_list:
-                                rom_list.append(collection_with_rom)  # Use this to display collections
-                            
-                            # Track duplicates for debugging
-                            if len(rom_collections[filename_without_extension]['collections']) > 1:
-                                duplicate_roms[filename_without_extension] = \
-                                    list(rom_collections[filename_without_extension]['collections'])
-
-        # Print duplicate ROMs for debugging
-        if duplicate_roms:
-            print("\nDuplicate ROMs found:")
-            for rom, collections in duplicate_roms.items():
-                print(f"{rom} found in collections: {', '.join(collections)}")
-
-        # Convert rom_collections to a format that maps ROMs to their primary collection
-        # Using the first collection found for compatibility with existing code
-        simple_rom_collections = {
-            rom: next(iter(info['collections']))  # Get the first collection from the set
-            for rom, info in rom_collections.items()
-        }
-
-        return rom_list, simple_rom_collections
-
-
-    def handle_sort_change(self, _):
-        """Handle sorting toggle change"""
-        if self.search_var.get():
-            self.filter_roms()
-        else:
-            self.populate_rom_list()
-
-    def handle_collection_change(self, _):
-        """Handle collection dropdown change"""
-        self.filter_roms()
-
-    def clear_filters(self):
-        """Clear all filters and reset the ROM list"""
-        self.search_var.set("")
-        self.collection_var.set("All Collections")
-        self.sort_var.set("Name")
-        self.populate_rom_list()
-
-    def populate_rom_list(self):
-        try:
-            self.filter_roms()
-        except Exception as e:
-            messagebox.showerror("Error", f"Error loading ROM list: {str(e)}")
-            self.status_bar.configure(text="Error loading ROMs")
-
-    def filter_roms(self, *args):
-        try:
-            # Clear previous list
-            self.rom_listbox.delete('1.0', 'end')
-            
-            # Get filter values
-            search_term = self.search_var.get().lower()
-            selected_collection = self.collection_var.get()
-            
-            # Filter ROMs
-            filtered_roms = []
-            for rom in self.rom_list:
-                # Split ROM name and collection info
-                base_rom_name = rom.split(" (")[0]  # Get the ROM name without collection
-                collection_info = rom.split("(")[-1].strip(")")  # Get the collection name
-                
-                # Filter by collection first
-                if selected_collection != "All Collections" and selected_collection not in rom:
-                    continue
-                
-                # Get description if available and create display text
-                description = self.rom_descriptions.get(base_rom_name, '')
-                display_text = f"{description if description else base_rom_name} ({collection_info})"
-                
-                # Check search term against both description and ROM name
-                if (search_term in display_text.lower() or 
-                    search_term in base_rom_name.lower()):
-                    filtered_roms.append(display_text)
-            
-            # Sort filtered ROMs based on toggle
-            if self.sort_var.get() == "Name":
-                filtered_roms = sorted(filtered_roms)
-            else:
-                filtered_roms = sorted(
-                    filtered_roms,
-                    key=lambda rom: rom.split("(")[-1].strip(")")
-                )
-
-            # Display filtered ROMs
-            self.rom_listbox.insert('1.0', f"Matching ROMs: {len(filtered_roms)}\n\n")
-            for rom in filtered_roms:
-                self.rom_listbox.insert('end', f"{rom}\n")
-            
-            # Update status
-            self.status_bar.configure(text=f"Found {len(filtered_roms)} matching ROMs")
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Error filtering ROM list: {str(e)}")
-            self.status_bar.configure(text="Error filtering ROMs")
-
 # Main application driver
 if __name__ == "__main__":
     # Initialize GUI with customtkinter
