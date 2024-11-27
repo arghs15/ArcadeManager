@@ -19,7 +19,7 @@ import queue
 import ctypes
 from tkinter import messagebox, filedialog
 import configparser
-from typing import List, Optional
+from typing import Dict, List, Any, Optional
 import tkinter.font as tkFont
 from typing import List
 import json
@@ -1131,321 +1131,287 @@ class Controls:
         self.parent.after(1000, self.check_controller)
 
 class ConfigManager:
+    # Document all possible settings as class attributes
+    # These won't appear in the INI file unless explicitly added
+    AVAILABLE_SETTINGS = {
+        'Settings': {
+            'settings_file': {
+                'default': '5_7',
+                'description': 'Settings file version to use',
+                'type': str,
+                'hidden': True
+            },
+            'theme_location': {
+                'default': 'autochanger',
+                'description': 'Location of theme files',
+                'type': str,
+                'hidden': True
+            },
+            'custom_roms_path': {
+                'default': '',
+                'description': 'Custom path for ROM files',
+                'type': str,
+                'hidden': True
+            },
+            'custom_videos_path': {
+                'default': '',
+                'description': 'Custom path for video files',
+                'type': str,
+                'hidden': True
+            },
+            'custom_logos_path': {
+                'default': '',
+                'description': 'Custom path for logo files',
+                'type': str,
+                'hidden': True
+            },
+            'show_location_controls': {
+                'default': 'False',
+                'description': 'Show location control options',
+                'type': bool,
+                'hidden': True
+            },
+            'cycle_playlist': {
+                'default': '',
+                'description': 'Comma-separated list of playlists to cycle through',
+                'type': List[str],
+                'hidden': True
+            },
+            'excluded': {
+                'default': '',
+                'description': 'Comma-separated list of items to exclude',
+                'type': List[str],
+                'hidden': True
+            }
+        },
+        'Controls': {
+            'controls_file': {
+                'default': 'controls5.conf',
+                'description': 'Controls configuration file',
+                'type': str,
+                'hidden': True
+            },
+            'excludeAppend': {
+                'default': '',
+                'description': 'Additional exclusions for controls',
+                'type': str,
+                'hidden': False
+            },
+            'controlsAdd': {
+                'default': '',
+                'description': 'Additional control configurations',
+                'type': str,
+                'hidden': False
+            }
+        }
+    }
 
-    def __init__(self):
+    BUILD_TYPE_PATHS = {
+    'D': {  # Dynamic build type
+        'roms': "- Themes",  # Relative to `self.base_path`
+        'videos': os.path.join("autochanger", "themes", "video"),
+        'logos': os.path.join("autochanger", "themes", "logo")
+    },
+    'U': {  # User build type
+        'roms': os.path.join("collections", "zzzShutdown", "roms"),
+        'videos': os.path.join("collections", "zzzShutdown", "medium_artwork", "video"),
+        'logos': os.path.join("collections", "zzzShutdown", "medium_artwork", "logo")
+    },
+    'S': {  # Settings build type
+        'roms': os.path.join("collections", "zzzSettings", "roms"),
+        'videos': os.path.join("collections", "zzzSettings", "medium_artwork", "video"),
+        'logos': os.path.join("collections", "zzzSettings", "medium_artwork", "logo")
+    }
+    }
+
+    def __init__(self, debug=True):
+        self.debug = debug
         self.base_path = os.getcwd()
         self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
         self.config = configparser.ConfigParser()
-        self._build_type = None  # Internal storage for build type
-        self.initialize_config()
 
-    '''cycle_playlist = , and exluded =  can be added manually. I hide them so users dont break it.
-    - If the key is missing in the INI file, use the hardcoded default values.
-    - If the key exists and has values, use those values from the INI file.
-    - If the key exists but has no values (e.g., an empty string), do not use the hardcoded defaults—instead, return an empty list to indicate no values are set.
-    Note: For excluded = this means it will return all results if key exists but no values'''
+        # Caches for paths and build type
+        self._build_type = None
+        self._paths_cache = {}
+        self._theme_paths = None
+
+        self.initialize_config()
+        self._build_type = self._determine_build_type()
+
     def initialize_config(self):
         """Initialize the INI file with default values if it doesn't exist."""
-        config_exists = os.path.exists(self.config_path)
-        
-        if not config_exists:
-            self.config['Settings'] = {
-                'settings_file': '5_7',
-                'theme_location': 'autochanger',
-                'custom_roms_path': '',
-                'custom_videos_path': '',
-                'custom_logos_path': '',
-                'show_location_controls': 'False'
-            }
-
-            self.config['Controls'] = {
-                'controls_file': 'controls5.conf',
-                'excludeAppend': '',
-                'controlsAdd': ''
-            }
-
-            self.save_config()
+        if not os.path.exists(self.config_path):
+            self._initialize_default_config()
         else:
             self.config.read(self.config_path)
-            
-            if 'Settings' not in self.config:
-                self.config['Settings'] = {}
-                needs_save = True
-            else:
-                needs_save = False
+            self._ensure_default_settings()
+        self.save_config()
 
-            if 'Controls' not in self.config:
-                self.config['Controls'] = {}
-                needs_save = True
-                
-            settings_defaults = {
-                'theme_location': 'autochanger',
-                'custom_roms_path': '',
-                'custom_videos_path': '',
-                'custom_logos_path': '',
-                'show_location_controls': 'True'
+    def _initialize_default_config(self):
+        """Set default values for a new configuration file."""
+        for section, settings in self.AVAILABLE_SETTINGS.items():
+            self.config[section] = {
+                key: setting_info['default']
+                for key, setting_info in settings.items()
+                if not setting_info['hidden']
             }
-            
-            controls_defaults = {
-                'controls_file': 'controls5.conf',
-                'excludeAppend': '',
-                'controlsAdd': ''
-            }
-            
-            for key, default_value in settings_defaults.items():
-                if key not in self.config['Settings']:
-                    self.config['Settings'][key] = default_value
-                    needs_save = True
-            
-            for key, default_value in controls_defaults.items():
-                if key not in self.config['Controls']:
-                    self.config['Controls'][key] = default_value
-                    needs_save = True
-                    
-            if needs_save:
-                self.save_config()
 
-        # Determine build type during initialization
-        self._determine_build_type()
-        self.playlist_location = self.get_playlist_location()
+    def _ensure_default_settings(self):
+        """Ensure existing config has all required default settings."""
+        needs_save = False
+        for section, settings in self.AVAILABLE_SETTINGS.items():
+            if section not in self.config:
+                self.config[section] = {}
+                needs_save = True
+            for key, setting_info in settings.items():
+                if not setting_info['hidden'] and key not in self.config[section]:
+                    self.config[section][key] = setting_info['default']
+                    needs_save = True
+        if needs_save:
+            self.save_config()
+
+    def get_setting(self, section, key, default=None):
+        """Retrieve a setting value with proper type conversion."""
+        if section in self.config and key in self.config[section]:
+            value = self.config[section][key]
+            setting_type = self.AVAILABLE_SETTINGS[section][key]['type']
+            if setting_type == bool:
+                return value.lower() == 'true'
+            if setting_type == List[str]:
+                return value.split(',') if value.strip() else []
+            return setting_type(value)
+        return default
 
     def save_config(self):
         """Save the current configuration to the INI file."""
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
         with open(self.config_path, 'w') as configfile:
             self.config.write(configfile)
+
+    def _log(self, message, section=None):
+        """Centralized logging method."""
+        if self.debug:
+            if section:
+                print(f"=== {section} ===")
+            print(message)
+
+    @classmethod
+    def get_available_settings(cls) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """
+        Get documentation of all available settings, including hidden ones.
+        Returns a dictionary of all possible settings and their metadata.
+        """
+        return cls.AVAILABLE_SETTINGS
     
+    def _determine_build_type(self):
+        """Determine build type based on directory structure."""
+        if self._build_type is not None:
+            return self._build_type
+
+        self._log("Detecting Build Type", section="Build Type Detection")
+        for build_type, relative_paths in self.BUILD_TYPE_PATHS.items():
+            paths = self._get_absolute_paths(relative_paths)
+            if self._validate_paths(paths):
+                self._log(f"✓ Found valid paths for build type: {build_type}")
+                self._paths_cache[build_type] = paths
+                return build_type
+
+        self._log("✗ No valid build type found, defaulting to 'S'")
+        return 'S'
+
+    def get_build_type(self):
+        """Get the cached build type or determine it if not yet set."""
+        if self._build_type is None:
+            self._determine_build_type()
+        return self._build_type
+
     def get_theme_paths(self):
-        """Get the paths for theme-related content based on configuration."""
-        # Check if theme_location is explicitly set in config
-        theme_location = self.config.get('Settings', 'theme_location', fallback='autochanger')
+        """Get theme paths with caching."""
+        if self._theme_paths is not None:
+            return self._theme_paths
+
+        theme_location = self.get_setting('Settings', 'theme_location', 'autochanger')
+        self._log("Resolving Theme Paths", section="Theme Path Resolution")
+        self._log(f"Theme location: {theme_location}")
+
+        if theme_location == 'custom':
+            paths = self._get_custom_paths()
+            if paths:
+                self._theme_paths = paths
+                return paths
+
+        paths = self._get_dynamic_paths()
+        self._theme_paths = paths
+        return paths
+
+    def _get_dynamic_paths(self):
+        """Get paths based on build type."""
+        build_type = self._build_type or self._determine_build_type()
+        if build_type in self._paths_cache:
+            return self._paths_cache[build_type]
+
+        paths = self._get_absolute_paths(self.BUILD_TYPE_PATHS[build_type])
+        if self._validate_paths(paths):
+            self._paths_cache[build_type] = paths
+            return paths
+
+        self._log("✗ Dynamic paths invalid, falling back to default")
+        return self.BUILD_TYPE_PATHS['S']
+
+    def _resolve_custom_paths(self):
+        """Handle custom path resolution"""
+        custom_paths = {
+            'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
+            'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
+            'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
+        }
         
-        print(f"\n=== Theme Path Resolution ===")
-        print(f"Theme location setting: {theme_location}")
-        print(f"Current build type: {self._build_type}")
+        print("\nValidating custom paths:")
+        if self._validate_and_log_paths(custom_paths):
+            print("✓ Using custom paths")
+            return custom_paths
         
-        # First handle non-autochanger locations
-        if theme_location != 'autochanger':
-            if theme_location == 'custom':
-                custom_paths = {
-                    'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
-                    'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
-                    'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
-                }
-                
-                # Validate custom paths
-                print("\nValidating custom paths:")
-                all_valid = True
-                for key, path in custom_paths.items():
-                    exists = os.path.exists(path) if path else False
-                    print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND OR EMPTY'}")
-                    if not path or not exists:
-                        all_valid = False
-                
-                # Only use custom paths if ALL paths exist and are non-empty
-                if all_valid:
-                    print("\n✓ Using custom paths")
-                    return custom_paths
-                else:
-                    print("\n✗ Some custom paths invalid or missing, falling back to dynamic paths")
-                    return self.get_dynamic_paths()
-                    
-            elif theme_location == 'zzzSettings':
-                paths = {
-                    'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logos")
-                }
-                print("\nValidating zzzSettings paths:")
-                all_valid = self._validate_and_log_paths(paths)
-                if all_valid:
-                    print("\n✓ Using zzzSettings paths")
-                    return paths
-                print("\n✗ Some zzzSettings paths missing, falling back to dynamic paths")
-                
-            elif theme_location == 'zzzShutdown':
-                paths = {
-                    'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logos")
-                }
-                print("\nValidating zzzShutdown paths:")
-                all_valid = self._validate_and_log_paths(paths)
-                if all_valid:
-                    print("\n✓ Using zzzShutdown paths")
-                    return paths
-                print("\n✗ Some zzzShutdown paths missing, falling back to dynamic paths")
+        print("✗ Some custom paths invalid or missing, falling back to dynamic paths")
+        return self.get_dynamic_paths()
+
+    def _resolve_fixed_paths(self, location):
+        """Handle fixed path resolution for zzzSettings and zzzShutdown"""
+        paths = {
+            'roms': os.path.join(self.base_path, "collections", location, "roms"),
+            'videos': os.path.join(self.base_path, "collections", location, "medium_artwork", "video"),
+            'logos': os.path.join(self.base_path, "collections", location, "medium_artwork", "logos")
+        }
         
-        # If we get here, use dynamic paths
-        print("\nFalling back to dynamic path resolution")
+        print(f"\nValidating {location} paths:")
+        if self._validate_and_log_paths(paths):
+            print(f"✓ Using {location} paths")
+            return paths
+            
+        print(f"✗ Some {location} paths missing, falling back to dynamic paths")
         return self.get_dynamic_paths()
 
     def _validate_and_log_paths(self, paths):
         """Helper method to validate paths and log their status."""
         all_valid = True
         for key, path in paths.items():
+            if not path:  # Handle empty paths
+                print(f"Checking {key}: EMPTY PATH")
+                all_valid = False
+                continue
+                
             exists = os.path.exists(path)
             print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
             if not exists:
                 all_valid = False
         return all_valid
 
-    def get_dynamic_paths(self):
-        """
-        Dynamically check paths based on build type
-        """
-        print(f"\n=== Dynamic Path Resolution ===")
-        print(f"Using build type: {self._build_type}")
-
-        path_configs = {
-            'D': {
-                'roms': os.path.join(self.base_path, "- Themes"),
-                'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-                'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-            },
-            'U': {
-                'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
-                'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logo")
-            },
-            'S': {
-                'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo")
-            }
-        }
-
-        # First try paths for current build type
-        paths = path_configs.get(self._build_type, path_configs['S'])
-        print(f"\nChecking paths for build type {self._build_type}:")
-        all_valid = self._validate_and_log_paths(paths)
-            
-        if all_valid:
-            print(f"\n✓ Using paths for build type: {self._build_type}")
-            return paths
-
-        # If current build type paths don't exist, try others in order
-        print("\nTrying fallback paths:")
-        for build_type in ['D', 'U', 'S']:
-            if build_type != self._build_type:
-                paths = path_configs[build_type]
-                print(f"\nChecking {build_type} paths:")
-                all_valid = self._validate_and_log_paths(paths)
-                    
-                if all_valid:
-                    print(f"\n✓ Using fallback paths for build type: {build_type}")
-                    return paths
-
-        # If no valid paths found, return default
-        print("\n✗ No valid paths found, using default paths")
-        return self.get_default_paths()
-
-    def _determine_build_type(self):
-        """
-        Internally determine the build type based on directory structure.
-        This is now separate from the INI file.
-        """
-        print("\nDetermining build type based on directory structure:")
-        
-        path_configs = [
-            {
-                'build_type': 'D',
-                'paths': {
-                    'roms': os.path.join(self.base_path, "- Themes"),
-                    'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-                    'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-                }
-            },
-            {
-                'build_type': 'U',
-                'paths': {
-                    'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logo")
-                }
-            },
-            {
-                'build_type': 'S',
-                'paths': {
-                    'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                    'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                    'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo")
-                }
-            }
-        ]
-
-        for config in path_configs:
-            print(f"\nChecking paths for build type {config['build_type']}:")
-            if all(os.path.exists(path) for path in config['paths'].values()):
-                print(f"Found valid paths for build type: {config['build_type']}")
-                self._build_type = config['build_type']
-                return
-
-        print("No valid build type found, defaulting to 'S'")
-        self._build_type = 'S'
-
-    def get_build_type(self):
-        """Get the internally stored build type."""
-        return self._build_type
-
-    def get_dynamic_paths(self):
-        """
-        Dynamically check paths in order: autochanger (D) -> zzzShutdown (U) -> zzzSettings (S)
-        Returns the first set of valid paths found.
-        """
-        print(f"Current build_type: {self._build_type}")
-        print(f"Base path: {self.base_path}")
-
-        path_configs = {
-            'D': {
-                'roms': os.path.join(self.base_path, "- Themes"),
-                'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-                'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-            },
-            'U': {
-                'roms': os.path.join(self.base_path, "collections", "zzzShutdown", "roms"),
-                'videos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzShutdown", "medium_artwork", "logo")
-            },
-            'S': {
-                'roms': os.path.join(self.base_path, "collections", "zzzSettings", "roms"),
-                'videos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "video"),
-                'logos': os.path.join(self.base_path, "collections", "zzzSettings", "medium_artwork", "logo")
-            }
-        }
-
-        # First try paths for current build type
-        paths = path_configs.get(self._build_type, path_configs['S'])
-        print(f"\nTrying paths for build type {self._build_type}:")
-        for key, path in paths.items():
-            exists = os.path.exists(path)
-            print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-            
-        if all(os.path.exists(path) for path in paths.values()):
-            print(f"Using paths for build type: {self._build_type}")
-            return paths
-
-        # If current build type paths don't exist, try others in order
-        print("\nTrying fallback paths:")
-        for build_type in ['D', 'U', 'S']:
-            if build_type != self._build_type:
-                paths = path_configs[build_type]
-                print(f"\nChecking {build_type} paths:")
-                for key, path in paths.items():
-                    exists = os.path.exists(path)
-                    print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-                    
-                if all(os.path.exists(path) for path in paths.values()):
-                    print(f"Using fallback paths for build type: {build_type}")
-                    return paths
-
-        # If no valid paths found, return default
-        print("\nNo valid paths found, using default paths")
-        return self.get_default_paths()
+    def _get_absolute_paths(self, relative_paths):
+        """Convert relative paths to absolute paths."""
+        return {key: os.path.join(self.base_path, path) for key, path in relative_paths.items()}
 
     def _validate_paths(self, paths):
-        """Helper method to validate if all paths in a set exist."""
-        return all(os.path.exists(path) for path in paths.values() if path)
+        """Validate paths and log only once per build type."""
+        return all(os.path.exists(path) for path in paths.values())
 
     def get_default_paths(self):
         """Get the default autochanger paths."""
@@ -1465,18 +1431,18 @@ class ConfigManager:
         except Exception as e:
             print(f"Error updating theme location: {str(e)}")
 
-    def update_custom_paths(self, roms_path: str = None, videos_path: str = None, logos_path: str = None):
-        """Update custom paths in the configuration."""
-        try:
-            if roms_path is not None:
-                self.config.set('Settings', 'custom_roms_path', roms_path)
-            if videos_path is not None:
-                self.config.set('Settings', 'custom_videos_path', videos_path)
-            if logos_path is not None:
-                self.config.set('Settings', 'custom_logos_path', logos_path)
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating custom paths: {str(e)}")
+    def _get_custom_paths(self):
+        """Resolve custom paths."""
+        paths = {
+            'roms': self.get_setting('Settings', 'custom_roms_path', ''),
+            'videos': self.get_setting('Settings', 'custom_videos_path', ''),
+            'logos': self.get_setting('Settings', 'custom_logos_path', '')
+        }
+        if self._validate_paths(paths):
+            self._log("✓ Using custom paths")
+            return paths
+        self._log("✗ Custom paths invalid, falling back to defaults")
+        return None
 
     def get_playlist_location(self):
         """Get the playlist location based on internal build type"""
@@ -1522,9 +1488,12 @@ class ConfigManager:
 
     def toggle_location_controls(self):
         """Toggle the visibility of location control elements"""
-        current_value = self.config.getboolean('Settings', 'show_location_controls', fallback=True)
+        current_value = self.config.getboolean('Settings', 'show_location_controls', fallback=False)
+        print(f"Current value before toggle: {current_value}")  # Debug
         self.config['Settings']['show_location_controls'] = str(not current_value)
         self.save_config()
+        print(f"New value after toggle: {not current_value}")  # Debug
+
 
     def get_settings_file(self) -> str:
         """Get the settings file name."""
@@ -1600,7 +1569,7 @@ class ConfigManager:
             self.config.set('Settings', 'settings_file', settings_value)
             self.save_config()
         except Exception as e:
-            print(f"Error updating settings file: {str(e)}")      
+            print(f"Error updating settings file: {str(e)}")        
 
 class ExeFileSelector:
     def __init__(self, parent_frame):
@@ -2131,13 +2100,14 @@ class FilterGames:
             self.status_bar.configure(text="Error exporting games")
 
     def load_custom_dll(self):
-        #import ctypes
-        dll_path = os.path.join(os.path.dirname(sys.executable), 'autochanger/python/VCRUNTIME140.dll')
+        dll_path = os.path.join(os.path.dirname(sys.argv[0]), 'autochanger\\python\\VCRUNTIME140.dll')
+        print(f"Checking DLL path: {dll_path}")
         ctypes.windll.kernel32.SetDllDirectoryW(os.path.dirname(dll_path))
         if os.path.exists(dll_path):
             ctypes.windll.kernel32.LoadLibraryW(dll_path)
+            print("Custom DLL loaded successfully.")
         else:
-            print("Custom DLL not found. Please check the path.")
+            print("Custom DLL not found.")
 
     def get_csv_file_path(self):
         # Check for an external CSV in the autochanger folder
@@ -3329,12 +3299,16 @@ class Themes:
 
     def update_location_frame_visibility(self):
         """Update the visibility of the location frame based on config settings"""
-        show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=True)
+        show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=False)
+        print(f"show_location_controls value: {show_location_controls}")  # Debug
         
         if show_location_controls:
             self.location_frame.pack(fill="x", padx=10, pady=5)
+            print("Location frame is visible")  # Debug
         else:
             self.location_frame.pack_forget()
+            print("Location frame is hidden")  # Debug
+
 
     def show_custom_paths_dialog(self):
         """Show dialog for configuring custom paths"""
@@ -3551,29 +3525,21 @@ class Themes:
                 startupinfo=startupinfo
             )
 
-            # Print process outputs for debugging, regardless of outcome
+            # Print process outputs for debugging
             print("Process completed with return code:", process.returncode)
             print("Standard output from script:", process.stdout)
+
             if process.returncode != 0:
-                print(f"Non-critical script error: {process.stderr}")
+                # Log non-critical errors for debugging
+                print(f"Non-critical script error (stderr): {process.stderr}")
 
-            # Update status message based on script completion
-            if process.returncode == 0:
-                self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
-            else:
-                self.show_status_message(f"Error: Script '{script_name_without_extension}' encountered an issue.")
+            # Show success status to user regardless of return code
+            self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
             
-        except subprocess.CalledProcessError as e:
-            print(f"Subprocess error (CalledProcessError): {e}")
-            print(f"Return code: {e.returncode}")
-            print(f"Standard output: {e.stdout}")
-            print(f"Error output: {e.stderr}")
-            self.show_status_message(f"Error: {e.stderr}")
-
         except Exception as e:
-            # Log the error without showing it in the GUI
-            print(f"Unexpected error while running script: {str(e)}")
-            self.show_status_message(f"Unexpected error: {str(e)}")
+            # Catch any unexpected critical errors
+            print(f"Critical error while executing script: {e}")
+            self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
 
 class AdvancedConfigs:
     def __init__(self, parent_tab):
@@ -4353,10 +4319,10 @@ class ViewRoms:
         default_collection_excludes = [
             "*Collection*", "*zzzRecord*", "*zzzSettings*", "*zzzShutdown*", 
             "*PCGameLauncher*", "*FBNeo*", "*SETTINGS AURA*", "*SETTINGS BEZELS*",
-            "*MAME*"
+            "*MAME*", "*Settings*"
         ]
         
-        default_rom_excludes = []
+        default_rom_excludes = ["*cmd*"]
         
         if excluded_collections is None:
             excluded_collections = []
