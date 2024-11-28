@@ -31,7 +31,8 @@ from inputs import get_gamepad, devices
 import fnmatch
 
 # Change the working directory to the directory where the script is located
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+## Comment out before packaging as it breaks paths
+#os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 class FilterGamesApp:
     @staticmethod
