@@ -302,7 +302,7 @@ class ConfigManager:
                 'hidden': True
             },
             'playlists_tab': {
-                'default': 'auto',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Playlists tab',
                 'type': str,
                 'hidden': True
@@ -1825,7 +1825,9 @@ class ExeFileSelector:
         self.exe_files = self.find_exe_files()
         
         # Variable to hold the selected exe file
-        self.exe_var = tk.StringVar(value="")
+        # Default to the first exe file if available
+        default_exe = self.exe_files[0] if self.exe_files else ""
+        self.exe_var = tk.StringVar(value=default_exe)
         
         # Add a radio button for each .exe file found inside the scrollable frame
         for exe in self.exe_files:
