@@ -30,6 +30,9 @@ import time
 from inputs import get_gamepad, devices
 import fnmatch
 
+# Change the working directory to the directory where the script is located
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 class FilterGamesApp:
     @staticmethod
     def resource_path(relative_path):
@@ -100,35 +103,48 @@ class FilterGamesApp:
         self.tabview.pack(expand=True, fill="both")
         
         # Check if the zzzSettings folder exists before adding the Themes tab
-        self.zzz_auto_path = os.path.join(os.getcwd(), "autochanger", "themes")
+        '''self.zzz_auto_path = os.path.join(os.getcwd(), "autochanger", "themes")
         self.zzz_set_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
         self.zzz_shutdwn_path = os.path.join(os.getcwd(), "collections", "zzzShutdown")
         if self.check_zzz_settings_folder():
             self.Themes_games_tab = self.tabview.add("Themes")
+            self.Themes_games = Themes(self.Themes_games_tab)'''
+
+        # Themes Games tab
+        if self.config_manager.determine_tab_visibility('themes_games'):
+            self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)
 
         # Advanced Configurations tab
-        self.advanced_configs_tab = self.tabview.add("Advanced Configs")
-        self.advanced_configs = AdvancedConfigs(self.advanced_configs_tab)
+        if self.config_manager.determine_tab_visibility('advanced_configs'):
+            self.advanced_configs_tab = self.tabview.add("Advanced Configs")
+            self.advanced_configs = AdvancedConfigs(self.advanced_configs_tab)
 
         # Playlists tab
-        # Playlists tab
-        self.playlists_tab = self.tabview.add("Playlists")
-        self.playlists = Playlists(self.root, self.playlists_tab)  # Pass root here
+        if self.config_manager.determine_tab_visibility('playlists'):
+            self.playlists_tab = self.tabview.add("Playlists")
+            self.playlists = Playlists(self.root, self.playlists_tab)
 
         # Filter Games tab
-        self.filter_games_tab = self.tabview.add("Filter Arcades")
-        self.filter_games = FilterGames(self.filter_games_tab)
+        if self.config_manager.determine_tab_visibility('filter_games'):
+            self.filter_games_tab = self.tabview.add("Filter Arcades")
+            self.filter_games = FilterGames(self.filter_games_tab)
 
-        # Controls tab
+        # Controls and View Games tabs - special handling
+        # These tabs are ONLY added if playlist_location is 'U'
         if self.playlist_location == 'U':
-            self.controls_tab = self.tabview.add("Controls")
-            self.controls = Controls(self.controls_tab)
-            self.view_games_tab = self.tabview.add("All Games")
-            self.view_games = ViewRoms(self.view_games_tab)
-            print(f"Current build_type from config: {self.playlist_location}")
-            print(f"Adding Controls Tab")
-        
+            # Check configuration visibility for Controls tab
+            if self.config_manager.determine_tab_visibility('controls'):
+                self.controls_tab = self.tabview.add("Controls")
+                self.controls = Controls(self.controls_tab)
+                print(f"Adding Controls Tab")
+
+            # Check configuration visibility for View Games tab
+            if self.config_manager.determine_tab_visibility('view_games'):
+                self.view_games_tab = self.tabview.add("All Games")
+                self.view_games = ViewRoms(self.view_games_tab)
+                print(f"Adding All Games Tab")
+
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -192,6 +208,626 @@ class FilterGamesApp:
                 ctk.CTkMessageBox.showerror("Error", f"The script does not exist: {script_name}")
         except Exception as e:
             ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
+
+class ConfigManager:
+    # Document all possible settings as class attributes
+    # These won't appear in the INI file unless explicitly added
+    CONFIG_FILE_VERSION = "1.0"  # Current configuration file version
+    CONFIG_VERSION_KEY = "config_version"
+
+    AVAILABLE_SETTINGS = {
+        'Settings': {
+            'settings_file': {
+                'default': '5_7',
+                'description': 'Settings file version to use',
+                'type': str,
+                'hidden': True
+            },
+            'theme_location': {
+                'default': 'autochanger',
+                'description': 'Location of theme files',
+                'type': str,
+                'hidden': True
+            },
+            'custom_roms_path': {
+                'default': '',
+                'description': 'Custom path for ROM files',
+                'type': str,
+                'hidden': True
+            },
+            'custom_videos_path': {
+                'default': '',
+                'description': 'Custom path for video files',
+                'type': str,
+                'hidden': True
+            },
+            'custom_logos_path': {
+                'default': '',
+                'description': 'Custom path for logo files',
+                'type': str,
+                'hidden': True
+            },
+            'show_location_controls': {
+                'default': 'False',
+                'description': 'Show location control options',
+                'type': bool,
+                'hidden': True
+            },
+            'cycle_playlist': {
+                'default': '',
+                'description': 'Comma-separated list of playlists to cycle through',
+                'type': List[str],
+                'hidden': True
+            },
+            'excluded': {
+                'default': '',
+                'description': 'Comma-separated list of items to exclude',
+                'type': List[str],
+                'hidden': True
+            }
+        },
+        'Controls': {
+            'controls_file': {
+                'default': 'controls5.conf',
+                'description': 'Controls configuration file',
+                'type': str,
+                'hidden': True
+            },
+            'excludeAppend': {
+                'default': '',
+                'description': 'Additional exclusions for controls',
+                'type': str,
+                'hidden': True
+            },
+            'controlsAdd': {
+                'default': '',
+                'description': 'Additional control configurations',
+                'type': str,
+                'hidden': True
+            }
+            
+        },
+        'Tabs': {
+            'themes_games_tab': {
+                'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of Themes Games tab',
+                'type': str,
+                'hidden': True
+            },
+            'advanced_configs_tab': {
+                'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of Advanced Configs tab',
+                'type': str,
+                'hidden': True
+            },
+            'playlists_tab': {
+                'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of Playlists tab',
+                'type': str,
+                'hidden': True
+            },
+            'filter_games_tab': {
+                'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of Filter Games tab',
+                'type': str,
+                'hidden': True
+            },
+            'controls_tab': {
+                'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of Controls tab',
+                'type': str,
+                'hidden': True
+            },
+            'view_games_tab': {
+                'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of All Games tab',
+                'type': str,
+                'hidden': True
+            }
+        }
+    }
+
+    BUILD_TYPE_PATHS = {
+    'D': {  # Dynamic build type
+        'roms': "- Themes",  # Relative to `self.base_path`
+        'videos': os.path.join("autochanger", "themes", "video"),
+        'logos': os.path.join("autochanger", "themes", "logo")
+    },
+    'U': {  # User build type
+        'roms': os.path.join("collections", "zzzShutdown", "roms"),
+        'videos': os.path.join("collections", "zzzShutdown", "medium_artwork", "video"),
+        'logos': os.path.join("collections", "zzzShutdown", "medium_artwork", "logo")
+    },
+    'S': {  # Settings build type
+        'roms': os.path.join("collections", "zzzSettings", "roms"),
+        'videos': os.path.join("collections", "zzzSettings", "medium_artwork", "video"),
+        'logos': os.path.join("collections", "zzzSettings", "medium_artwork", "logo")
+    }
+    }
+
+    def __init__(self, debug=True):
+        self.debug = debug
+        self.base_path = os.getcwd()
+        self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
+        self.config = configparser.ConfigParser()
+
+        # Caches for paths and build type
+        self._build_type = None
+        self._paths_cache = {}
+        self._theme_paths = None
+
+        self.initialize_config()
+        self._build_type = self._determine_build_type()
+
+        self.version_check()
+
+    def version_check(self):
+        """
+        Check and handle configuration file version compatibility.
+        """
+        try:
+            # If config file doesn't exist, it will be created with current version
+            if not os.path.exists(self.config_path):
+                self._log("Config file not found. Will create with current version.")
+                self._reset_config_to_defaults()
+                return
+            
+            # Read existing config
+            self.config.read(self.config_path)
+            
+            # Check for version key in DEFAULT section
+            current_version = self.config.get('DEFAULT', self.CONFIG_VERSION_KEY, fallback=None)
+            
+            # If version is missing or different, reset configuration
+            if current_version != self.CONFIG_FILE_VERSION:
+                self._log(f"Config version mismatch. Current: {current_version}, Expected: {self.CONFIG_FILE_VERSION}")
+                self._reset_config_to_defaults()
+        except Exception as e:
+            self._log(f"Error during version check: {e}")
+            self._reset_config_to_defaults()
+
+    def _reset_config_to_defaults(self):
+        """Reset configuration and update version without adding all defaults."""
+        new_config = configparser.ConfigParser()
+        for section in self.config.sections():
+            new_config[section] = dict(self.config[section])
+        
+        # Update version in DEFAULT section
+        new_config['DEFAULT'] = {
+            self.CONFIG_VERSION_KEY: self.CONFIG_FILE_VERSION
+        }
+        
+        self.config = new_config
+        self._log("Configuration reset without pre-filling defaults.")
+        self.save_config()
+
+
+    def save_config(self):
+        """Write only existing settings to the INI file."""
+        if 'DEFAULT' not in self.config:
+            self.config['DEFAULT'] = {}
+        self.config['DEFAULT'][self.CONFIG_VERSION_KEY] = self.CONFIG_FILE_VERSION
+        
+        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        with open(self.config_path, 'w') as configfile:
+            self.config.write(configfile)
+
+
+    def initialize_config(self):
+        """Initialize the INI file with only visible settings if it doesn't exist."""
+        if not os.path.exists(self.config_path):
+            self._log("Config file not found. Initializing with default visible settings.")
+            self._initialize_default_config()
+            self.save_config()  # Save immediately to create the file
+        else:
+            self.config.read(self.config_path)
+
+
+    def _initialize_default_config(self):
+        """Initialize the INI file with only visible (non-hidden) default settings."""
+        for section, settings in self.AVAILABLE_SETTINGS.items():
+            if section not in self.config:
+                self.config[section] = {}
+            for key, setting_info in settings.items():
+                if not setting_info.get('hidden', False):  # Add only visible settings
+                    self.config[section][key] = setting_info['default']
+
+    def _ensure_default_settings(self):
+        """Ensure existing config has all required visible settings."""
+        needs_save = False
+        for section, settings in self.AVAILABLE_SETTINGS.items():
+            if section not in self.config:
+                self.config[section] = {}
+                needs_save = True
+            for key, setting_info in settings.items():
+                if key not in self.config[section] and not setting_info.get('hidden', False):
+                    # Add missing visible setting with default value
+                    self.config[section][key] = setting_info['default']
+                    needs_save = True
+        if needs_save:
+            self._log("Config file updated with missing visible settings.")
+            self.save_config()
+
+
+    def determine_tab_visibility(self, tab_name):
+        """
+        Determine tab visibility based on configuration and context.
+        
+        :param tab_name: Name of the tab 
+        :return: Boolean indicating whether the tab should be displayed
+        """
+        try:
+            # Get the tab visibility setting
+            setting_key = f'{tab_name}_tab'
+            visibility = self.get_setting('Tabs', setting_key, 'auto')
+
+            print(f"=== Tab Visibility Check for {tab_name} ===")
+            print(f"Visibility Setting: {visibility}")
+
+            # Handle different visibility modes
+            if visibility == 'always':
+                print(f"✓ {tab_name} tab ALWAYS visible (always setting)")
+                return True
+            elif visibility == 'never':
+                print(f"✗ {tab_name} tab HIDDEN (never setting)")
+                return False
+            elif visibility == 'auto':
+                print(f"Checking auto visibility for {tab_name} tab")
+                
+                # Auto mode: use context-specific logic
+                if tab_name in ['controls', 'view_games']:
+                    build_type = self.get_playlist_location()
+                    print(f"Build Type for controls/view_games: {build_type}")
+                    is_visible = build_type == 'U'
+                    print(f"Controls/View Games visibility: {is_visible}")
+                    return is_visible
+                
+                elif tab_name == 'themes_games':
+                    # Check if themes folder exists
+                    themes_paths = [
+                        os.path.join(os.getcwd(), "autochanger", "themes"),
+                        os.path.join(os.getcwd(), "collections", "zzzSettings"),
+                        os.path.join(os.getcwd(), "collections", "zzzShutdown")
+                    ]
+                    
+                    existing_paths = [path for path in themes_paths if os.path.isdir(path)]
+                    is_visible = bool(existing_paths)
+                    
+                    print("Themes Paths:")
+                    for path in themes_paths:
+                        print(f"  {path}: {'EXISTS' if os.path.isdir(path) else 'NOT FOUND'}")
+                    print(f"Themes tab visibility: {is_visible}")
+                    
+                    return is_visible
+                
+                # Other tabs like advanced_configs, playlists, filter_games are always visible
+                print(f"✓ {tab_name} tab VISIBLE (default auto setting)")
+                return True
+            
+            print(f"✗ {tab_name} tab HIDDEN (no condition met)")
+            return False
+
+        except Exception as e:
+            print(f"ERROR determining tab visibility for {tab_name}: {e}")
+            return False
+
+    def update_tab_visibility(self, tab_name, visibility):
+        """
+        Update tab visibility setting.
+        
+        :param tab_name: Name of the tab 
+        :param visibility: Visibility mode ('auto', 'always', 'never')
+        """
+        try:
+            if visibility not in ['auto', 'always', 'never']:
+                raise ValueError("Invalid visibility mode. Must be 'auto', 'always', or 'never'")
+            
+            setting_key = f'{tab_name}_tab'
+            self.config.set('Tabs', setting_key, visibility)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating tab visibility for {tab_name}: {e}")
+
+    def get_setting(self, section, key, default=None):
+        """Retrieve a setting value, using the default if not present."""
+        if section in self.config and key in self.config[section]:
+            value = self.config[section][key]
+            setting_type = self.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('type', str)
+            if setting_type == bool:
+                return value.lower() == 'true'
+            if setting_type == List[str]:
+                return value.split(',') if value.strip() else []
+            return setting_type(value)
+        
+        # Return default directly, without modifying self.config
+        if section in self.AVAILABLE_SETTINGS and key in self.AVAILABLE_SETTINGS[section]:
+            return self.AVAILABLE_SETTINGS[section][key].get('default', default)
+        
+        return default
+
+
+    def _log(self, message, section=None):
+        """Centralized logging method."""
+        if self.debug:
+            if section:
+                print(f"=== {section} ===")
+            print(message)
+
+    @classmethod
+    def get_available_settings(cls) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        """
+        Get documentation of all available settings, including hidden ones.
+        Returns a dictionary of all possible settings and their metadata.
+        """
+        return cls.AVAILABLE_SETTINGS
+    
+    def _determine_build_type(self):
+        """Determine build type based on directory structure."""
+        if self._build_type is not None:
+            return self._build_type
+
+        self._log("Detecting Build Type", section="Build Type Detection")
+        for build_type, relative_paths in self.BUILD_TYPE_PATHS.items():
+            paths = self._get_absolute_paths(relative_paths)
+            if self._validate_paths(paths):
+                self._log(f"✓ Found valid paths for build type: {build_type}")
+                self._paths_cache[build_type] = paths
+                return build_type
+
+        self._log("✗ No valid build type found, defaulting to 'S'")
+        return 'S'
+
+    def get_build_type(self):
+        """Get the cached build type or determine it if not yet set."""
+        if self._build_type is None:
+            self._determine_build_type()
+        return self._build_type
+
+    def get_theme_paths(self):
+        """Get theme paths with caching."""
+        if self._theme_paths is not None:
+            return self._theme_paths
+
+        theme_location = self.get_setting('Settings', 'theme_location', 'autochanger')
+        self._log("Resolving Theme Paths", section="Theme Path Resolution")
+        self._log(f"Theme location: {theme_location}")
+
+        if theme_location == 'custom':
+            paths = self._get_custom_paths()
+            if paths:
+                self._theme_paths = paths
+                return paths
+
+        paths = self._get_dynamic_paths()
+        self._theme_paths = paths
+        return paths
+
+    def _get_dynamic_paths(self):
+        """Get paths based on build type."""
+        build_type = self._build_type or self._determine_build_type()
+        if build_type in self._paths_cache:
+            return self._paths_cache[build_type]
+
+        paths = self._get_absolute_paths(self.BUILD_TYPE_PATHS[build_type])
+        if self._validate_paths(paths):
+            self._paths_cache[build_type] = paths
+            return paths
+
+        self._log("✗ Dynamic paths invalid, falling back to default")
+        return self.BUILD_TYPE_PATHS['S']
+
+    def _resolve_custom_paths(self):
+        """Handle custom path resolution"""
+        custom_paths = {
+            'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
+            'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
+            'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
+        }
+        
+        print("\nValidating custom paths:")
+        if self._validate_and_log_paths(custom_paths):
+            print("✓ Using custom paths")
+            return custom_paths
+        
+        print("✗ Some custom paths invalid or missing, falling back to dynamic paths")
+        return self.get_dynamic_paths()
+
+    def _resolve_fixed_paths(self, location):
+        """Handle fixed path resolution for zzzSettings and zzzShutdown"""
+        paths = {
+            'roms': os.path.join(self.base_path, "collections", location, "roms"),
+            'videos': os.path.join(self.base_path, "collections", location, "medium_artwork", "video"),
+            'logos': os.path.join(self.base_path, "collections", location, "medium_artwork", "logos")
+        }
+        
+        print(f"\nValidating {location} paths:")
+        if self._validate_and_log_paths(paths):
+            print(f"✓ Using {location} paths")
+            return paths
+            
+        print(f"✗ Some {location} paths missing, falling back to dynamic paths")
+        return self.get_dynamic_paths()
+
+    def _validate_and_log_paths(self, paths):
+        """Helper method to validate paths and log their status."""
+        all_valid = True
+        for key, path in paths.items():
+            if not path:  # Handle empty paths
+                print(f"Checking {key}: EMPTY PATH")
+                all_valid = False
+                continue
+                
+            exists = os.path.exists(path)
+            print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
+            if not exists:
+                all_valid = False
+        return all_valid
+
+    def _get_absolute_paths(self, relative_paths):
+        """Convert relative paths to absolute paths."""
+        return {key: os.path.join(self.base_path, path) for key, path in relative_paths.items()}
+
+    def _validate_paths(self, paths):
+        """Validate paths and log only once per build type."""
+        return all(os.path.exists(path) for path in paths.values())
+
+    def get_default_paths(self):
+        """Get the default autochanger paths."""
+        return {
+            'roms': os.path.join(self.base_path, "- Themes"),
+            'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
+            'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
+        }
+
+    def update_theme_location(self, location: str):
+        """Update the theme location configuration."""
+        try:
+            if location not in ['autochanger', 'zzzSettings', 'custom']:
+                raise ValueError("Invalid theme location. Must be 'autochanger', 'zzzSettings', or 'custom'")
+            self.config.set('Settings', 'theme_location', location)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating theme location: {str(e)}")
+
+    def _get_custom_paths(self):
+        """Resolve custom paths."""
+        paths = {
+            'roms': self.get_setting('Settings', 'custom_roms_path', ''),
+            'videos': self.get_setting('Settings', 'custom_videos_path', ''),
+            'logos': self.get_setting('Settings', 'custom_logos_path', '')
+        }
+        if self._validate_paths(paths):
+            self._log("✓ Using custom paths")
+            return paths
+        self._log("✗ Custom paths invalid, falling back to defaults")
+        return None
+
+    def get_playlist_location(self):
+        """Get the playlist location based on internal build type"""
+        return self._build_type
+
+    def get_controls_file(self) -> str:
+        """Get the controls file name."""
+        return self.config.get('Controls', 'controls_file', fallback='controls5.conf')
+
+    def get_exclude_append(self) -> List[str]:
+        """Get the list of additional controls to exclude."""
+        exclude_str = self.config.get('Controls', 'excludeAppend', fallback='')
+        return [item.strip() for item in exclude_str.split(',') if item.strip()]
+
+    def get_controls_add(self) -> List[str]:
+        """Get the list of controls to add (ignoring exclude list)."""
+        controls_str = self.config.get('Controls', 'controlsAdd', fallback='')
+        return [item.strip() for item in controls_str.split(',') if item.strip()]
+
+    def update_controls_file(self, filename: str):
+        """Update the controls file name."""
+        try:
+            self.config.set('Controls', 'controls_file', filename)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating controls file: {str(e)}")
+
+    def update_exclude_append(self, controls: List[str]):
+        """Update the excludeAppend list."""
+        try:
+            self.config.set('Controls', 'excludeAppend', ', '.join(controls))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating excludeAppend: {str(e)}")
+
+    def update_controls_add(self, controls: List[str]):
+        """Update the controlsAdd list."""
+        try:
+            self.config.set('Controls', 'controlsAdd', ', '.join(controls))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating controlsAdd: {str(e)}")
+
+    def toggle_location_controls(self):
+        """Toggle the visibility of location control elements"""
+        current_value = self.config.getboolean('Settings', 'show_location_controls', fallback=False)
+        print(f"Current value before toggle: {current_value}")  # Debug
+        self.config['Settings']['show_location_controls'] = str(not current_value)
+        self.save_config()
+        print(f"New value after toggle: {not current_value}")  # Debug
+
+
+    def get_settings_file(self) -> str:
+        """Get the settings file name."""
+        try:
+            settings_value = self.config.get('Settings', 'settings_file', fallback='5_7')
+            return f"settings{settings_value}.conf"
+        except Exception as e:
+            print(f"Error reading settings file: {str(e)}")
+            return "settings5_7.conf"
+
+    def get_cycle_playlist(self) -> List[str]:
+        """Get the cycle playlist configuration based on the specific conditions."""
+        try:
+            # If the playlist location is 'U', return only "all" and "favs"
+            if self.playlist_location == 'U':
+                return ["all", "favorites", "lastplayed"]  # Only these playlists for 'U'
+
+            # For 'S' and 'D', check if the 'cycle_playlist' option exists in the config
+            if self.config.has_option('Settings', 'cycle_playlist'):
+                playlists = self.config.get('Settings', 'cycle_playlist')
+                if playlists:  # Non-empty value in INI
+                    return [item.strip() for item in playlists.split(',') if item.strip()]
+                else:  # If the key exists but is empty
+                    return []
+            else:
+                # If the 'cycle_playlist' key is missing, use a default playlist list
+                return ["arcader", "consoles", "favorites", "lastplayed"]
+
+        except Exception as e:
+            print(f"Error reading cycle playlist: {str(e)}")
+            return ["arcader", "consoles", "favorites", "lastplayed"]  # Default in case of error
+
+
+    def get_excluded_playlists(self) -> List[str]:
+        """Get the excluded playlists configuration based on the specific conditions."""
+        try:
+            if self.config.has_option('Settings', 'excluded'):
+                excluded = self.config.get('Settings', 'excluded')
+                if excluded:  # Non-empty value in INI
+                    return [item.strip() for item in excluded.split(',') if item.strip()]
+                else:  # Key exists but is empty
+                    return []
+            else:
+                # Key is missing, use hardcoded default
+                return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
+                        "arcades220", "arcader", "arcades", "consoles", "favorites", 
+                        "lastplayed", "settings"]
+        except Exception as e:
+            print(f"Error reading excluded playlists: {str(e)}")
+            return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
+                    "arcades220", "arcader", "arcades", "consoles", "favorites", 
+                    "lastplayed", "settings"]
+
+    def update_cycle_playlist(self, playlists: List[str]):
+        """Update the cycle playlist configuration."""
+        try:
+            self.config.set('Settings', 'cycle_playlist', ', '.join(playlists))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating cycle playlist: {str(e)}")
+
+    def update_excluded_playlists(self, playlists: List[str]):
+        """Update the excluded playlists configuration."""
+        try:
+            self.config.set('Settings', 'excluded', ', '.join(playlists))
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating excluded playlists: {str(e)}")
+
+    def update_settings_file(self, settings_value: str):
+        """Update the settings file configuration."""
+        try:
+            self.config.set('Settings', 'settings_file', settings_value)
+            self.save_config()
+        except Exception as e:
+            print(f"Error updating settings file: {str(e)}")    
 
 class Controls:
     def __init__(self, parent):
@@ -1129,447 +1765,6 @@ class Controls:
             self.status_label.configure(text=f"Controller Status: Error ({str(e)})")
 
         self.parent.after(1000, self.check_controller)
-
-class ConfigManager:
-    # Document all possible settings as class attributes
-    # These won't appear in the INI file unless explicitly added
-    AVAILABLE_SETTINGS = {
-        'Settings': {
-            'settings_file': {
-                'default': '5_7',
-                'description': 'Settings file version to use',
-                'type': str,
-                'hidden': True
-            },
-            'theme_location': {
-                'default': 'autochanger',
-                'description': 'Location of theme files',
-                'type': str,
-                'hidden': True
-            },
-            'custom_roms_path': {
-                'default': '',
-                'description': 'Custom path for ROM files',
-                'type': str,
-                'hidden': True
-            },
-            'custom_videos_path': {
-                'default': '',
-                'description': 'Custom path for video files',
-                'type': str,
-                'hidden': True
-            },
-            'custom_logos_path': {
-                'default': '',
-                'description': 'Custom path for logo files',
-                'type': str,
-                'hidden': True
-            },
-            'show_location_controls': {
-                'default': 'False',
-                'description': 'Show location control options',
-                'type': bool,
-                'hidden': True
-            },
-            'cycle_playlist': {
-                'default': '',
-                'description': 'Comma-separated list of playlists to cycle through',
-                'type': List[str],
-                'hidden': True
-            },
-            'excluded': {
-                'default': '',
-                'description': 'Comma-separated list of items to exclude',
-                'type': List[str],
-                'hidden': True
-            }
-        },
-        'Controls': {
-            'controls_file': {
-                'default': 'controls5.conf',
-                'description': 'Controls configuration file',
-                'type': str,
-                'hidden': True
-            },
-            'excludeAppend': {
-                'default': '',
-                'description': 'Additional exclusions for controls',
-                'type': str,
-                'hidden': False
-            },
-            'controlsAdd': {
-                'default': '',
-                'description': 'Additional control configurations',
-                'type': str,
-                'hidden': False
-            }
-        }
-    }
-
-    BUILD_TYPE_PATHS = {
-    'D': {  # Dynamic build type
-        'roms': "- Themes",  # Relative to `self.base_path`
-        'videos': os.path.join("autochanger", "themes", "video"),
-        'logos': os.path.join("autochanger", "themes", "logo")
-    },
-    'U': {  # User build type
-        'roms': os.path.join("collections", "zzzShutdown", "roms"),
-        'videos': os.path.join("collections", "zzzShutdown", "medium_artwork", "video"),
-        'logos': os.path.join("collections", "zzzShutdown", "medium_artwork", "logo")
-    },
-    'S': {  # Settings build type
-        'roms': os.path.join("collections", "zzzSettings", "roms"),
-        'videos': os.path.join("collections", "zzzSettings", "medium_artwork", "video"),
-        'logos': os.path.join("collections", "zzzSettings", "medium_artwork", "logo")
-    }
-    }
-
-    def __init__(self, debug=True):
-        self.debug = debug
-        self.base_path = os.getcwd()
-        self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
-        self.config = configparser.ConfigParser()
-
-        # Caches for paths and build type
-        self._build_type = None
-        self._paths_cache = {}
-        self._theme_paths = None
-
-        self.initialize_config()
-        self._build_type = self._determine_build_type()
-
-    def initialize_config(self):
-        """Initialize the INI file with default values if it doesn't exist."""
-        if not os.path.exists(self.config_path):
-            self._initialize_default_config()
-        else:
-            self.config.read(self.config_path)
-            self._ensure_default_settings()
-        self.save_config()
-
-    def _initialize_default_config(self):
-        """Set default values for a new configuration file."""
-        for section, settings in self.AVAILABLE_SETTINGS.items():
-            self.config[section] = {
-                key: setting_info['default']
-                for key, setting_info in settings.items()
-                if not setting_info['hidden']
-            }
-
-    def _ensure_default_settings(self):
-        """Ensure existing config has all required default settings."""
-        needs_save = False
-        for section, settings in self.AVAILABLE_SETTINGS.items():
-            if section not in self.config:
-                self.config[section] = {}
-                needs_save = True
-            for key, setting_info in settings.items():
-                if not setting_info['hidden'] and key not in self.config[section]:
-                    self.config[section][key] = setting_info['default']
-                    needs_save = True
-        if needs_save:
-            self.save_config()
-
-    def get_setting(self, section, key, default=None):
-        """Retrieve a setting value with proper type conversion."""
-        if section in self.config and key in self.config[section]:
-            value = self.config[section][key]
-            setting_type = self.AVAILABLE_SETTINGS[section][key]['type']
-            if setting_type == bool:
-                return value.lower() == 'true'
-            if setting_type == List[str]:
-                return value.split(',') if value.strip() else []
-            return setting_type(value)
-        return default
-
-    def save_config(self):
-        """Save the current configuration to the INI file."""
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        with open(self.config_path, 'w') as configfile:
-            self.config.write(configfile)
-
-    def _log(self, message, section=None):
-        """Centralized logging method."""
-        if self.debug:
-            if section:
-                print(f"=== {section} ===")
-            print(message)
-
-    @classmethod
-    def get_available_settings(cls) -> Dict[str, Dict[str, Dict[str, Any]]]:
-        """
-        Get documentation of all available settings, including hidden ones.
-        Returns a dictionary of all possible settings and their metadata.
-        """
-        return cls.AVAILABLE_SETTINGS
-    
-    def _determine_build_type(self):
-        """Determine build type based on directory structure."""
-        if self._build_type is not None:
-            return self._build_type
-
-        self._log("Detecting Build Type", section="Build Type Detection")
-        for build_type, relative_paths in self.BUILD_TYPE_PATHS.items():
-            paths = self._get_absolute_paths(relative_paths)
-            if self._validate_paths(paths):
-                self._log(f"✓ Found valid paths for build type: {build_type}")
-                self._paths_cache[build_type] = paths
-                return build_type
-
-        self._log("✗ No valid build type found, defaulting to 'S'")
-        return 'S'
-
-    def get_build_type(self):
-        """Get the cached build type or determine it if not yet set."""
-        if self._build_type is None:
-            self._determine_build_type()
-        return self._build_type
-
-    def get_theme_paths(self):
-        """Get theme paths with caching."""
-        if self._theme_paths is not None:
-            return self._theme_paths
-
-        theme_location = self.get_setting('Settings', 'theme_location', 'autochanger')
-        self._log("Resolving Theme Paths", section="Theme Path Resolution")
-        self._log(f"Theme location: {theme_location}")
-
-        if theme_location == 'custom':
-            paths = self._get_custom_paths()
-            if paths:
-                self._theme_paths = paths
-                return paths
-
-        paths = self._get_dynamic_paths()
-        self._theme_paths = paths
-        return paths
-
-    def _get_dynamic_paths(self):
-        """Get paths based on build type."""
-        build_type = self._build_type or self._determine_build_type()
-        if build_type in self._paths_cache:
-            return self._paths_cache[build_type]
-
-        paths = self._get_absolute_paths(self.BUILD_TYPE_PATHS[build_type])
-        if self._validate_paths(paths):
-            self._paths_cache[build_type] = paths
-            return paths
-
-        self._log("✗ Dynamic paths invalid, falling back to default")
-        return self.BUILD_TYPE_PATHS['S']
-
-    def _resolve_custom_paths(self):
-        """Handle custom path resolution"""
-        custom_paths = {
-            'roms': self.config.get('Settings', 'custom_roms_path', fallback=''),
-            'videos': self.config.get('Settings', 'custom_videos_path', fallback=''),
-            'logos': self.config.get('Settings', 'custom_logos_path', fallback='')
-        }
-        
-        print("\nValidating custom paths:")
-        if self._validate_and_log_paths(custom_paths):
-            print("✓ Using custom paths")
-            return custom_paths
-        
-        print("✗ Some custom paths invalid or missing, falling back to dynamic paths")
-        return self.get_dynamic_paths()
-
-    def _resolve_fixed_paths(self, location):
-        """Handle fixed path resolution for zzzSettings and zzzShutdown"""
-        paths = {
-            'roms': os.path.join(self.base_path, "collections", location, "roms"),
-            'videos': os.path.join(self.base_path, "collections", location, "medium_artwork", "video"),
-            'logos': os.path.join(self.base_path, "collections", location, "medium_artwork", "logos")
-        }
-        
-        print(f"\nValidating {location} paths:")
-        if self._validate_and_log_paths(paths):
-            print(f"✓ Using {location} paths")
-            return paths
-            
-        print(f"✗ Some {location} paths missing, falling back to dynamic paths")
-        return self.get_dynamic_paths()
-
-    def _validate_and_log_paths(self, paths):
-        """Helper method to validate paths and log their status."""
-        all_valid = True
-        for key, path in paths.items():
-            if not path:  # Handle empty paths
-                print(f"Checking {key}: EMPTY PATH")
-                all_valid = False
-                continue
-                
-            exists = os.path.exists(path)
-            print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-            if not exists:
-                all_valid = False
-        return all_valid
-
-    def _get_absolute_paths(self, relative_paths):
-        """Convert relative paths to absolute paths."""
-        return {key: os.path.join(self.base_path, path) for key, path in relative_paths.items()}
-
-    def _validate_paths(self, paths):
-        """Validate paths and log only once per build type."""
-        return all(os.path.exists(path) for path in paths.values())
-
-    def get_default_paths(self):
-        """Get the default autochanger paths."""
-        return {
-            'roms': os.path.join(self.base_path, "- Themes"),
-            'videos': os.path.join(self.base_path, "autochanger", "themes", "video"),
-            'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
-        }
-
-    def update_theme_location(self, location: str):
-        """Update the theme location configuration."""
-        try:
-            if location not in ['autochanger', 'zzzSettings', 'custom']:
-                raise ValueError("Invalid theme location. Must be 'autochanger', 'zzzSettings', or 'custom'")
-            self.config.set('Settings', 'theme_location', location)
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating theme location: {str(e)}")
-
-    def _get_custom_paths(self):
-        """Resolve custom paths."""
-        paths = {
-            'roms': self.get_setting('Settings', 'custom_roms_path', ''),
-            'videos': self.get_setting('Settings', 'custom_videos_path', ''),
-            'logos': self.get_setting('Settings', 'custom_logos_path', '')
-        }
-        if self._validate_paths(paths):
-            self._log("✓ Using custom paths")
-            return paths
-        self._log("✗ Custom paths invalid, falling back to defaults")
-        return None
-
-    def get_playlist_location(self):
-        """Get the playlist location based on internal build type"""
-        return self._build_type
-
-    def get_controls_file(self) -> str:
-        """Get the controls file name."""
-        return self.config.get('Controls', 'controls_file', fallback='controls5.conf')
-
-    def get_exclude_append(self) -> List[str]:
-        """Get the list of additional controls to exclude."""
-        exclude_str = self.config.get('Controls', 'excludeAppend', fallback='')
-        return [item.strip() for item in exclude_str.split(',') if item.strip()]
-
-    def get_controls_add(self) -> List[str]:
-        """Get the list of controls to add (ignoring exclude list)."""
-        controls_str = self.config.get('Controls', 'controlsAdd', fallback='')
-        return [item.strip() for item in controls_str.split(',') if item.strip()]
-
-    def update_controls_file(self, filename: str):
-        """Update the controls file name."""
-        try:
-            self.config.set('Controls', 'controls_file', filename)
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating controls file: {str(e)}")
-
-    def update_exclude_append(self, controls: List[str]):
-        """Update the excludeAppend list."""
-        try:
-            self.config.set('Controls', 'excludeAppend', ', '.join(controls))
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating excludeAppend: {str(e)}")
-
-    def update_controls_add(self, controls: List[str]):
-        """Update the controlsAdd list."""
-        try:
-            self.config.set('Controls', 'controlsAdd', ', '.join(controls))
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating controlsAdd: {str(e)}")
-
-    def toggle_location_controls(self):
-        """Toggle the visibility of location control elements"""
-        current_value = self.config.getboolean('Settings', 'show_location_controls', fallback=False)
-        print(f"Current value before toggle: {current_value}")  # Debug
-        self.config['Settings']['show_location_controls'] = str(not current_value)
-        self.save_config()
-        print(f"New value after toggle: {not current_value}")  # Debug
-
-
-    def get_settings_file(self) -> str:
-        """Get the settings file name."""
-        try:
-            settings_value = self.config.get('Settings', 'settings_file', fallback='5_7')
-            return f"settings{settings_value}.conf"
-        except Exception as e:
-            print(f"Error reading settings file: {str(e)}")
-            return "settings5_7.conf"
-
-    def get_cycle_playlist(self) -> List[str]:
-        """Get the cycle playlist configuration based on the specific conditions."""
-        try:
-            # If the playlist location is 'U', return only "all" and "favs"
-            if self.playlist_location == 'U':
-                return ["all", "favorites", "lastplayed"]  # Only these playlists for 'U'
-
-            # For 'S' and 'D', check if the 'cycle_playlist' option exists in the config
-            if self.config.has_option('Settings', 'cycle_playlist'):
-                playlists = self.config.get('Settings', 'cycle_playlist')
-                if playlists:  # Non-empty value in INI
-                    return [item.strip() for item in playlists.split(',') if item.strip()]
-                else:  # If the key exists but is empty
-                    return []
-            else:
-                # If the 'cycle_playlist' key is missing, use a default playlist list
-                return ["arcader", "consoles", "favorites", "lastplayed"]
-
-        except Exception as e:
-            print(f"Error reading cycle playlist: {str(e)}")
-            return ["arcader", "consoles", "favorites", "lastplayed"]  # Default in case of error
-
-
-    def get_excluded_playlists(self) -> List[str]:
-        """Get the excluded playlists configuration based on the specific conditions."""
-        try:
-            if self.config.has_option('Settings', 'excluded'):
-                excluded = self.config.get('Settings', 'excluded')
-                if excluded:  # Non-empty value in INI
-                    return [item.strip() for item in excluded.split(',') if item.strip()]
-                else:  # Key exists but is empty
-                    return []
-            else:
-                # Key is missing, use hardcoded default
-                return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
-                        "arcades220", "arcader", "arcades", "consoles", "favorites", 
-                        "lastplayed", "settings"]
-        except Exception as e:
-            print(f"Error reading excluded playlists: {str(e)}")
-            return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
-                    "arcades220", "arcader", "arcades", "consoles", "favorites", 
-                    "lastplayed", "settings"]
-
-    def update_cycle_playlist(self, playlists: List[str]):
-        """Update the cycle playlist configuration."""
-        try:
-            self.config.set('Settings', 'cycle_playlist', ', '.join(playlists))
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating cycle playlist: {str(e)}")
-
-    def update_excluded_playlists(self, playlists: List[str]):
-        """Update the excluded playlists configuration."""
-        try:
-            self.config.set('Settings', 'excluded', ', '.join(playlists))
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating excluded playlists: {str(e)}")
-
-    def update_settings_file(self, settings_value: str):
-        """Update the settings file configuration."""
-        try:
-            self.config.set('Settings', 'settings_file', settings_value)
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating settings file: {str(e)}")        
 
 class ExeFileSelector:
     def __init__(self, parent_frame):
