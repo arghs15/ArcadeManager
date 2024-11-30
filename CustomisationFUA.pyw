@@ -4510,8 +4510,8 @@ class ViewRoms:
         root_dir = os.getcwd()
         collections_dir = os.path.join(root_dir, 'collections')
         rom_list = []
-        rom_collections = {}  # Modified to store lists of collections
-        duplicate_roms = {}  # Track duplicates for debugging
+        rom_collections = {}
+        duplicate_roms = {}
         
         # Default exclude lists
         default_collection_excludes = [
@@ -4535,6 +4535,10 @@ class ViewRoms:
                 fnmatch.fnmatch(name.lower(), pattern.lower()) 
                 for pattern in patterns
             )
+
+        def get_most_specific_collection(collections):
+            # Select the most specific (longest) collection name
+            return sorted(collections, key=len, reverse=True)[0]
 
         # First pass: gather all ROMs and their locations
         for collection_name in os.listdir(collections_dir):
@@ -4575,11 +4579,11 @@ class ViewRoms:
                             # Initialize rom entry if it doesn't exist
                             if filename_without_extension not in rom_collections:
                                 rom_collections[filename_without_extension] = {
-                                    'collections': set(),  # Using set instead of list
+                                    'collections': set(),
                                     'paths': []
                                 }
                             
-                            # Add this collection and path if not already present
+                            # Add this collection and path
                             rom_collections[filename_without_extension]['collections'].add(collection_name)
                             if file_path not in rom_collections[filename_without_extension]['paths']:
                                 rom_collections[filename_without_extension]['paths'].append(file_path)
@@ -4587,7 +4591,7 @@ class ViewRoms:
                             # Add collection name to ROM's display name
                             collection_with_rom = f"{filename_without_extension} ({collection_name})"
                             if collection_with_rom not in rom_list:
-                                rom_list.append(collection_with_rom)  # Use this to display collections
+                                rom_list.append(collection_with_rom)
                             
                             # Track duplicates for debugging
                             if len(rom_collections[filename_without_extension]['collections']) > 1:
@@ -4600,10 +4604,9 @@ class ViewRoms:
             for rom, collections in duplicate_roms.items():
                 print(f"{rom} found in collections: {', '.join(collections)}")
 
-        # Convert rom_collections to a format that maps ROMs to their primary collection
-        # Using the first collection found for compatibility with existing code
+        # Convert rom_collections to a format that maps ROMs to their most specific collection
         simple_rom_collections = {
-            rom: next(iter(info['collections']))  # Get the first collection from the set
+            rom: get_most_specific_collection(info['collections'])
             for rom, info in rom_collections.items()
         }
 
@@ -4648,12 +4651,14 @@ class ViewRoms:
             filtered_roms = []
             for rom in self.rom_list:
                 # Split ROM name and collection info
-                base_rom_name = rom.split(" (")[0]  # Get the ROM name without collection
-                collection_info = rom.split("(")[-1].strip(")")  # Get the collection name
+                base_rom_name = rom.split(" (")[0]
+                collection_info = rom.split("(")[-1].strip(")")
                 
-                # Filter by collection first
-                if selected_collection != "All Collections" and selected_collection not in rom:
-                    continue
+                # Strict collection filtering
+                if selected_collection != "All Collections":
+                    # Exact collection match only
+                    if selected_collection != collection_info:
+                        continue
                 
                 # Get description if available and create display text
                 description = self.rom_descriptions.get(base_rom_name, '')
