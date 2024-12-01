@@ -30,9 +30,10 @@ import time
 from inputs import get_gamepad, devices
 import fnmatch
 
-# Change the working directory to the directory where the script is located
-## Comment out before packaging as it breaks paths
-#os.chdir(os.path.dirname(os.path.abspath(__file__)))
+# Check if the script is running in a bundled environment
+if not getattr(sys, 'frozen', False):
+    # Change the working directory to the directory where the script is located
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 class FilterGamesApp:
     @staticmethod
@@ -43,7 +44,7 @@ class FilterGamesApp:
             base_path = sys._MEIPASS
         except Exception:
             base_path = os.path.abspath(".")
-        
+
         return os.path.join(base_path, relative_path)
         
     def __init__(self, root):
@@ -302,7 +303,7 @@ class ConfigManager:
                 'hidden': True
             },
             'playlists_tab': {
-                'default': 'never',  # 'auto', 'always', or 'never'
+                'default': 'auto',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Playlists tab',
                 'type': str,
                 'hidden': True
@@ -766,23 +767,31 @@ class ConfigManager:
     def get_cycle_playlist(self) -> List[str]:
         """Get the cycle playlist configuration based on the specific conditions."""
         try:
-            # If the playlist location is 'U', return only "all" and "favs"
+            # If the playlist location is 'U', return only specific playlists
             if self.playlist_location == 'U':
+                print("Playlist Location is 'U', returning default playlists")
                 return ["all", "favorites", "lastplayed"]  # Only these playlists for 'U'
 
             # For 'S' and 'D', check if the 'cycle_playlist' option exists in the config
             if self.config.has_option('Settings', 'cycle_playlist'):
                 playlists = self.config.get('Settings', 'cycle_playlist')
                 if playlists:  # Non-empty value in INI
-                    return [item.strip() for item in playlists.split(',') if item.strip()]
+                    parsed_playlists = [item.strip() for item in playlists.split(',') if item.strip()]
+                    print(f"Parsed playlists from config: {parsed_playlists}")
+                    return parsed_playlists
                 else:  # If the key exists but is empty
+                    print("Cycle playlist key exists but is empty")
                     return []
             else:
                 # If the 'cycle_playlist' key is missing, use a default playlist list
+                print("Cycle playlist key is missing, using default")
                 return ["arcader", "consoles", "favorites", "lastplayed"]
 
         except Exception as e:
             print(f"Error reading cycle playlist: {str(e)}")
+            # Print the full traceback for more detailed error information
+            import traceback
+            traceback.print_exc()
             return ["arcader", "consoles", "favorites", "lastplayed"]  # Default in case of error
 
 
@@ -799,12 +808,12 @@ class ConfigManager:
                 # Key is missing, use hardcoded default
                 return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
                         "arcades220", "arcader", "arcades", "consoles", "favorites", 
-                        "lastplayed", "settings"]
+                        "lastplayed", "settings" "zSettings"]
         except Exception as e:
             print(f"Error reading excluded playlists: {str(e)}")
             return ["arcades40", "arcades60", "arcades80", "arcades120", "arcades150", 
                     "arcades220", "arcader", "arcades", "consoles", "favorites", 
-                    "lastplayed", "settings"]
+                    "lastplayed", "settings" "zSettings"]
 
     def update_cycle_playlist(self, playlists: List[str]):
         """Update the cycle playlist configuration."""
@@ -1074,99 +1083,39 @@ class Controls:
         finally:
             print("Controller monitoring ended")
 
-    ''' Hiden handle keyboard function
-    # previous function before removing s, and F1, F2
     def handle_keyboard_input(self):
         """Monitor keyboard input until a key is pressed or capture is stopped."""
         print("Keyboard monitoring started")
+        
+        # List of keys to exclude from capture (lowercase for comparison)
+        excluded_keys = ['pause', 'next', 'prev', 'volumeup', 'volumedown', 's', 'f1', 'f2', 
+                        'numpad 8', 'numpad 2', 'numpad 4', 'numpad 6',',','.','[',']',"'"]
+        
         try:
             while not self.stop_event.is_set():
                 event = keyboard.read_event(suppress=True)
                 if event.event_type == keyboard.KEY_DOWN:
-                    key_name = event.name.capitalize()
-                    print(f"Got keyboard input: {key_name}")
+                    # Keep comparison lowercase, but display in uppercase
+                    key_name_lower = event.name.lower()
+                    key_name_display = event.name.capitalize()
+                    print(f"Got keyboard input: {key_name_display}")
 
-                    if key_name == "Esc":
+                    # Check if the key is in the excluded list
+                    if key_name_lower in excluded_keys:
+                        print(f"{key_name_display} key pressed: Excluded from capture")
+                        self.show_status_message(f"{key_name_display} key is excluded.\nPlease make another selection.")
+                        continue
+
+                    # Escape key handler
+                    if key_name_lower == "esc":
                         print("Escape key pressed, canceling capture")
                         self.stop_event.set()  # Signal stop event
                         self.parent.after(0, self.stop_capture)  # Safely stop capture from GUI context
                         return
 
+                    # If not an excluded or reserved key, proceed with capture
                     self.stop_event.set()
-                    self.parent.after(0, self._safe_update_entry, key_name, key_name)
-                    return
-
-        except KeyboardInterrupt:
-            # Handle Ctrl+C gracefully
-            print("Keyboard monitoring interrupted")
-            self.parent.after(0, self.stop_capture)
-            return
-        except Exception as e:
-            print(f"Keyboard error: {e}")
-
-        print("Keyboard monitoring ended")
-    '''
-
-    def handle_keyboard_input(self):
-        """Monitor keyboard input until a key is pressed or capture is stopped."""
-        print("Keyboard monitoring started")
-        try:
-            while not self.stop_event.is_set():
-                event = keyboard.read_event(suppress=True)
-                if event.event_type == keyboard.KEY_DOWN:
-                    key_name = event.name.capitalize()
-                    print(f"Got keyboard input: {key_name}")
-
-                    if key_name == "Esc":
-                        print("Escape key pressed, canceling capture")
-                        self.stop_event.set()  # Signal stop event
-                        self.parent.after(0, self.stop_capture)  # Safely stop capture from GUI context
-                        return
-
-                    if key_name == "S":
-                        print("S key pressed: Reserved for settings")
-                        self.show_status_message("S is reserved for settings.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "F1":
-                        print("F1 key pressed: Reserved for prevPlaylist")
-                        self.show_status_message("F1 is reserved for prevPlaylist.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "F2":
-                        print("F2 key pressed: Reserved for nextPlaylist")
-                        self.show_status_message("F2 is reserved for nextPlaylist.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 8":
-                        print("Numpad 8 key pressed: Reserved for up")
-                        self.show_status_message("Numpad 8 key pressed: Reserved for up.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 2":
-                        print("Numpad 2 key pressed: Reserved for down")
-                        self.show_status_message("Numpad 2 key pressed: Reserved for down.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 4":
-                        print("Numpad 4 key pressed: Reserved for left")
-                        self.show_status_message("Numpad 4 key pressed: Reserved for left.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    if key_name == "Numpad 6":
-                        print("Numpad 6 key pressed: Reserved for right")
-                        self.show_status_message("Numpad 6 key pressed: Reserved for right.\nPlease make another selection.")
-                        # Do not exit the loop, keep capture active
-                        continue
-
-                    self.stop_event.set()
-                    self.parent.after(0, self._safe_update_entry, key_name, key_name)
+                    self.parent.after(0, self._safe_update_entry, key_name_display, key_name_display)
                     return
 
         except KeyboardInterrupt:
@@ -1215,7 +1164,6 @@ class Controls:
             # Revert the border color of the entry to indicate capture is complete
             entry.configure(border_color="gray", border_width=1)
         self.current_control = None
-
 
     def create_layout(self):
         # Main container for left and right columns
@@ -2623,8 +2571,11 @@ class Playlists:
         try:
             target_file = self.settings_file_path if self.playlist_location == 'U' else self.autochanger_conf_path
             
-            # Get default playlists from INI file
-            default_playlists = self.config_manager.get_cycle_playlist()
+            # Use self.get_cycle_playlist() instead of self.config_manager.get_cycle_playlist()
+            if self.playlist_location == 'U':
+                default_playlists = ["all", "favorites", "lastplayed"]
+            else:
+                default_playlists = self.config_manager.get_cycle_playlist()
             
             with open(target_file, 'r') as file:
                 lines = file.readlines()
@@ -2634,10 +2585,8 @@ class Playlists:
             
             for line in lines:
                 if line.startswith("cyclePlaylist ="):
-                    if default_playlists:
-                        new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
-                    else:
-                        new_line = f"cyclePlaylist = {', '.join(playlist_list)}\n"
+                    # Combine default playlists with selected playlists
+                    new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
                     updated_lines.append(new_line)
                     cycle_playlist_found = True
                 else:
@@ -2645,10 +2594,8 @@ class Playlists:
 
             # Add cyclePlaylist if not found
             if not cycle_playlist_found:
-                if default_playlists:
-                    updated_lines.append(f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n")
-                else:
-                    updated_lines.append(f"cyclePlaylist = {', '.join(playlist_list)}\n")
+                new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                updated_lines.append(new_line)
 
             # Write the updated lines back to the file
             with open(target_file, 'w') as file:
@@ -3750,7 +3697,7 @@ class AdvancedConfigs:
         self.config_folders_default = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass and Scanlines"]
 
         # Define config folders for 'U' mode
-        self.config_folders_u = ["- Advanced Configs", "- Mods", "- Themes 2nd Screen", "- Themes Arcade", "- Themes Console", "- Themes Home"]
+        self.config_folders_u = ["- Advanced Configs", "- Mods", "- Themes 2nd Screen", "- Themes Arcade", "- Themes Console", "- Themes Handheld", "- Themes Home"]
 
         # Choose the appropriate config folders based on 'playlist_location'
         if self.playlist_location == 'U':
@@ -3800,8 +3747,9 @@ class AdvancedConfigs:
         if self.playlist_location == 'U':
             self.folder_to_tab_mapping.update({
                 "- Themes Arcade": "Themes",
-                "- Themes Console": "Themes",
-                "- Themes Home": "Themes",
+                "- Themes Console": "Themes Console",
+                "- Themes Handheld": "Themes Handheld",
+                "- Themes Home": "Themes Home",
                 "- Themes 2nd Screen": "2nd Screen",
                 "- Bezels Glass and Scanlines": "Bezels & Effects"
             })
@@ -4062,100 +4010,32 @@ class AdvancedConfigs:
             if script_exists:
                 self.radio_buttons["Favorites"].append(radio_button)
                 self.radio_button_script_mapping["Favorites"][i] = script_name
-    
-    # Video functions are not used atm. Have commented out the preview button for now. Can add back later
-    def preview_video(self):
-        selected_tab = self.tabview.get()
-        selected_index = self.tab_radio_vars[selected_tab].get()
-
-        if selected_index in self.radio_button_script_mapping[selected_tab]:
-            script_name = self.radio_button_script_mapping[selected_tab][selected_index]
-            theme = os.path.splitext(script_name)[0]
-
-            video_path = os.path.join("collections", "settings", f"{theme}.mp4")
-
-            if not os.path.exists(video_path):
-                print(f"Video file for theme '{theme}' not found.")
-                return
-
-            # Stop previous video if any
-            self.stop_video()
-    
-            # Open the video file
-            self.cap = cv2.VideoCapture(video_path)
-            if not self.cap.isOpened():
-                print("Error: Could not open video.")
-                return
-
-            # Get the frame rate of the video
-            fps = self.cap.get(cv2.CAP_PROP_FPS)
-            wait_time = int(1000 / fps)  # Calculate wait time in milliseconds
-
-            # Create a named window for the video
-            cv2.namedWindow("Preview Video", cv2.WND_PROP_FULLSCREEN)
-            cv2.setWindowProperty("Preview Video", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-            # Loop through frames and display them
-            while True:
-                ret, frame = self.cap.read()
-                if not ret:
-                    break  # Exit if the video ends
-
-                # Display the frame in the OpenCV window
-                cv2.imshow("Preview Video", frame)
-
-                # Wait for the calculated time or until a key is pressed; break on 'q' key press
-                if cv2.waitKey(wait_time) & 0xFF == ord('q'):
-                    break
-
-            # Release the video capture and close the window
-            self.cap.release()
-            cv2.destroyAllWindows()
-
-    def stop_video(self):
-        if hasattr(self, 'cap') and self.cap is not None:
-            self.cap.release()
-            self.cap = None
-            self.video_canvas.delete("all")  # Clear the canvas
-
-    def update_video(self):
-        if self.cap is not None and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                # Get the canvas dimensions
-                canvas_width = self.video_canvas.winfo_width()
-                canvas_height = self.video_canvas.winfo_height()
-                
-                # Get the aspect ratio of the original frame
-                original_height, original_width = frame.shape[:2]
-                aspect_ratio = original_width / original_height
-                
-                 # Calculate new dimensions while maintaining aspect ratio
-                if canvas_width / canvas_height < aspect_ratio:
-                    new_width = canvas_width
-                    new_height = int(canvas_width / aspect_ratio)
-                else:
-                    new_height = canvas_height
-                    new_width = int(canvas_height * aspect_ratio)
-                    # Resize the frame
-                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-                # Convert the image from OpenCV's BGR format to RGB
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                self.current_frame = ImageTk.PhotoImage(Image.fromarray(frame))
-                
-                # Update the tkinter canvas with the new frame
-                self.video_canvas.create_image(
-                    (canvas_width - new_width) // 2, (canvas_height - new_height) // 2,
-                    anchor=tk.NW, image=self.current_frame
-                )
-
-                # Schedule the next frame update
-                self.video_canvas.after(33, self.update_video)  # Adjust for smoother playback based on your video FPS
 
     def categorize_scripts(self):
+        # Initialize an empty script categories dictionary
         script_categories = {tab: {} for tab in self.tab_keywords}
 
+        # If in 'U' mode, check for existence of theme sub-folders
+        if self.playlist_location == 'U':
+            # List of theme sub-folders to check and their corresponding tab names
+            theme_sub_folders = [
+                ("- Themes Arcade", "Themes"),
+                ("- Themes Console", "Themes Console"),
+                ("- Themes Home", "Themes Home"),
+                # Optionally, specify other sub-folders explicitly
+                ("- Themes Handheld", "Themes Handheld")
+            ]
+
+            # Add sub-tabs only if their corresponding folders exist
+            for folder, tab_name in theme_sub_folders:
+                folder_path = os.path.join(self.base_path, folder)
+                if os.path.isdir(folder_path):
+                    # Check if there are any scripts in the folder
+                    scripts = [f for f in os.listdir(folder_path) if f.endswith(".bat") or f.endswith(".cmd")]
+                    if scripts:
+                        script_categories[tab_name] = {}
+
+        # Modify folder iteration to check for tab existence
         for folder in self.config_folders:
             folder_path = os.path.join(self.base_path, folder)
             if not os.path.isdir(folder_path):
@@ -4166,13 +4046,31 @@ class AdvancedConfigs:
                 if filename.endswith(".bat") or filename.endswith(".cmd"):
                     added_to_tab = False
 
-                    # Check if folder has a mapping and if the mapped tab exists
-                    if folder in self.folder_to_tab_mapping:
+                    # Special handling for 'U' mode theme sub-tabs
+                    if self.playlist_location == 'U':
+                        # Updated to explicitly check each folder and its corresponding tab
+                        tab_mappings = {
+                            "- Themes Arcade": "Themes",
+                            "- Themes Console": "Themes Console",
+                            "- Themes Home": "Themes Home",
+                            "- Themes Handheld": "Themes Handheld"
+                        }
+                        
+                        if folder in tab_mappings:
+                            tab_name = tab_mappings[folder]
+                            # Only add if the tab actually exists in script_categories
+                            if tab_name in script_categories:
+                                script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
+                                added_to_tab = True
+
+                    # Rest of the existing categorization logic remains the same
+                    if not added_to_tab and folder in self.folder_to_tab_mapping:
                         tab_name = self.folder_to_tab_mapping.get(folder)
                         if tab_name in script_categories:
                             script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
                             added_to_tab = True
                     
+                    # Existing keyword-based categorization
                     if not added_to_tab:
                         for tab, keywords in self.tab_keywords.items():
                             if keywords:
@@ -4185,6 +4083,7 @@ class AdvancedConfigs:
                             if added_to_tab:
                                 break
 
+                    # Add to Other tab if no other category matched
                     if not added_to_tab and "Other" in script_categories:
                         script_categories["Other"][len(script_categories["Other"]) + 1] = filename
 
@@ -4236,49 +4135,165 @@ class AdvancedConfigs:
         for tab_name, scripts in script_categories.items():
             if scripts or tab_name == "Favorites":
                 try:
-                    self.tabview.add(tab_name)
-                    self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
-                    self.radio_button_script_mapping[tab_name] = scripts
-                    self.radio_buttons[tab_name] = []
-                    self.favorite_buttons[tab_name] = {}
+                    print(f"Creating tab: {tab_name}")  # Debugging print statement
+                    
+                    if tab_name == "Themes":
+                        if self.playlist_location == 'U':
+                            # Check which theme sub-folders actually exist
+                            sub_tabs = []
+                            potential_sub_tabs = ["Themes", "Themes Console", "Themes Handheld", "Themes Home"]
+                            
+                            for sub_tab in potential_sub_tabs:
+                                # Convert sub-tab name to corresponding folder name
+                                folder_map = {
+                                    "Themes": "- Themes Arcade",
+                                    "Themes Console": "- Themes Console",
+                                    "Themes Handheld": "- Themes Handheld",
+                                    "Themes Home": "- Themes Home"
+                                }
+                                
+                                # Check if the corresponding folder exists and has scripts
+                                folder_path = os.path.join(self.base_path, folder_map[sub_tab])
+                                if os.path.isdir(folder_path):
+                                    scripts = [f for f in os.listdir(folder_path) if f.endswith('.sh') or f.endswith('.bat')]
+                                    if scripts:
+                                        sub_tabs.append(sub_tab)
 
-                    scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
-                    scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+                            themes_tab = self.tabview.add("Themes")
+                            themes_tabview = ctk.CTkTabview(themes_tab)
+                            themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
 
-                    if tab_name == "Favorites":
-                        self.update_favorites_tab()
+                            for sub_tab in sub_tabs:
+                                print(f"Creating sub-tab: {sub_tab}")  # Debugging print statement
+                                themes_tabview.add(sub_tab)
+                                self.tab_radio_vars[sub_tab] = tk.IntVar(value=0)
+                                self.radio_button_script_mapping[sub_tab] = script_categories.get(sub_tab, {})
+                                self.radio_buttons[sub_tab] = []
+                                self.favorite_buttons[sub_tab] = {}
+
+                                scrollable_frame = ctk.CTkScrollableFrame(themes_tabview.tab(sub_tab), width=400, height=400)
+                                scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+                                for i, script_name in self.radio_button_script_mapping[sub_tab].items():
+                                    script_label = os.path.splitext(script_name)[0]
+                                    print(f"Adding script to {sub_tab}: {script_name}")  # Debugging print statement
+
+                                    # Create frame for radio button and favorite button
+                                    frame = ctk.CTkFrame(scrollable_frame)
+                                    frame.pack(fill="x", padx=5, pady=2)
+
+                                    radio_button = ctk.CTkRadioButton(
+                                        frame,
+                                        text=script_label,
+                                        variable=self.tab_radio_vars[sub_tab],
+                                        value=i,
+                                        command=lambda t=sub_tab, v=i: self.on_radio_select(t, v)
+                                    )
+                                    radio_button.pack(side="left", padx=5)
+
+                                    # Add favorite toggle button
+                                    favorite_button = ctk.CTkButton(
+                                        frame,
+                                        text="★" if script_name in self.favorites else "☆",
+                                        width=30,
+                                        command=lambda t=sub_tab, s=script_name, b=None: self.toggle_favorite(t, s, b)
+                                    )
+                                    favorite_button.pack(side="right", padx=5)
+
+                                    # Store the button reference for later updates
+                                    self.favorite_buttons[sub_tab][script_name] = favorite_button
+                                    favorite_button.configure(command=lambda t=sub_tab, s=script_name, b=favorite_button:
+                                                                self.toggle_favorite(t, s, b))
+
+                                    self.radio_buttons[sub_tab].append(radio_button)
+                        else:
+                            # For non-U playlist locations, create a single Themes tab
+                            themes_tab = self.tabview.add("Themes")
+                            self.tab_radio_vars["Themes"] = tk.IntVar(value=0)
+                            self.radio_button_script_mapping["Themes"] = script_categories.get("Themes", {})
+                            self.radio_buttons["Themes"] = []
+                            self.favorite_buttons["Themes"] = {}
+
+                            scrollable_frame = ctk.CTkScrollableFrame(themes_tab, width=400, height=400)
+                            scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+                            for i, script_name in self.radio_button_script_mapping["Themes"].items():
+                                script_label = os.path.splitext(script_name)[0]
+
+                                # Create frame for radio button and favorite button
+                                frame = ctk.CTkFrame(scrollable_frame)
+                                frame.pack(fill="x", padx=5, pady=2)
+
+                                radio_button = ctk.CTkRadioButton(
+                                    frame,
+                                    text=script_label,
+                                    variable=self.tab_radio_vars["Themes"],
+                                    value=i,
+                                    command=lambda t="Themes", v=i: self.on_radio_select(t, v)
+                                )
+                                radio_button.pack(side="left", padx=5)
+
+                                # Add favorite toggle button
+                                favorite_button = ctk.CTkButton(
+                                    frame,
+                                    text="★" if script_name in self.favorites else "☆",
+                                    width=30,
+                                    command=lambda t="Themes", s=script_name, b=None: self.toggle_favorite(t, s, b)
+                                )
+                                favorite_button.pack(side="right", padx=5)
+
+                                # Store the button reference for later updates
+                                self.favorite_buttons["Themes"][script_name] = favorite_button
+                                favorite_button.configure(command=lambda t="Themes", s=script_name, b=favorite_button:
+                                                            self.toggle_favorite(t, s, b))
+
+                                self.radio_buttons["Themes"].append(radio_button)
                     else:
-                        for i, script_name in scripts.items():
-                            script_label = os.path.splitext(script_name)[0]
-                            
-                            # Create frame for radio button and favorite button
-                            frame = ctk.CTkFrame(scrollable_frame)
-                            frame.pack(fill="x", padx=5, pady=2)
+                        # Handle other tabs (Favorites and non-Themes tabs)
+                        if tab_name == "Favorites" or tab_name not in (sub_tabs if self.playlist_location == 'U' else []):
+                            self.tabview.add(tab_name)
+                            self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
+                            self.radio_button_script_mapping[tab_name] = scripts
+                            self.radio_buttons[tab_name] = []
+                            self.favorite_buttons[tab_name] = {}
 
-                            radio_button = ctk.CTkRadioButton(
-                                frame,
-                                text=script_label,
-                                variable=self.tab_radio_vars[tab_name],
-                                value=i,
-                                command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
-                            )
-                            radio_button.pack(side="left", padx=5)
+                            scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
+                            scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-                            # Add favorite toggle button
-                            favorite_button = ctk.CTkButton(
-                                frame,
-                                text="★" if script_name in self.favorites else "☆",
-                                width=30,
-                                command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
-                            )
-                            favorite_button.pack(side="right", padx=5)
-                            
-                            # Store the button reference for later updates
-                            self.favorite_buttons[tab_name][script_name] = favorite_button
-                            favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button: 
-                                                   self.toggle_favorite(t, s, b))
+                            if tab_name == "Favorites":
+                                self.update_favorites_tab()
+                            else:
+                                for i, script_name in scripts.items():
+                                    script_label = os.path.splitext(script_name)[0]
 
-                            self.radio_buttons[tab_name].append(radio_button)
+                                    # Create frame for radio button and favorite button
+                                    frame = ctk.CTkFrame(scrollable_frame)
+                                    frame.pack(fill="x", padx=5, pady=2)
+
+                                    radio_button = ctk.CTkRadioButton(
+                                        frame,
+                                        text=script_label,
+                                        variable=self.tab_radio_vars[tab_name],
+                                        value=i,
+                                        command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+                                    )
+                                    radio_button.pack(side="left", padx=5)
+
+                                    # Add favorite toggle button
+                                    favorite_button = ctk.CTkButton(
+                                        frame,
+                                        text="★" if script_name in self.favorites else "☆",
+                                        width=30,
+                                        command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
+                                    )
+                                    favorite_button.pack(side="right", padx=5)
+
+                                    # Store the button reference for later updates
+                                    self.favorite_buttons[tab_name][script_name] = favorite_button
+                                    favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button:
+                                                                self.toggle_favorite(t, s, b))
+
+                                    self.radio_buttons[tab_name].append(radio_button)
                 except Exception as e:
                     print(f"Error creating tab {tab_name}: {str(e)}")
                     continue
