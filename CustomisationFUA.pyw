@@ -3694,10 +3694,23 @@ class AdvancedConfigs:
         self.playlist_location = self.config_manager.get_playlist_location()  # Get location ('S', 'D', or 'U')
 
         # Define base config folders for non-'U' mode
-        self.config_folders_default = ["- Advanced Configs", "- Themes", "- Themes 2nd Screen", "- Bezels Glass and Scanlines"]
+        self.config_folders_default = [
+            "- Advanced Configs", 
+            "- Themes", 
+            "- Themes 2nd Screen", 
+            "- Bezels Glass and Scanlines"
+            ]
 
         # Define config folders for 'U' mode
-        self.config_folders_u = ["- Advanced Configs", "- Mods", "- Themes 2nd Screen", "- Themes Arcade", "- Themes Console", "- Themes Handheld", "- Themes Home"]
+        self.config_folders_u = [
+            "- Advanced Configs", 
+            "- Mods", 
+            "- Themes 2nd Screen", 
+            "- Themes Arcade", 
+            "- Themes Console", 
+            "- Themes Handheld", 
+            "- Themes Home"
+            ]
 
         # Choose the appropriate config folders based on 'playlist_location'
         if self.playlist_location == 'U':
