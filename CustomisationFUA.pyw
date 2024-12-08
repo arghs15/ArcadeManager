@@ -1977,7 +1977,9 @@ class FilterGames:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
         self.output_dir = 'collections\\Arcades\\'
-        self.output_file = os.path.join(self.output_dir, "include.txt")
+        self.include_output_file = os.path.join(self.output_dir, "include.txt")
+        self.exclude_output_file = os.path.join(self.output_dir, "exclude.txt")
+        self.playlist_location = 'U'  # Example value, you can set this based on your logic
 
         # Control type mapping for dropdown and checkboxes
         self.control_type_mapping = {
@@ -1992,10 +1994,10 @@ class FilterGames:
 
         self.load_custom_dll()
         self.csv_file_path = self.get_csv_file_path()
-        
+
         # Create main UI
         self.create_main_interface()
-    
+
     def create_main_interface(self):
         # Create main container frame with weight distribution
         main_container = ctk.CTkFrame(self.parent_tab)
@@ -2011,7 +2013,7 @@ class FilterGames:
 
         # Initialize status bar first
         self.status_bar = ctk.CTkLabel(right_frame, text="Ready", anchor='w')
-        
+
         # Create a TabView for Control Types, Buttons, and Vertical Filter
         tabview = ctk.CTkTabview(sidebar_frame, width=200)
         tabview.pack(fill='both', expand=True, padx=10, pady=10)
@@ -2053,41 +2055,63 @@ class FilterGames:
 
         # Vertical tab content
         self.vertical_checkbox_var = tk.IntVar()
-        vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games", 
+        vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games",
                                           variable=self.vertical_checkbox_var,
                                           command=self.update_filtered_list)
         vertical_checkbox.pack(padx=20, pady=10, anchor='w')
 
-        # Button frame at bottom of sidebar
-        button_frame = ctk.CTkFrame(sidebar_frame)
-        button_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+        # Toggle button frame
+        toggle_frame = ctk.CTkFrame(sidebar_frame)
+        toggle_frame.pack(side='bottom', fill='x', padx=10, pady=10)
 
-        # Filter, Clear Filters, and Reset buttons
-        filter_button = ctk.CTkButton(button_frame, text="Save Filter", command=self.filter_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
+        # Toggle button
+        self.toggle_var = tk.StringVar(value="Switch to Exclude Options")
+        toggle_button = ctk.CTkButton(toggle_frame, textvariable=self.toggle_var, command=self.toggle_mode)
+        toggle_button.pack(pady=(0, 5), fill='x')
+
+        # Include Games frame
+        self.include_frame = ctk.CTkFrame(sidebar_frame)
+        self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
+        # Include Games buttons
+        filter_button = ctk.CTkButton(self.include_frame, text="Save Filter", command=self.filter_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
         filter_button.pack(pady=(0, 5), fill='x')
 
-        clear_filters_button = ctk.CTkButton(button_frame, text="Clear Filters", 
+        clear_filters_button = ctk.CTkButton(self.include_frame, text="Clear Filters",
                                            command=self.clear_filters)
         clear_filters_button.pack(pady=(0, 5), fill='x')
 
-        # Export button currently commented out, but works
-        '''export_button = ctk.CTkButton(button_frame, text="Export List", 
-                                 command=self.export_filtered_list,
-                                 fg_color="green")
-        export_button.pack(pady=(0, 5), fill='x')'''
-
-        show_all_button = ctk.CTkButton(button_frame, text="Reset to Default", 
+        show_all_button = ctk.CTkButton(self.include_frame, text="Reset to Default",
                                        command=self.show_all_games, fg_color="red")
         show_all_button.pack(fill='x')
+
+        # Exclude Games frame
+        self.exclude_frame = ctk.CTkFrame(sidebar_frame)
+
+        # Exclude Games buttons
+        exclude_button = ctk.CTkButton(self.exclude_frame, text="Exclude Games",
+                                           command=self.exclude_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
+        exclude_button.pack(pady=(0, 5), fill='x')
+
+        clear_filters_button = ctk.CTkButton(self.exclude_frame, text="Clear Filters",
+                                           command=self.clear_filters)
+        clear_filters_button.pack(pady=(0, 5), fill='x')
+
+        reset_exclude_button = ctk.CTkButton(self.exclude_frame, text="Reset Exclude to Default",
+                                              command=self.reset_exclude_to_default, fg_color="red")
+        reset_exclude_button.pack(pady=(0, 5), fill='x')
+
+        # Initially show the Include Games frame
+        self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
 
         # Create right side games list
         # Add a search entry at the top
         search_frame = ctk.CTkFrame(right_frame)
         search_frame.pack(fill='x', padx=5, pady=5)
-        
+
         search_label = ctk.CTkLabel(search_frame, text="Search Games:")
         search_label.pack(side='left', padx=5)
-        
+
         self.search_var = tk.StringVar()
         self.search_var.trace('w', lambda *args: self.update_filtered_list())
         search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var)
@@ -2106,22 +2130,32 @@ class FilterGames:
         # Initial population of the games list
         self.update_filtered_list()
 
+    def toggle_mode(self):
+        if self.toggle_var.get() == "Switch to Exclude Options":
+            self.toggle_var.set("Switch to Include Options")
+            self.include_frame.pack_forget()
+            self.exclude_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+        else:
+            self.toggle_var.set("Switch to Exclude Options")
+            self.exclude_frame.pack_forget()
+            self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
     def clear_filters(self):
         """Reset all filters to their default states"""
         # Reset control type checkboxes
         for var in self.control_type_vars.values():
             var.set(0)
-            
+
         # Reset dropdowns
         self.buttons_var.set("Select number of buttons")
         self.players_var.set("Select number of players")
-        
+
         # Reset vertical checkbox
         self.vertical_checkbox_var.set(0)
-        
+
         # Clear search box
         self.search_var.set("")
-        
+
         # Update the filtered list
         self.update_filtered_list()
         self.status_bar.configure(text="All filters cleared")
@@ -2130,22 +2164,22 @@ class FilterGames:
         try:
             # Clear current display
             self.games_text.delete('1.0', 'end')
-            
+
             # Get search term
             search_term = self.search_var.get().lower()
-            
+
             # Get current filter settings
             selected_ctrltypes = self.get_selected_control_types()
             selected_buttons = self.buttons_var.get().strip()
             selected_players = self.players_var.get().strip()
             vertical_filter = self.vertical_checkbox_var.get()
-            
+
             # Update status to show we're working
             self.status_bar.configure(text="Updating list...")
-            
+
             # Get ROMs in build
             roms_in_build = self.scan_collections_for_roms()
-            
+
             # Read CSV and apply filters
             self.filtered_games = []  # Store filtered games for export
             games_info = []
@@ -2155,7 +2189,7 @@ class FilterGames:
                     rom_name = row.get('ROM Name', '').strip()
                     if rom_name not in roms_in_build:
                         continue
-                        
+
                     description = row.get('Description', '').strip()
                     joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
                     vertical = row.get('Vertical')
@@ -2197,16 +2231,16 @@ class FilterGames:
                         display_string = f"{rom_name}\n"
 
                     games_info.append(display_string)
-            
+
            # Sort and display results
             games_info.sort()
             self.games_text.insert('1.0', f"Matching Games: {len(games_info)}\n\n")
             for game in games_info:
                 self.games_text.insert('end', game)
-            
+
             # Update status bar with count
             self.status_bar.configure(text=f"Found {len(games_info)} matching games")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error updating filtered list: {str(e)}")
             self.status_bar.configure(text="Error updating list")
@@ -2225,7 +2259,7 @@ class FilterGames:
                 initialdir=os.getcwd(),
                 initialfile='filtered_games.csv'
             )
-            
+
             if not file_path:  # User cancelled
                 return
 
@@ -2304,10 +2338,10 @@ class FilterGames:
         for collection_name in os.listdir(collections_dir):
             if "settings" in collection_name.lower() or "zzz" in collection_name.lower():
                 continue
-            
+
             collection_path = os.path.join(collections_dir, collection_name)
             settings_path = os.path.join(collection_path, 'settings.conf')
-            
+
             if os.path.isdir(collection_path) and os.path.isfile(settings_path):
                 rom_folder = None
                 extensions = []
@@ -2342,7 +2376,7 @@ class FilterGames:
         try:
             with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
                 reader = csv.DictReader(csv_file)
-                with open(self.output_file, 'w', encoding='utf-8') as f:
+                with open(self.include_output_file, 'w', encoding='utf-8') as f:
                     game_count = 0
                     selected_ctrltypes = self.get_selected_control_types()
                     selected_players = self.players_var.get().strip()  # New player selection
@@ -2393,12 +2427,98 @@ class FilterGames:
         except Exception as e:
             messagebox.showerror("Error", f"Error opening CSV file: {e}")
 
+    def exclude_games_from_csv(self):
+        self.status_bar.configure(text="Excluding games...")
+        self.check_output_dir()
+        roms_in_build = self.scan_collections_for_roms()
+
+        try:
+            # Read existing exclude file to check for duplicates
+            existing_excludes = set()
+            if os.path.exists(self.exclude_output_file):
+                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = set(line.strip() for line in f if line.strip())
+
+            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
+                reader = csv.DictReader(csv_file)
+                with open(self.exclude_output_file, 'a', encoding='utf-8') as f:
+                    game_count = 0
+                    already_excluded_count = 0
+                    selected_ctrltypes = self.get_selected_control_types()
+                    selected_players = self.players_var.get().strip()  # New player selection
+                    selected_buttons = self.buttons_var.get().strip()
+                    vertical_filter = self.vertical_checkbox_var.get()
+
+                    for row in reader:
+                        joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
+                        rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
+                        vertical = row.get('Vertical')
+                        buttons = row.get('Buttons')
+                        players = row.get('numberPlayers')  # Get the Players column
+
+                        buttons = int(buttons) if buttons.isdigit() else float('inf')
+                        players = int(players) if players.isdigit() else float('inf')
+
+                        # Check if the ROM is in the current build
+                        if rom_name not in roms_in_build:
+                            continue
+
+                        # Apply filters
+                        if vertical_filter == 1 and (not vertical or vertical.strip().upper() != "VERTICAL"):
+                            continue
+                        if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
+                            continue
+                        if selected_players != "Select number of players" and players != int(selected_players):
+                            continue
+                        if selected_ctrltypes:
+                            for selected_ctrltype in selected_ctrltypes:
+                                mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
+                                if self.control_type_exists(joystick_input, mapped_ctrltype):
+                                    if rom_name not in existing_excludes:
+                                        f.write(f"{rom_name}\n")
+                                        game_count += 1
+                                    else:
+                                        already_excluded_count += 1
+                                    break
+                        else:
+                            if rom_name not in existing_excludes:
+                                f.write(f"{rom_name}\n")
+                                game_count += 1
+                            else:
+                                already_excluded_count += 1
+
+                    # Feedback for users
+                    if game_count == 0 and already_excluded_count == 0:
+                        messagebox.showinfo("No Games Found", "No games matched the selected filters.")
+                        self.status_bar.configure(text="No games matched filters")
+                    else:
+                        feedback_message = f"Excluded {game_count} games from filter."
+                        if already_excluded_count > 0:
+                            feedback_message += f" {already_excluded_count} games were already excluded."
+                        self.status_bar.configure(text=feedback_message)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error opening CSV file: {e}")
+
+    def reset_exclude_to_default(self):
+        self.status_bar.configure(text="Resetting exclude to default...")
+        try:
+            if os.path.exists(self.exclude_output_file):
+                os.remove(self.exclude_output_file)
+                self.status_bar.configure(text=f"Exclude file deleted successfully.")
+            else:
+                self.status_bar.configure(text=f"Exclude file does not exist.")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error resetting exclude to default: {e}")
+            self.status_bar.configure(text=f"Error resetting exclude to default: {e}")
+
     def show_all_games(self):
         self.status_bar.configure(text="Resetting to default...")
         try:
             source = "autochanger/include.txt"  # Define the correct source path
             destination = "collections/Arcades/include.txt"  # Define the correct destination path
-            
+
             # Check if the source file exists
             if os.path.exists(source):
                 # Copy the file from source to destination
@@ -2414,7 +2534,7 @@ class FilterGames:
                 else:
                     print("Info", f"No file to delete. '{destination}' does not exist.")
                     self.status_bar.configure(text=f"No include.txt file to delete. {destination} does not exist.")
-        
+
         except Exception as e:
             print("Error", f"Failed to process files: {str(e)}")
             self.status_bar.configure(text=f"Failed to process files: {str(e)}")
