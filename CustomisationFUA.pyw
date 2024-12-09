@@ -2180,6 +2180,12 @@ class FilterGames:
             # Get ROMs in build
             roms_in_build = self.scan_collections_for_roms()
 
+            # Read existing exclude file to check for duplicates
+            existing_excludes = set()
+            if os.path.exists(self.exclude_output_file):
+                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = set(line.strip() for line in f if line.strip())
+
             # Read CSV and apply filters
             self.filtered_games = []  # Store filtered games for export
             games_info = []
@@ -2199,6 +2205,10 @@ class FilterGames:
                     # Convert buttons and players to integers for comparison
                     buttons = int(buttons) if buttons.isdigit() else float('inf')
                     players = int(players) if players.isdigit() else float('inf')
+
+                    # Check if the ROM is in the exclude list
+                    if rom_name in existing_excludes:
+                        continue
 
                     # Apply filters
                     if vertical_filter and (not vertical or vertical.strip().upper() != "VERTICAL"):
@@ -2232,7 +2242,7 @@ class FilterGames:
 
                     games_info.append(display_string)
 
-           # Sort and display results
+            # Sort and display results
             games_info.sort()
             self.games_text.insert('1.0', f"Matching Games: {len(games_info)}\n\n")
             for game in games_info:
@@ -2244,6 +2254,7 @@ class FilterGames:
         except Exception as e:
             messagebox.showerror("Error", f"Error updating filtered list: {str(e)}")
             self.status_bar.configure(text="Error updating list")
+
 
     def export_filtered_list(self):
         """Export the current filtered list to a CSV file"""
@@ -2374,6 +2385,12 @@ class FilterGames:
         roms_in_build = self.scan_collections_for_roms()
 
         try:
+            # Read existing exclude file to check for duplicates
+            existing_excludes = set()
+            if os.path.exists(self.exclude_output_file):
+                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = set(line.strip() for line in f if line.strip())
+
             with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
                 reader = csv.DictReader(csv_file)
                 with open(self.include_output_file, 'w', encoding='utf-8') as f:
@@ -2395,6 +2412,10 @@ class FilterGames:
 
                         # Check if the ROM is in the current build
                         if rom_name not in roms_in_build:
+                            continue
+
+                        # Check if the ROM is in the exclude list
+                        if rom_name in existing_excludes:
                             continue
 
                         # Apply filters
@@ -2420,12 +2441,11 @@ class FilterGames:
                         messagebox.showinfo("No Games Found", "No games matched the selected filters.")
                         self.status_bar.configure(text="No games matched filters")
                     else:
-                        ##Removed message box. status bar no outputs results without having to show, and manually press ok.]
-                        #messagebox.showinfo("Success", f"{game_count} games added to {self.output_file}")
                         self.status_bar.configure(text=f"Saved {game_count} games to filter")
 
         except Exception as e:
             messagebox.showerror("Error", f"Error opening CSV file: {e}")
+
 
     def exclude_games_from_csv(self):
         self.status_bar.configure(text="Excluding games...")
