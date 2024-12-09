@@ -4514,11 +4514,10 @@ class ViewRoms:
         self.list_font = ("Arial", 14)  # Changed from 12 to 14
         self.label_font = ("Arial", 12)   # Added for labels
         self.button_font = ("Arial", 12)  # Added for buttons
-        
-        self.rom_descriptions = {}  # Make sure this is initialized
 
+        self.rom_descriptions = {}  # Make sure this is initialized
         self.parent_tab = parent_tab
-        
+
         # Main container
         main_container = ctk.CTkFrame(self.parent_tab)
         main_container.pack(fill='both', expand=True, padx=10, pady=10)
@@ -4526,11 +4525,11 @@ class ViewRoms:
         # Filter controls frame
         filter_frame = ctk.CTkFrame(main_container)
         filter_frame.pack(fill='x', padx=5, pady=5)
-        
+
         # Collection dropdown with custom font
         collection_label = ctk.CTkLabel(filter_frame, text="Collection:", font=self.label_font)
         collection_label.pack(side='left', padx=5)
-        
+
         self.collection_var = tk.StringVar(value="All Collections")
         self.collection_dropdown = ctk.CTkOptionMenu(
             filter_frame,
@@ -4544,10 +4543,10 @@ class ViewRoms:
         # Search frame with custom fonts
         search_frame = ctk.CTkFrame(main_container)
         search_frame.pack(fill='x', padx=5, pady=5)
-        
+
         search_label = ctk.CTkLabel(search_frame, text="Search ROMs:", font=self.label_font)
         search_label.pack(side='left', padx=5)
-        
+
         self.search_var = tk.StringVar()
         self.search_var.trace('w', self.filter_roms)
         search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var, font=self.button_font)
@@ -4560,9 +4559,9 @@ class ViewRoms:
         # Sort toggle with custom font
         self.sort_var = tk.StringVar(value="Name")
         self.sort_toggle = ctk.CTkSegmentedButton(
-            button_frame, 
-            values=["Name", "Collection"], 
-            variable=self.sort_var, 
+            button_frame,
+            values=["Name", "Collection"],
+            variable=self.sort_var,
             command=self.handle_sort_change,
             font=self.button_font  # Added font for toggle
         )
@@ -4570,13 +4569,23 @@ class ViewRoms:
 
         # Clear filters button with custom font
         clear_button = ctk.CTkButton(
-            button_frame, 
-            text="Clear All", 
-            command=self.clear_filters, 
+            button_frame,
+            text="Clear All",
+            command=self.clear_filters,
             width=70,
             font=self.button_font  # Added font for button
         )
         clear_button.pack(side='right', padx=5)
+
+        # Move Artwork button with custom font
+        move_artwork_button = ctk.CTkButton(
+            button_frame,
+            text="Move Artwork",
+            command=self.move_artwork,
+            width=100,
+            font=self.button_font  # Added font for button
+        )
+        move_artwork_button.pack(side='right', padx=5)
 
         # ROM list frame
         list_frame = ctk.CTkFrame(main_container)
@@ -4584,15 +4593,15 @@ class ViewRoms:
 
         # ROM listbox with custom font
         self.rom_listbox = ctk.CTkTextbox(
-            list_frame, 
+            list_frame,
             font=self.list_font  # Using the custom list font
         )
         self.rom_listbox.pack(fill='both', expand=True, side='left')
 
         # Status bar with custom font
         self.status_bar = ctk.CTkLabel(
-            main_container, 
-            text="Ready", 
+            main_container,
+            text="Ready",
             anchor='w',
             font=self.label_font  # Added font for status bar
         )
@@ -4602,7 +4611,7 @@ class ViewRoms:
         self.rom_list = []
         self.rom_collections = {}
         self.rom_descriptions = {}
-        
+
         # Populate ROM list and collection dropdown
         self.load_initial_data()
 
@@ -4619,21 +4628,21 @@ class ViewRoms:
                     description = row.get('Description', '').strip()
                     if rom_name and description:  # Remove the self.rom_list check
                         self.rom_descriptions[rom_name] = description
-            
+
             # Get ROM list and collections
             self.rom_list, self.rom_collections = self.scan_collections_for_roms()
-            
+
             # Get unique collections and sort them
             collections = sorted(set(self.rom_collections.values()))
-            
+
             # Update dropdown values
             self.collection_dropdown.configure(
                 values=["All Collections"] + collections
             )
-            
+
             # Populate initial ROM list
             self.populate_rom_list()
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error loading initial data: {str(e)}")
             self.status_bar.configure(text="Error loading initial data")
@@ -4653,34 +4662,33 @@ class ViewRoms:
         # Return the path to the bundled CSV
         return os.path.join(base_path, 'meta', 'hyperlist', 'META.csv')
 
-
     def scan_collections_for_roms(self, excluded_collections=None, excluded_roms=None):
         root_dir = os.getcwd()
         collections_dir = os.path.join(root_dir, 'collections')
         rom_list = []
         rom_collections = {}
         duplicate_roms = {}
-        
+
         # Default exclude lists
         default_collection_excludes = [
-            "*Collection*", "*zzzRecord*", "*zzzSettings*", "*zzzShutdown*", 
+            "*Collection*", "*zzzRecord*", "*zzzSettings*", "*zzzShutdown*",
             "*PCGameLauncher*", "*FBNeo*", "*SETTINGS AURA*", "*SETTINGS BEZELS*",
             "*MAME*", "*Settings*"
         ]
-        
+
         default_rom_excludes = ["*cmd*"]
-        
+
         if excluded_collections is None:
             excluded_collections = []
         excluded_collections.extend(default_collection_excludes)
-        
+
         if excluded_roms is None:
             excluded_roms = []
         excluded_roms.extend(default_rom_excludes)
 
         def matches_exclude_pattern(name, patterns):
             return any(
-                fnmatch.fnmatch(name.lower(), pattern.lower()) 
+                fnmatch.fnmatch(name.lower(), pattern.lower())
                 for pattern in patterns
             )
 
@@ -4692,10 +4700,10 @@ class ViewRoms:
         for collection_name in os.listdir(collections_dir):
             if matches_exclude_pattern(collection_name, excluded_collections):
                 continue
-            
+
             collection_path = os.path.join(collections_dir, collection_name)
             settings_path = os.path.join(collection_path, 'settings.conf')
-            
+
             if os.path.isdir(collection_path) and os.path.isfile(settings_path):
                 rom_folder = None
                 extensions = []
@@ -4714,33 +4722,33 @@ class ViewRoms:
 
                 if not rom_folder or not os.path.isdir(rom_folder):
                     rom_folder = os.path.join(collection_path, 'roms')
-                
+
                 if rom_folder and extensions and os.path.isdir(rom_folder):
                     for file in os.listdir(rom_folder):
                         file_path = os.path.join(rom_folder, file)
                         if os.path.isfile(file_path) and any(file.endswith(ext) for ext in extensions):
                             filename_without_extension = os.path.splitext(file)[0]
-                            
+
                             if matches_exclude_pattern(filename_without_extension, excluded_roms):
                                 continue
-                            
+
                             # Initialize rom entry if it doesn't exist
                             if filename_without_extension not in rom_collections:
                                 rom_collections[filename_without_extension] = {
                                     'collections': set(),
                                     'paths': []
                                 }
-                            
+
                             # Add this collection and path
                             rom_collections[filename_without_extension]['collections'].add(collection_name)
                             if file_path not in rom_collections[filename_without_extension]['paths']:
                                 rom_collections[filename_without_extension]['paths'].append(file_path)
-                            
+
                             # Add collection name to ROM's display name
                             collection_with_rom = f"{filename_without_extension} ({collection_name})"
                             if collection_with_rom not in rom_list:
                                 rom_list.append(collection_with_rom)
-                            
+
                             # Track duplicates for debugging
                             if len(rom_collections[filename_without_extension]['collections']) > 1:
                                 duplicate_roms[filename_without_extension] = \
@@ -4759,7 +4767,6 @@ class ViewRoms:
         }
 
         return rom_list, simple_rom_collections
-
 
     def handle_sort_change(self, _):
         """Handle sorting toggle change"""
@@ -4790,33 +4797,33 @@ class ViewRoms:
         try:
             # Clear previous list
             self.rom_listbox.delete('1.0', 'end')
-            
+
             # Get filter values
             search_term = self.search_var.get().lower()
             selected_collection = self.collection_var.get()
-            
+
             # Filter ROMs
             filtered_roms = []
             for rom in self.rom_list:
                 # Split ROM name and collection info
                 base_rom_name = rom.split(" (")[0]
                 collection_info = rom.split("(")[-1].strip(")")
-                
+
                 # Strict collection filtering
                 if selected_collection != "All Collections":
                     # Exact collection match only
                     if selected_collection != collection_info:
                         continue
-                
+
                 # Get description if available and create display text
                 description = self.rom_descriptions.get(base_rom_name, '')
                 display_text = f"{description if description else base_rom_name} ({collection_info})"
-                
+
                 # Check search term against both description and ROM name
-                if (search_term in display_text.lower() or 
+                if (search_term in display_text.lower() or
                     search_term in base_rom_name.lower()):
                     filtered_roms.append(display_text)
-            
+
             # Sort filtered ROMs based on toggle
             if self.sort_var.get() == "Name":
                 filtered_roms = sorted(filtered_roms)
@@ -4830,13 +4837,194 @@ class ViewRoms:
             self.rom_listbox.insert('1.0', f"Matching ROMs: {len(filtered_roms)}\n\n")
             for rom in filtered_roms:
                 self.rom_listbox.insert('end', f"{rom}\n")
-            
+
             # Update status
             self.status_bar.configure(text=f"Found {len(filtered_roms)} matching ROMs")
-            
+
         except Exception as e:
             messagebox.showerror("Error", f"Error filtering ROM list: {str(e)}")
             self.status_bar.configure(text="Error filtering ROMs")
+
+    def move_artwork(self):
+        """Move artwork files based on the selected collection"""
+        try:
+            # MODIFICATION: Define a list of excluded folders
+            EXCLUDED_FOLDERS = [
+                'desktop', '.ds_store', 'thumbs.db', 'system', 'temp', 'cache', 'metadata', '.thumbnail', '.cache',
+                'ctrltype', 'numberplayers', 'year','manufacturer',
+                'playlist', 'playlist2', 'playlist3', 'playlist4', 'playlist5', 'playlist6', 'playlist7', 'playlist8', 'playlist9'
+            ]
+
+            # Get the selected collection
+            selected_collection = self.collection_var.get()
+            if selected_collection == "All Collections":
+                messagebox.showerror("Error", "Please select a specific collection.")
+                return
+
+            root_dir = os.getcwd()
+            collections_dir = os.path.join(root_dir, 'collections')
+            collection_path = os.path.join(collections_dir, selected_collection)
+            settings_path = os.path.join(collection_path, 'settings.conf')
+
+            # Default to 'roms' folder if no specific path found
+            rom_folder = os.path.join(collection_path, 'roms')
+
+            # Try to read list.path from settings.conf
+            if os.path.isfile(settings_path):
+                with open(settings_path, 'r') as settings_file:
+                    for line in settings_file:
+                        line = line.strip()
+                        if line.startswith("list.path"):
+                            rom_folder = line.split("=", 1)[1].strip()
+                            rom_folder = os.path.join(root_dir, rom_folder)
+                            break
+
+            # Validate ROM folder
+            if not os.path.isdir(rom_folder):
+                messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
+                return
+
+            # Source path for medium artwork (with collection name)
+            source_path = os.path.join(collections_dir, selected_collection, 'medium_artwork')
+            if not os.path.exists(source_path):
+                messagebox.showerror("Error", f"Medium artwork folder not found: {source_path}")
+                return
+
+            # Get list of ROM names (without extension)
+            rom_names = set(os.path.splitext(f)[0].lower() for f in os.listdir(rom_folder) if os.path.isfile(os.path.join(rom_folder, f)))
+
+            # Find artwork files for ROMs not in the collection
+            missing_rom_artwork = set()
+            for subfolder in os.listdir(source_path):
+                # MODIFICATION: Skip excluded folders
+                if any(excluded.lower() in subfolder.lower() for excluded in EXCLUDED_FOLDERS):
+                    continue
+
+                subfolder_path = os.path.join(source_path, subfolder)
+                if os.path.isdir(subfolder_path):
+                    for file in os.listdir(subfolder_path):
+                        file_base_name = os.path.splitext(file)[0].lower()
+                        # Additional check to ignore excluded folders/files
+                        if (file_base_name.lower() not in rom_names and
+                            file_base_name.lower() != 'default' and
+                            not any(excluded.lower() in file_base_name.lower() for excluded in EXCLUDED_FOLDERS)):
+                            # Check if the ROM file exists in the rom_folder
+                            rom_file_path = os.path.join(rom_folder, file_base_name)
+                            if not os.path.exists(rom_file_path):
+                                missing_rom_artwork.add(file_base_name)
+
+            # If no artwork to move, exit
+            if not missing_rom_artwork:
+                messagebox.showinfo("No Artwork", "No artwork found for missing ROMs.")
+                return
+
+            # Custom confirmation dialog with scrollable list
+            def create_scrollable_confirmation():
+                confirm_window = tk.Toplevel()
+                confirm_window.title(f"Confirm Artwork Move - {selected_collection}")
+                confirm_window.geometry("400x500")
+                confirm_window.configure(bg='#2c2c2c')
+
+                # Center the window on the screen
+                screen_width = confirm_window.winfo_screenwidth()
+                screen_height = confirm_window.winfo_screenheight()
+                window_width = 400
+                window_height = 500
+                x = (screen_width // 2) - (window_width // 2)
+                y = (screen_height // 2) - (window_height // 2)
+                confirm_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+                # Label with improved styling
+                label = ctk.CTkLabel(
+                    confirm_window,
+                    text=f"Are you sure you want to move artwork for these {len(missing_rom_artwork)} missing ROMs in the '{selected_collection}' collection?",
+                    wraplength=380,
+                    text_color='white',
+                    font=('Helvetica', 14)
+                )
+                label.pack(pady=10, padx=10)
+
+                # Scrollable text widget with dark theme
+                text_frame = ctk.CTkFrame(confirm_window, fg_color='#3c3c3c')
+                text_frame.pack(expand=True, fill='both', padx=10, pady=10)
+
+                text_widget = ctk.CTkTextbox(
+                    text_frame,
+                    height=300,
+                    text_color='white',
+                    fg_color='#3c3c3c',
+                )
+                text_widget.pack(expand=True, fill='both')
+
+                # Sort and insert ROM names
+                for rom in sorted(missing_rom_artwork):
+                    text_widget.insert('end', f"{rom}\n")
+                text_widget.configure(state='disabled')  # Make read-only
+
+                # Buttons frame with improved styling
+                button_frame = ctk.CTkFrame(confirm_window, fg_color='#2c2c2c')
+                button_frame.pack(pady=10)
+
+                def on_confirm():
+                    confirm_window.destroy()
+                    proceed_with_move()
+
+                confirm_button = ctk.CTkButton(
+                    button_frame,
+                    text="Confirm",
+                    command=on_confirm,
+                    fg_color='#4CAF50',
+                    hover_color='#45a049'
+                )
+                confirm_button.pack(side='left', padx=5)
+
+                cancel_button = ctk.CTkButton(
+                    button_frame,
+                    text="Cancel",
+                    command=confirm_window.destroy,
+                    fg_color='#f44336',
+                    hover_color='#da190b'
+                )
+                cancel_button.pack(side='left', padx=5)
+
+                confirm_window.grab_set()  # Make the window modal
+
+            def proceed_with_move():
+                # Move artwork logic
+                moved_artwork_path = os.path.join(collection_path, 'removed_artwork')
+                if not os.path.exists(moved_artwork_path):
+                    os.makedirs(moved_artwork_path)
+
+                for subfolder in os.listdir(source_path):
+                    # MODIFICATION: Skip excluded folders during move
+                    if any(excluded.lower() in subfolder.lower() for excluded in EXCLUDED_FOLDERS):
+                        continue
+
+                    subfolder_path = os.path.join(source_path, subfolder)
+                    if os.path.isdir(subfolder_path):
+                        dest_subfolder = os.path.join(moved_artwork_path, subfolder)
+                        if not os.path.exists(dest_subfolder):
+                            os.makedirs(dest_subfolder)
+
+                        for file in os.listdir(subfolder_path):
+                            file_base_name = os.path.splitext(file)[0].lower()
+                            file_path = os.path.join(subfolder_path, file)
+
+                            if (file_base_name.lower() not in rom_names and
+                                file_base_name.lower() != 'default' and
+                                not any(excluded.lower() in file_base_name.lower() for excluded in EXCLUDED_FOLDERS)):
+                                shutil.move(file_path, os.path.join(dest_subfolder, file))
+
+                self.status_bar.configure(text="Artwork for missing ROMs moved successfully")
+
+            # Show custom confirmation dialog
+            create_scrollable_confirmation()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error moving artwork: {str(e)}")
+            self.status_bar.configure(text="Error moving artwork")
+
+
 
 # Main application driver
 if __name__ == "__main__":
