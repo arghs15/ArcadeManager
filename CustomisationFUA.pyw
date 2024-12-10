@@ -133,19 +133,25 @@ class FilterGamesApp:
             self.filter_games = FilterGames(self.filter_games_tab)
 
         # Controls and View Games tabs - special handling
-        # These tabs are ONLY added if playlist_location is 'U'
-        if self.playlist_location == 'U':
-            # Check configuration visibility for Controls tab
-            if self.config_manager.determine_tab_visibility('controls'):
-                self.controls_tab = self.tabview.add("Controls")
-                self.controls = Controls(self.controls_tab)
-                print(f"Adding Controls Tab")
+        print(f"Playlist Location: {self.playlist_location}")
 
-            # Check configuration visibility for View Games tab
-            if self.config_manager.determine_tab_visibility('view_games'):
-                self.view_games_tab = self.tabview.add("All Games")
-                self.view_games = ViewRoms(self.view_games_tab)
-                print(f"Adding All Games Tab")
+        # Check configuration visibility for Controls tab
+        controls_visibility = self.config_manager.get_setting('Tabs', 'controls_tab', 'auto')
+        if controls_visibility == 'always' or (controls_visibility == 'auto' and self.playlist_location == 'U'):
+            self.controls_tab = self.tabview.add("Controls")
+            self.controls = Controls(self.controls_tab)
+            print(f"Adding Controls Tab")
+        else:
+            print(f"Controls Tab is not visible")
+
+        # Check configuration visibility for View Games tab
+        view_games_visibility = self.config_manager.get_setting('Tabs', 'view_games_tab', 'auto')
+        if view_games_visibility == 'always' or (view_games_visibility == 'auto' and self.playlist_location == 'U'):
+            self.view_games_tab = self.tabview.add("All Games")
+            self.view_games = ViewRoms(self.view_games_tab, self.config_manager)
+            print(f"Adding All Games Tab")
+        else:
+            print(f"View Games Tab is not visible")
 
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -265,6 +271,18 @@ class ConfigManager:
                 'default': '',
                 'description': 'Comma-separated list of items to exclude',
                 'type': List[str],
+                'hidden': True
+            },
+            'show_move_artwork_button': {
+                'default': 'False',
+                'description': 'Show Move Artwork button',
+                'type': bool,
+                'hidden': True
+            },
+            'show_move_roms_button': {
+                'default': 'False',
+                'description': 'Show Move ROMs button',
+                'type': bool,
                 'hidden': True
             }
         },
@@ -547,7 +565,10 @@ class ConfigManager:
         
         return default
 
-
+    def setting_exists(self, section, key):
+        """Check if a setting exists in the configuration."""
+        return section in self.config and key in self.config[section]
+        
     def _log(self, message, section=None):
         """Centralized logging method."""
         if self.debug:
@@ -4529,12 +4550,12 @@ class AdvancedConfigs:
             self.run_script_threaded(script_path)
                          
 class ViewRoms:
-    def __init__(self, parent_tab):
+    def __init__(self, parent_tab, config_manager):
         # Define font settings at the top of the class
         self.list_font = ("Arial", 14)  # Changed from 12 to 14
         self.label_font = ("Arial", 12)   # Added for labels
         self.button_font = ("Arial", 12)  # Added for buttons
-
+        self.config_manager = config_manager
         self.rom_descriptions = {}  # Make sure this is initialized
         self.parent_tab = parent_tab
 
@@ -4597,15 +4618,23 @@ class ViewRoms:
         )
         clear_button.pack(side='right', padx=5)
 
-        # Move Artwork button with custom font
-        move_artwork_button = ctk.CTkButton(
-            button_frame,
-            text="Move Artwork",
-            command=self.move_artwork,
-            width=100,
-            font=self.button_font  # Added font for button
-        )
-        move_artwork_button.pack(side='right', padx=5)
+        # Create buttons and store them in a dictionary
+        self.buttons = {
+            'show_move_artwork_button': ctk.CTkButton(
+                button_frame,
+                text="Move Artwork",
+                command=self.move_artwork,
+                width=100,
+                font=self.button_font
+            ),
+            'show_move_roms_button': ctk.CTkButton(
+                button_frame,
+                text="Move ROMs",
+                command=self.move_roms,
+                width=100,
+                font=self.button_font
+            )
+        }
 
         # ROM list frame
         list_frame = ctk.CTkFrame(main_container)
@@ -4634,6 +4663,44 @@ class ViewRoms:
 
         # Populate ROM list and collection dropdown
         self.load_initial_data()
+
+        # Pack buttons based on visibility setting
+        self.update_button_visibility()
+        #self.toggle_button_visibility(show_move_artwork=False, show_move_roms=True)
+
+    def update_button_visibility(self):
+        """Update the visibility of the buttons based on the configuration."""
+        for setting_key, button in self.buttons.items():
+            if setting_key == 'show_move_artwork_button':
+                button.pack(side='right', padx=5)  # Always show the Move Artwork button
+            else:
+                show_button = self.config_manager.setting_exists('Settings', setting_key) and \
+                              self.config_manager.get_setting('Settings', setting_key, False)
+                if show_button:
+                    button.pack(side='right', padx=5)
+                else:
+                    button.pack_forget()
+
+    '''
+    THIS IS AN EXAMPLE OF HIDING ALL THE BUTTONS. ATM IM ALWAYS SHOWING THE ARTOWKR BUTTON
+    def update_button_visibility(self):
+        """Update the visibility of the buttons based on the configuration."""
+        for setting_key, button in self.buttons.items():
+            show_button = self.config_manager.setting_exists('Settings', setting_key) and \
+                          self.config_manager.get_setting('Settings', setting_key, False)
+            if show_button:
+                button.pack(side='right', padx=5)
+            else:
+                button.pack_forget()
+    '''         
+       
+    def toggle_button_visibility(self, **kwargs):
+        """Toggle the visibility of the buttons internally."""
+        for setting_key, button in self.buttons.items():
+            if setting_key in kwargs:
+                self.config_manager.config.set('Settings', setting_key, str(kwargs[setting_key]))
+        self.config_manager.save_config()
+        self.update_button_visibility()
 
     def load_initial_data(self):
         """Load initial ROM data and populate collection dropdown"""
@@ -4716,6 +4783,11 @@ class ViewRoms:
             # Select the most specific (longest) collection name
             return sorted(collections, key=len, reverse=True)[0]
 
+        def resolve_path(path, variables):
+            for var, value in variables.items():
+                path = path.replace(f"%{var}%", value)
+            return path
+
         # First pass: gather all ROMs and their locations
         for collection_name in os.listdir(collections_dir):
             if matches_exclude_pattern(collection_name, excluded_collections):
@@ -4727,6 +4799,10 @@ class ViewRoms:
             if os.path.isdir(collection_path) and os.path.isfile(settings_path):
                 rom_folder = None
                 extensions = []
+                variables = {
+                    "BASE_ITEM_PATH": collections_dir,
+                    "ITEM_COLLECTION_NAME": collection_name
+                }
 
                 with open(settings_path, 'r') as settings_file:
                     for line in settings_file:
@@ -4735,7 +4811,7 @@ class ViewRoms:
                             continue
                         if line.startswith("list.path"):
                             rom_folder = line.split("=", 1)[1].strip()
-                            rom_folder = os.path.join(root_dir, rom_folder)
+                            rom_folder = resolve_path(rom_folder, variables)
                         elif line.startswith("list.extensions"):
                             ext_line = line.split("=", 1)[1].strip()
                             extensions = [ext.strip() for ext in ext_line.split(",")]
@@ -4787,6 +4863,7 @@ class ViewRoms:
         }
 
         return rom_list, simple_rom_collections
+
 
     def handle_sort_change(self, _):
         """Handle sorting toggle change"""
@@ -4888,6 +4965,10 @@ class ViewRoms:
 
             # Default to 'roms' folder if no specific path found
             rom_folder = os.path.join(collection_path, 'roms')
+            variables = {
+                "BASE_ITEM_PATH": collections_dir,
+                "ITEM_COLLECTION_NAME": selected_collection
+            }
 
             # Try to read list.path from settings.conf
             if os.path.isfile(settings_path):
@@ -4896,7 +4977,7 @@ class ViewRoms:
                         line = line.strip()
                         if line.startswith("list.path"):
                             rom_folder = line.split("=", 1)[1].strip()
-                            rom_folder = os.path.join(root_dir, rom_folder)
+                            rom_folder = self.resolve_path(rom_folder, variables)
                             break
 
             # Validate ROM folder
@@ -5011,7 +5092,7 @@ class ViewRoms:
 
             def proceed_with_move():
                 # Move artwork logic
-                moved_artwork_path = os.path.join(collection_path, 'removed_artwork')
+                moved_artwork_path = os.path.join(collection_path, 'medium_artwork_REMOVED')
                 if not os.path.exists(moved_artwork_path):
                     os.makedirs(moved_artwork_path)
 
@@ -5045,6 +5126,260 @@ class ViewRoms:
             self.status_bar.configure(text="Error moving artwork")
 
 
+    def move_roms(self):
+        """Move ROMs based on a list from a text file"""
+        try:
+            # Get the selected collection
+            selected_collection = self.collection_var.get()
+            if selected_collection == "All Collections":
+                messagebox.showerror("Error", "Please select a specific collection.")
+                return
+
+            # Prompt the user to select the text file containing the list of ROMs
+            file_path = filedialog.askopenfilename(
+                title="Select ROM List File",
+                filetypes=[("Text Files", "*.txt")]
+            )
+            if not file_path:
+                messagebox.showinfo("Cancelled", "Operation cancelled by the user.")
+                return
+
+            # Read the list of ROM names from the text file (without extensions)
+            with open(file_path, 'r') as file:
+                rom_list = [line.strip() for line in file.readlines()]
+
+            root_dir = os.getcwd()
+            collections_dir = os.path.join(root_dir, 'collections')
+            collection_path = os.path.join(collections_dir, selected_collection)
+            settings_path = os.path.join(collection_path, 'settings.conf')
+
+            # Default to 'roms' folder if no specific path found
+            rom_folder = os.path.join(collection_path, 'roms')
+            extensions = []
+            variables = {
+                "BASE_ITEM_PATH": collections_dir,
+                "ITEM_COLLECTION_NAME": selected_collection
+            }
+
+            # Try to read list.path and list.extensions from settings.conf
+            if os.path.isfile(settings_path):
+                with open(settings_path, 'r') as settings_file:
+                    for line in settings_file:
+                        line = line.strip()
+                        if line.startswith("list.path"):
+                            rom_folder = line.split("=", 1)[1].strip()
+                            rom_folder = self.resolve_path(rom_folder, variables)
+                        elif line.startswith("list.extensions"):
+                            ext_line = line.split("=", 1)[1].strip()
+                            # Ensure extensions start with a dot and are lowercase
+                            extensions = [
+                                f".{ext.strip().lower().lstrip('.')}"
+                                for ext in ext_line.split(",")
+                            ]
+
+            # Debugging print statements
+            print(f"ROM Folder: {rom_folder}")
+            print(f"Parsed Extensions: {extensions}")
+            print(f"ROM List from file: {rom_list}")
+
+            # Validate ROM folder
+            if not os.path.isdir(rom_folder):
+                messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
+                return
+
+            # Destination folder for moved ROMs
+            moved_roms_path = os.path.join(collection_path, 'roms_REMOVED')
+            if not os.path.exists(moved_roms_path):
+                os.makedirs(moved_roms_path)
+
+            # Create a dictionary to map file names to their paths
+            file_dict = {}
+            for filename in os.listdir(rom_folder):
+                name_without_ext = os.path.splitext(filename)[0]
+                file_ext = os.path.splitext(filename)[1].lower()
+                if not extensions or file_ext in extensions:
+                    file_dict[name_without_ext] = os.path.join(rom_folder, filename)
+
+            # Move ROMs
+            moved_count = 0
+            not_found_roms = []
+            moved_roms = []
+
+            # Show loading indicator
+            loading_popup = self.show_loading_popup("Preparing to move ROMs...")
+
+            # Iterate through ROM names in the text file
+            for rom_name in rom_list:
+                if rom_name in file_dict:
+                    source_path = file_dict[rom_name]
+                    dest_path = os.path.join(moved_roms_path, os.path.basename(source_path))
+                    try:
+                        print(f"Preparing to move file: {rom_name}")
+                        moved_roms.append(rom_name)
+                    except FileNotFoundError:
+                        print(f"File not found: {source_path}")
+                        not_found_roms.append(rom_name)
+                else:
+                    not_found_roms.append(rom_name)
+
+            # Close loading indicator
+            loading_popup.destroy()
+
+            # Confirmation prompt before moving ROMs
+            if not messagebox.askyesno("Confirm Move", f"Are you sure you want to move {len(moved_roms)} ROMs to the 'roms_REMOVED' folder?"):
+                messagebox.showinfo("Cancelled", "Operation cancelled by the user.")
+                return
+
+            # Show loading indicator again
+            loading_popup = self.show_loading_popup("Moving ROMs...")
+
+            # Perform the actual move
+            for rom_name in moved_roms:
+                source_path = file_dict[rom_name]
+                dest_path = os.path.join(moved_roms_path, os.path.basename(source_path))
+                try:
+                    print(f"Moving file: {rom_name}")
+                    shutil.move(source_path, dest_path)
+                    moved_count += 1
+                except FileNotFoundError:
+                    print(f"File not found: {source_path}")
+                    not_found_roms.append(rom_name)
+
+            # Close loading indicator
+            loading_popup.destroy()
+
+            # Update status bar
+            self.status_bar.configure(text=f"Moved {moved_count} ROMs to 'roms_REMOVED' folder")
+
+            # Write the list of moved ROMs to a text file
+            moved_roms_log_path = os.path.join(moved_roms_path, 'moved_roms.txt')
+            with open(moved_roms_log_path, 'w') as log_file:
+                for rom in moved_roms:
+                    log_file.write(f"{rom}\n")
+
+            # Write the list of not found ROMs to a text file
+            not_found_roms_log_path = os.path.join(moved_roms_path, 'not_found_roms.txt')
+            with open(not_found_roms_log_path, 'w') as log_file:
+                for rom in not_found_roms:
+                    log_file.write(f"{rom}\n")
+
+            # Print ROMs that were not found (for debugging)
+            if not_found_roms:
+                print("ROMs not found:")
+                for rom in not_found_roms:
+                    print(rom)
+
+            # Show scrollable list of moved ROMs with artwork prompt
+            self.show_scrollable_list_with_prompt("ROMs Moved", moved_roms)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()  # This will print the full stack trace
+            messagebox.showerror("Error", f"Error moving ROMs: {str(e)}")
+            self.status_bar.configure(text="Error moving ROMs")
+
+    def resolve_path(self, path, variables):
+        for var, value in variables.items():
+            path = path.replace(f"%{var}%", value)
+        return path
+
+    def show_loading_popup(self, message):
+        popup = tk.Toplevel(self.parent_tab)
+        popup.title("Loading")
+        popup.geometry("200x100")
+        popup.configure(bg='#2c2c2c')
+
+        label = ctk.CTkLabel(
+            popup,
+            text=message,
+            text_color='white',
+            font=('Helvetica', 14)
+        )
+        label.pack(pady=20, padx=20)
+
+        # Center the window on the screen
+        screen_width = popup.winfo_screenwidth()
+        screen_height = popup.winfo_screenheight()
+        window_width = 200
+        window_height = 100
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        popup.transient(self.parent_tab)
+        popup.grab_set()
+        popup.update()
+        return popup
+
+    def show_scrollable_list_with_prompt(self, title, items):
+        confirm_window = tk.Toplevel()
+        confirm_window.title(title)
+        confirm_window.geometry("400x500")
+        confirm_window.configure(bg='#2c2c2c')
+
+        # Center the window on the screen
+        screen_width = confirm_window.winfo_screenwidth()
+        screen_height = confirm_window.winfo_screenheight()
+        window_width = 400
+        window_height = 500
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        confirm_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Label with improved styling
+        label = ctk.CTkLabel(
+            confirm_window,
+            text=f"{title}:",
+            wraplength=380,
+            text_color='white',
+            font=('Helvetica', 14)
+        )
+        label.pack(pady=10, padx=10)
+
+        # Scrollable text widget with dark theme
+        text_frame = ctk.CTkFrame(confirm_window, fg_color='#3c3c3c')
+        text_frame.pack(expand=True, fill='both', padx=10, pady=10)
+
+        text_widget = ctk.CTkTextbox(
+            text_frame,
+            height=300,
+            text_color='white',
+            fg_color='#3c3c3c',
+        )
+        text_widget.pack(expand=True, fill='both')
+
+        # Sort and insert ROM names
+        for rom in sorted(items):
+            text_widget.insert('end', f"{rom}\n")
+        text_widget.configure(state='disabled')  # Make read-only
+
+        # Buttons frame with improved styling
+        button_frame = ctk.CTkFrame(confirm_window, fg_color='#2c2c2c')
+        button_frame.pack(pady=10)
+
+        def on_confirm():
+            confirm_window.destroy()
+            self.move_artwork()
+
+        confirm_button = ctk.CTkButton(
+            button_frame,
+            text="Move Artwork",
+            command=on_confirm,
+            fg_color='#4CAF50',
+            hover_color='#45a049'
+        )
+        confirm_button.pack(side='left', padx=5)
+
+        cancel_button = ctk.CTkButton(
+            button_frame,
+            text="Do Not Move Artwork",
+            command=confirm_window.destroy,
+            fg_color='#f44336',
+            hover_color='#da190b'
+        )
+        cancel_button.pack(side='left', padx=5)
+
+        confirm_window.grab_set()  # Make the window modal
 
 # Main application driver
 if __name__ == "__main__":
