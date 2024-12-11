@@ -4671,6 +4671,8 @@ class ViewRoms:
         self.update_button_visibility()
         #self.toggle_button_visibility(show_move_artwork=False, show_move_roms=True)
 
+    '''
+    #THIS IS AN EXAMPLE OF HIDING ONLY THE MOVE ROMS BUTTON.
     def update_button_visibility(self):
         """Update the visibility of the buttons based on the configuration."""
         for setting_key, button in self.buttons.items():
@@ -4683,9 +4685,9 @@ class ViewRoms:
                     button.pack(side='right', padx=5)
                 else:
                     button.pack_forget()
-
     '''
-    THIS IS AN EXAMPLE OF HIDING ALL THE BUTTONS. ATM IM ALWAYS SHOWING THE ARTOWKR BUTTON
+    
+    #THIS IS AN EXAMPLE OF HIDING ALL THE BUTTONS. ATM IM ALWAYS SHOWING THE ARTOWKR BUTTON
     def update_button_visibility(self):
         """Update the visibility of the buttons based on the configuration."""
         for setting_key, button in self.buttons.items():
@@ -4695,7 +4697,7 @@ class ViewRoms:
                 button.pack(side='right', padx=5)
             else:
                 button.pack_forget()
-    '''         
+           
        
     def toggle_button_visibility(self, **kwargs):
         """Toggle the visibility of the buttons internally."""
