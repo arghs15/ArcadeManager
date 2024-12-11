@@ -117,6 +117,12 @@ class FilterGamesApp:
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)
 
+        # MultiPath Themes tab
+        #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND VIDEOS FROM MULTIPLE FOLDERS
+        if self.config_manager.determine_tab_visibility('multi_path_themes'):
+            self.multi_path_themes_tab = self.tabview.add("AURA Themes")
+            self.multi_path_themes = MultiPathThemes(self.multi_path_themes_tab)
+
         # Advanced Configurations tab
         if self.config_manager.determine_tab_visibility('advanced_configs'):
             self.advanced_configs_tab = self.tabview.add("Advanced Configs")
@@ -310,6 +316,12 @@ class ConfigManager:
         'Tabs': {
             'themes_games_tab': {
                 'default': 'auto',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of Themes Games tab',
+                'type': str,
+                'hidden': True
+            },
+            'multi_path_themes_tab': {
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Themes Games tab',
                 'type': str,
                 'hidden': True
@@ -607,6 +619,7 @@ class ConfigManager:
         return self._build_type
 
     def get_theme_paths(self):
+        
         """Get theme paths with caching."""
         if self._theme_paths is not None:
             return self._theme_paths
@@ -625,6 +638,35 @@ class ConfigManager:
         self._theme_paths = paths
         return paths
 
+    #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND VIDEOS FROM MULTIPLE FOLDERS
+    def get_theme_paths_multi(self):
+        # Return arrays of paths for ROMs, videos, and logos
+        return {
+            'roms': [
+                "- Themes AURA",
+                "- Themes Home"
+            ],
+            'videos': [
+                "collections/SETTINGS AURA/medium_artwork/video",
+                "collections/zzzShutdown/medium_artwork/video"
+            ],
+            'logos': [
+                "collections/SETTINGS AURA/medium_artwork/logo",
+                "collections/zzzShutdown/medium_artwork/logo"
+            ]
+        }
+    
+    #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND VIDEOS FROM MULTIPLE FOLDERS
+    def get_ignore_list(self):
+        # Return a list of ROMs to ignore
+        return [
+            'Theme STREET FIGHTER ARCADES.bat',
+            'Theme STREET FIGHTER AURA.bat',
+            'Theme AURA FANART BASIC',
+            'Trigger Indigo Beats ON OFF'
+
+        ]
+    
     def _get_dynamic_paths(self):
         """Get paths based on build type."""
         build_type = self._build_type or self._determine_build_type()
@@ -3845,6 +3887,708 @@ class Themes:
             # Show success status to user regardless of return code
             self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
             
+        except Exception as e:
+            # Catch any unexpected critical errors
+            print(f"Critical error while executing script: {e}")
+            self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
+
+class MultiPathThemes:
+    def __init__(self, parent_tab):
+        print("Initializing MultiPathThemes...")
+        self.parent_tab = parent_tab
+        self.base_path = os.getcwd()
+
+        # Initialize configuration manager
+        self.config_manager = ConfigManager()
+        self.theme_paths = self.config_manager.get_theme_paths_multi()
+        self.ignore_list = self.config_manager.get_ignore_list()
+
+        # Resolve relative paths to absolute paths
+        self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
+        self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
+        self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
+
+        # State management
+        self.themes_list = []
+        self.current_theme_index = 0
+        self.current_viewer = None
+        self.default_size = (640, 360)
+        self.thumbnail_cache = {}
+        self.current_frame = None
+        self.autoplay_after = None
+        self.last_resize_time = 0
+        self.resize_delay = 200  # ms
+        self.last_frame_time = 0
+        self.target_fps = 40
+        self.frame_interval = 1000 / self.target_fps  # ms
+
+        self._setup_ui()
+        self.load_themes()
+        if self.themes_list:
+            self.show_initial_theme()
+
+    def show_status_message(self, message):
+        """Utility to display a status message in the theme label."""
+        self.theme_label.configure(text=message)
+        print(f"Status Update: {message}")
+
+    def cancel_autoplay(self):
+        """Cancel any scheduled autoplay"""
+        if self.autoplay_after:
+            try:
+                self.parent_tab.after_cancel(self.autoplay_after)
+                print("Cancelled scheduled autoplay")
+            except Exception as e:
+                print(f"Error cancelling autoplay: {e}")
+            finally:
+                self.autoplay_after = None
+
+    def schedule_autoplay(self):
+        """Schedule video autoplay after 2 seconds"""
+        self.cancel_autoplay()
+
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling autoplay...")
+            self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
+
+    def start_autoplay(self):
+        """Start video playback immediately"""
+        print("Starting autoplay...")
+        if self.current_viewer and self.current_viewer.video_path:
+            if not self.current_viewer.is_playing:
+                if self.current_viewer.start_video():
+                    print("Autoplay started successfully")
+                    self.play_video()
+                else:
+                    print("Failed to start autoplay")
+                    self.show_thumbnail()
+
+    def clear_logo_cache(self):
+        """Clear all cached logo images"""
+        for attr in list(vars(self)):
+            if attr.startswith('logo_cache_'):
+                delattr(self, attr)
+
+    def show_current_theme(self):
+        """Display the current theme and start video if available"""
+        print("Showing current theme...")
+        if not self.themes_list:
+            return
+
+        # Stop any playing video and cancel any pending autoplay
+        self.cancel_autoplay()
+        if self.current_viewer and self.current_viewer.is_playing:
+            self.current_viewer.stop_video()
+
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Create viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+
+        # Show thumbnail
+        self.show_thumbnail()
+
+        # Start video immediately if available
+        if video_path:
+            print("Starting video immediately...")
+            if self.current_viewer.start_video():
+                self.play_video()
+
+    def force_initial_display(self):
+        """Force the initial theme display"""
+        print("Forcing initial display...")
+        if self.themes_list:
+            self.parent_tab.update_idletasks()
+            self.show_initial_theme()
+
+    def show_initial_theme(self):
+        """Show the first theme and start video playback"""
+        print("Showing initial theme...")
+        if not self.themes_list:
+            return
+
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Initialize viewer
+        self.current_viewer = ThemeViewer(video_path, png_path)
+
+        # Force immediate thumbnail extraction and display
+        thumbnail = self.current_viewer.extract_thumbnail()
+        if thumbnail is not None:
+            print("Thumbnail extracted, displaying...")
+            self._display_frame(thumbnail)
+
+            # Start video immediately if available
+            if video_path:
+                print(f"Starting initial video: {video_path}")
+                if self.current_viewer.start_video():
+                    print("Initial video started, beginning playback...")
+                    self.play_video()
+        else:
+            print("No thumbnail available")
+            self._show_no_video_message()
+
+    def schedule_autoplay(self):
+        """Schedule immediate video autoplay"""
+        self.cancel_autoplay()
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling immediate autoplay...")
+            self.autoplay_after = self.parent_tab.after(100, self.start_autoplay)
+
+    def play_video(self):
+        """Play video with frame timing control"""
+        if not self.current_viewer or not self.current_viewer.is_playing:
+            return
+
+        try:
+            current_time = time.time() * 1000
+            if current_time - self.last_frame_time >= self.frame_interval:
+                frame = self.current_viewer.get_frame()
+                if frame is not None:
+                    self._display_frame(frame)
+                    self.last_frame_time = current_time
+                else:
+                    print("No frame available, restarting video")
+                    self.current_viewer.stop_video()
+                    self.current_viewer.start_video()
+                    return
+
+            # Schedule next frame
+            self.parent_tab.after(max(1, int(self.frame_interval)), self.play_video)
+
+        except Exception as e:
+            print(f"Error during video playback: {e}")
+            self.current_viewer.stop_video()
+            self.show_thumbnail()
+
+    def load_themes(self):
+        """Load themes and their video/image paths"""
+        self.themes_list = []
+
+        for rom_folder in self.rom_folders:
+            if not os.path.isdir(rom_folder):
+                messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
+                continue
+
+            for filename in os.listdir(rom_folder):
+                if filename.endswith(".bat") and filename not in self.ignore_list:
+                    theme_name = os.path.splitext(filename)[0]
+                    video_path = None
+                    png_path = None
+
+                    for video_folder in self.video_folders:
+                        video_path = os.path.join(video_folder, f"{theme_name}.mp4")
+                        if os.path.isfile(video_path):
+                            break
+
+                    for logo_folder in self.logo_folders:
+                        png_path = os.path.join(logo_folder, f"{theme_name}.png")
+                        if os.path.isfile(png_path):
+                            break
+
+                    if video_path and os.path.isfile(video_path):
+                        self.themes_list.append((filename, video_path, png_path if os.path.isfile(png_path) else None))
+                    elif png_path and os.path.isfile(png_path):
+                        self.themes_list.append((filename, None, png_path))
+                    else:
+                        self.themes_list.append((filename, None, None))
+
+    def show_thumbnail(self):
+        """Display the current theme's thumbnail"""
+        if not self.current_viewer:
+            self._show_no_video_message()
+            return
+
+        # Use cached thumbnail if available
+        cache_key = self.current_viewer.video_path or self.current_viewer.image_path
+        if cache_key and cache_key in self.thumbnail_cache:
+            thumbnail = self.thumbnail_cache[cache_key].copy()  # Create a copy from cache
+        else:
+            thumbnail = self.current_viewer.extract_thumbnail()
+            if thumbnail is not None and cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail.copy()
+
+        if thumbnail is not None:
+            self._display_frame(thumbnail)
+        else:
+            self._show_no_video_message()
+
+    def _display_frame(self, frame, force_resize=False):
+        """Display a frame or thumbnail on the canvas with proper aspect ratio"""
+        try:
+            current_time = time.time() * 1000
+
+            if not force_resize:
+                self.current_frame = frame.copy()
+
+            # Validate input frame
+            if frame is None or frame.size == 0:
+                raise ValueError("Invalid frame: frame is None or empty")
+
+            # Get current display size
+            canvas_width = self.video_canvas.winfo_width()
+            canvas_height = self.video_canvas.winfo_height()
+
+            # Ensure minimum display dimensions
+            canvas_width = max(1, canvas_width)
+            canvas_height = max(1, canvas_height)
+
+            if canvas_width < 1 or canvas_height < 1:
+                canvas_width, canvas_height = self.default_size
+
+            # Get original frame dimensions
+            frame_height, frame_width = frame.shape[:2]
+
+            # Validate frame dimensions
+            if frame_width <= 0 or frame_height <= 0:
+                raise ValueError(f"Invalid frame dimensions: {frame_width}x{frame_height}")
+
+            frame_aspect = frame_width / frame_height
+            canvas_aspect = canvas_width / canvas_height
+
+            # Calculate new dimensions maintaining aspect ratio
+            if canvas_aspect > frame_aspect:
+                new_height = max(1, canvas_height)
+                new_width = max(1, int(canvas_height * frame_aspect))
+            else:
+                new_width = max(1, canvas_width)
+                new_height = max(1, int(canvas_width / frame_aspect))
+
+            # Skip frame if falling behind
+            if not force_resize and self.current_viewer and self.current_viewer.is_playing:
+                if current_time - self.last_frame_time < self.frame_interval:
+                    return
+
+            # Validate final dimensions before resize
+            if new_width <= 0 or new_height <= 0:
+                raise ValueError(f"Invalid resize dimensions: {new_width}x{new_height}")
+
+            # Resize frame maintaining aspect ratio
+            if new_width * new_height > 1920 * 1080:
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            main_image = Image.fromarray(frame)
+
+            # Logo handling (rest of the logo code remains the same)
+            try:
+                current_theme = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
+                logo_path = None
+
+                for logo_folder in self.logo_folders:
+                    logo_path = os.path.join(logo_folder, f"{current_theme}.png")
+                    if os.path.exists(logo_path):
+                        break
+
+                if logo_path and os.path.exists(logo_path):
+                    # Create a cache key that includes the canvas dimensions
+                    cache_key = f'logo_cache_{current_theme}_{new_width}_{new_height}'
+
+                    if not hasattr(self, cache_key):
+                        # Load original logo
+                        logo_img = Image.open(logo_path)
+
+                        # Calculate logo size based on current frame dimensions
+                        logo_max_width = max(1, int(new_width * 0.15))  # 15% of frame width
+                        logo_max_height = max(1, int(new_height * 0.15))  # 15% of frame height
+
+                        # Get original logo dimensions
+                        logo_w, logo_h = logo_img.size
+
+                        # Calculate scale factor maintaining aspect ratio
+                        logo_scale = min(
+                            logo_max_width / logo_w,
+                            logo_max_height / logo_h
+                        )
+
+                        # Calculate new logo dimensions
+                        logo_new_size = (
+                            max(1, int(logo_w * logo_scale)),
+                            max(1, int(logo_h * logo_scale))
+                        )
+
+                        # Resize logo
+                        resized_logo = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
+
+                        # Cache the resized logo
+                        setattr(self, cache_key, resized_logo)
+                    else:
+                        resized_logo = getattr(self, cache_key)
+
+                    # Calculate padding based on frame size
+                    padding = max(1, int(min(new_width, new_height) * 0.02))  # 2% of smaller dimension
+
+                    # Calculate position
+                    pos_x = new_width - resized_logo.size[0] - padding
+                    pos_y = new_height - resized_logo.size[1] - padding
+
+                    # Overlay logo
+                    if resized_logo.mode == 'RGBA':
+                        main_image.paste(resized_logo, (pos_x, pos_y), resized_logo)
+                    else:
+                        main_image.paste(resized_logo, (pos_x, pos_y))
+
+            except Exception as e:
+                print(f"Error loading or applying logo: {e}")
+
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(image=main_image)
+
+            # Clear canvas
+            self.video_canvas.delete("all")
+
+            # Calculate center position
+            x = canvas_width // 2
+            y = canvas_height // 2
+
+            # Create black background to fill canvas
+            self.video_canvas.configure(bg="#2B2B2B")
+
+            # Display image centered
+            self.video_canvas.create_image(
+                x, y,
+                image=photo,
+                anchor="center"
+            )
+            self.video_canvas.image = photo
+
+            self.last_frame_time = current_time
+
+        except Exception as e:
+            print(f"Error displaying frame: {e}")
+            self._show_no_video_message()
+
+    def _setup_ui(self):
+        """Initialize and configure UI components"""
+        # Main display frame
+        self.display_frame = ctk.CTkFrame(self.parent_tab)
+        self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Video display
+        self.video_canvas = ctk.CTkCanvas(
+            self.display_frame,
+            width=self.default_size[0],
+            height=self.default_size[1],
+            bg="#2B2B2B",
+            bd="0",
+            highlightthickness=0
+        )
+        self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Bind resize event
+        self.video_canvas.bind('<Configure>', self.handle_resize)
+
+        # Theme name and status
+        self.status_frame = ctk.CTkFrame(self.display_frame)
+        self.status_frame.pack(fill="x", padx=10, pady=5)
+
+        self.theme_label = ctk.CTkLabel(self.status_frame, text="")
+        self.theme_label.pack(side="left", padx=5)
+
+        # Location selector frame - store as instance variable to control visibility
+        self.location_frame = ctk.CTkFrame(self.display_frame)
+        self.location_frame.pack(fill="x", padx=10, pady=5)
+
+        # Add location selector dropdown
+        self.location_var = ctk.StringVar(value=self.config_manager.config.get('Settings', 'theme_location', fallback='autochanger'))
+        self.location_dropdown = ctk.CTkOptionMenu(
+            self.location_frame,
+            values=['autochanger', 'zzzSettings', 'custom'],
+            variable=self.location_var,
+            command=self.change_location
+        )
+        self.location_dropdown.pack(side="right", padx=5)
+
+        ctk.CTkLabel(self.location_frame, text="Theme Location:").pack(side="right", padx=5)
+
+        # Custom paths configuration button
+        self.custom_paths_button = ctk.CTkButton(
+            self.location_frame,
+            text="Configure Custom Paths",
+            command=self.show_custom_paths_dialog
+        )
+        self.custom_paths_button.pack(side="right", padx=5)
+
+        # Navigation frame - always visible
+        self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
+        self.button_frame.pack(fill="x", padx=5, pady=5)  # Always pack this frame
+
+        # Configure grid layout
+        self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.status_frame.grid_columnconfigure((0, 1, 2), weight=1)
+
+        # Navigation and control buttons
+        buttons = [
+            ("Previous", self.show_previous_theme, 0),
+            ("Apply Theme", self.run_selected_script, 1, "green", "darkgreen"),
+            ("Next", self.show_next_theme, 2)
+        ]
+
+        for btn_data in buttons:
+            if len(btn_data) == 3:
+                text, command, col = btn_data
+                fg_color = None
+                hover_color = None
+            else:
+                text, command, col, fg_color, hover_color = btn_data
+
+            btn = ctk.CTkButton(
+                self.button_frame,
+                text=text,
+                command=command,
+                fg_color=fg_color,
+                hover_color=hover_color,
+                border_width=0
+            )
+            btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
+
+        # Check config and show/hide location frame
+        self.update_location_frame_visibility()
+
+    def update_location_frame_visibility(self):
+        """Update the visibility of the location frame based on config settings"""
+        show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=False)
+        print(f"show_location_controls value: {show_location_controls}")  # Debug
+
+        if show_location_controls:
+            self.location_frame.pack(fill="x", padx=10, pady=5)
+            print("Location frame is visible")  # Debug
+        else:
+            self.location_frame.pack_forget()
+            print("Location frame is hidden")  # Debug
+
+    def show_custom_paths_dialog(self):
+        """Show dialog for configuring custom paths"""
+        dialog = ctk.CTkToplevel(self.parent_tab)
+        dialog.title("Configure Custom Paths")
+        dialog.geometry("600x200")
+        dialog.transient(self.parent_tab)
+        dialog.grab_set()
+
+        # Create entry fields for each path
+        paths = {
+            'ROMs Path': 'custom_roms_path',
+            'Videos Path': 'custom_videos_path',
+            'Logos Path': 'custom_logos_path'
+        }
+
+        entries = {}
+
+        for i, (label_text, config_key) in enumerate(paths.items()):
+            frame = ctk.CTkFrame(dialog)
+            frame.pack(fill="x", padx=10, pady=5)
+
+            ctk.CTkLabel(frame, text=label_text).pack(side="left", padx=5)
+
+            entry = ctk.CTkEntry(frame, width=400)
+            entry.pack(side="left", padx=5, fill="x", expand=True)
+            entry.insert(0, self.config_manager.config.get('Settings', config_key, fallback=''))
+
+            entries[config_key] = entry
+
+            def browse_path(entry_widget):
+                path = filedialog.askdirectory()
+                if path:
+                    entry_widget.delete(0, 'end')
+                    entry_widget.insert(0, path)
+
+            browse_btn = ctk.CTkButton(
+                frame,
+                text="Browse",
+                command=lambda e=entry: browse_path(e)
+            )
+            browse_btn.pack(side="right", padx=5)
+
+        def save_paths():
+            self.config_manager.update_custom_paths(
+                roms_path=entries['custom_roms_path'].get(),
+                videos_path=entries['custom_videos_path'].get(),
+                logos_path=entries['custom_logos_path'].get()
+            )
+            if self.location_var.get() == 'custom':
+                self.change_location('custom')
+            dialog.destroy()
+
+        # Save button
+        ctk.CTkButton(
+            dialog,
+            text="Save",
+            command=save_paths
+        ).pack(pady=10)
+
+    def change_location(self, location):
+        """Handle location change"""
+        # Update configuration
+        self.config_manager.update_theme_location(location)
+
+        # Update paths
+        self.theme_paths = self.config_manager.get_theme_paths_multi()
+        self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
+        self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
+        self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
+
+        # Clear caches
+        self.thumbnail_cache.clear()
+        self.clear_logo_cache()
+
+        # Reload themes and refresh display
+        self.load_themes()
+        if self.themes_list:
+            self.current_theme_index = 0
+            self.show_current_theme()
+
+        # Update status
+        self.show_status_message(f"Changed theme location to: {location}")
+
+    def handle_resize(self, event=None):
+        """Handle window resize events"""
+        if hasattr(self, 'current_frame') and self.current_frame is not None:
+            self._display_frame(self.current_frame, force_resize=True)
+
+    def toggle_video(self):
+        """Toggle video playback"""
+        if not self.current_viewer:
+            return
+
+        if not self.current_viewer.is_playing:
+            # Start video
+            success = self.current_viewer.start_video()
+            if success:
+                self.play_button.configure(text="Stop Video")
+                self.play_video()
+            else:
+                self.show_thumbnail()
+        else:
+            # Stop video and show thumbnail
+            self.current_viewer.stop_video()
+            self.play_button.configure(text="Play Video")
+            self.show_thumbnail()
+
+    def initialize_first_theme(self):
+        """Initialize and display the first theme"""
+        print("Initializing first theme...")
+        if not self.themes_list:
+            print("No themes available")
+            return
+
+        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Initialize viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+        self.play_button.configure(state="normal" if video_path else "disabled")
+
+        # Force immediate thumbnail display
+        print("Forcing thumbnail display...")
+        thumbnail = self.current_viewer.extract_thumbnail()
+        if thumbnail is not None:
+            cache_key = video_path or png_path
+            if cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail
+
+            # Force canvas update and display
+            self.parent_tab.update_idletasks()
+            self._display_frame(thumbnail)
+
+            # Schedule autoplay if video exists
+            if video_path:
+                print("Scheduling initial autoplay...")
+                self.schedule_autoplay()
+        else:
+            print("No thumbnail available")
+            self._show_no_video_message()
+
+    def show_next_theme(self):
+        """Navigate to next theme"""
+        if self.themes_list:
+            self.current_theme_index = (self.current_theme_index + 1) % len(self.themes_list)
+            self.show_current_theme()
+
+    def show_previous_theme(self):
+        """Navigate to previous theme"""
+        if self.themes_list:
+            self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
+            self.show_current_theme()
+
+    def _show_no_video_message(self):
+        """Display message when no video is available"""
+        self.video_canvas.delete("all")
+        self.video_canvas.create_text(
+            self.video_canvas.winfo_width() // 2,
+            self.video_canvas.winfo_height() // 2,
+            text="No video available",
+            fill="white"
+        )
+
+    def run_selected_script(self):
+        """Execute the selected theme script."""
+        if not self.themes_list:
+            print("No themes found in themes_list. Exiting function.")
+            self.show_status_message("Error: No themes available!")
+            return
+
+        # Get the script filename (without extension)
+        script_filename, _, _ = self.themes_list[self.current_theme_index]
+        script_name_without_extension = os.path.splitext(script_filename)[0]  # Remove extension
+        script_path = os.path.join(self.rom_folders[0], script_filename)
+
+        # Print the selected theme information for debugging
+        print(f"Selected script: {script_filename}")
+        print(f"Full script path: {script_path}")
+
+        # Check if the script file exists
+        print(f"Checking if script exists at path: {script_path}")
+        if not os.path.isfile(script_path):
+            print(f"Script not found: {script_path}")  # Log the error instead of showing it
+            self.show_status_message(f"Error: Script '{script_name_without_extension}' not found.")
+            return
+
+        try:
+            # Show status message that the script is being executed
+            self.show_status_message(f"Applying theme '{script_name_without_extension}'...")
+
+            # Debugging information
+            print(f"Executing script: {script_path}")
+            print(f"Working directory: {os.path.dirname(script_path)}")
+
+            # Set up subprocess startup information to hide the command window
+            startupinfo = None
+            if hasattr(subprocess, 'STARTUPINFO'):
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                print(f"StartupInfo flags: {startupinfo.dwFlags}")
+
+            # Run the batch file
+            print("Command execution details:", [script_path])
+            process = subprocess.run(
+                [script_path],
+                check=False,  # Do not raise an error for non-zero exit codes
+                shell=True,
+                text=True,
+                capture_output=True,
+                cwd=os.path.dirname(script_path),  # Set the working directory to the script's directory
+                startupinfo=startupinfo
+            )
+
+            # Print process outputs for debugging
+            print("Process completed with return code:", process.returncode)
+            print("Standard output from script:", process.stdout)
+
+            if process.returncode != 0:
+                # Log non-critical errors for debugging
+                print(f"Non-critical script error (stderr): {process.stderr}")
+
+            # Show success status to user regardless of return code
+            self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
+
         except Exception as e:
             # Catch any unexpected critical errors
             print(f"Critical error while executing script: {e}")
