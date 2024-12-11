@@ -2608,9 +2608,12 @@ class Playlists:
         self.check_vars = []
         self.check_buttons = []
         self.excluded_playlists = self.config_manager.get_excluded_playlists()
-        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "gunner", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]
+        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]
         self.sort_type_playlists = ["ctrltype", "manufacturer", "numberplayers", "year"]
         
+        # Define playlists to exclude from genres
+        self.excluded_from_genres = ["vertical", "horizontal"]  # Add your playlists here
+
         # Create UI elements
         self.create_ui_elements()
         
@@ -2822,9 +2825,9 @@ class Playlists:
 
     # Gets all playlists not included in manufacturer and sort types
     def get_genre_playlists(self):
-        return [name for name, _ in self.check_vars 
-            if name not in self.sort_type_playlists and name not in self.manufacturer_playlists]
-    
+        return [name for name, _ in self.check_vars
+            if name not in self.sort_type_playlists and name not in self.manufacturer_playlists and name not in self.excluded_from_genres]
+
     def toggle_genres(self):
         genre_playlists = self.get_genre_playlists()  # Fetch genre playlists correctly
         if self.genre_switch.get() == "off":
@@ -2832,10 +2835,10 @@ class Playlists:
                 if genre not in self.excluded_playlists:
                     self.excluded_playlists.append(genre)
         else:
-            for genre in genre_playlists:    
+            for genre in genre_playlists:
                 if genre in self.excluded_playlists:
                     self.excluded_playlists.remove(genre)
-                    
+
         self.refresh_checkboxes()
         self.update_reset_button_state()  # Ensure reset button is enabled or disabled
     
