@@ -642,23 +642,25 @@ class ConfigManager:
         return {
             'roms': [
                 "- Themes AURA",
-                "collections/zzzShutdown/roms"
+                "collections/zzzShutdown/roms",
+                "collections/zzzBezels/roms"
             ],
             'videos': [
-                "collections/SETTINGS AURA/medium_artwork/video",
-                "collections/zzzShutdown/medium_artwork/video"
+                "collections/zzzAura/medium_artwork/video",
+                "collections/zzzShutdown/medium_artwork/video",
+                "collections/zzzBezels/medium_artwork/video"
             ],
             'logos': [
-                "collections/SETTINGS AURA/medium_artwork/logo",
-                "collections/zzzShutdown/medium_artwork/logo"
+                "collections/zzzAura/medium_artwork/logo",
+                "collections/zzzShutdown/medium_artwork/logo",
+                "collections/zzzBezels/medium_artwork/logo"
             ]
         }
     
     def get_ignore_list(self):
         # Return a list of ROMs to ignore
         return [
-            'Theme STREET FIGHTER ARCADES.bat',
-            'Theme STREET FIGHTER AURA.bat'
+            ''
         ]
     
     def update_custom_paths(self, roms_path, videos_path, logos_path):
@@ -4072,6 +4074,14 @@ class MultiPathThemes:
         """Load themes and their video/image paths"""
         self.themes_list = []
 
+        # Look for default.png in video folders
+        default_png_path = None
+        for video_folder in self.video_folders:
+            potential_default_path = os.path.join(video_folder, 'default.png')
+            if os.path.isfile(potential_default_path):
+                default_png_path = potential_default_path
+                break
+
         for rom_folder in self.rom_folders:
             if not os.path.isdir(rom_folder):
                 messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
@@ -4083,20 +4093,37 @@ class MultiPathThemes:
                     video_path = None
                     png_path = None
 
+                    # First, look for video in video folders
                     for video_folder in self.video_folders:
                         video_path = os.path.join(video_folder, f"{theme_name}.mp4")
                         if os.path.isfile(video_path):
                             break
+                        video_path = None
 
-                    for logo_folder in self.logo_folders:
-                        png_path = os.path.join(logo_folder, f"{theme_name}.png")
-                        if os.path.isfile(png_path):
-                            break
+                    # If no video, look for PNG in video folders
+                    if video_path is None:
+                        for video_folder in self.video_folders:
+                            png_path = os.path.join(video_folder, f"{theme_name}.png")
+                            if os.path.isfile(png_path):
+                                break
+                            png_path = None
 
+                    # If no PNG in video folders, look in logo folders
+                    if png_path is None:
+                        for logo_folder in self.logo_folders:
+                            png_path = os.path.join(logo_folder, f"{theme_name}.png")
+                            if os.path.isfile(png_path):
+                                break
+                            png_path = None
+
+                    # Add to themes list based on available media
                     if video_path and os.path.isfile(video_path):
-                        self.themes_list.append((filename, video_path, png_path if os.path.isfile(png_path) else None, rom_folder))
+                        self.themes_list.append((filename, video_path, png_path, rom_folder))
                     elif png_path and os.path.isfile(png_path):
                         self.themes_list.append((filename, None, png_path, rom_folder))
+                    elif default_png_path:
+                        # Final fallback to default.png in video folders
+                        self.themes_list.append((filename, None, default_png_path, rom_folder))
                     else:
                         self.themes_list.append((filename, None, None, rom_folder))
 
