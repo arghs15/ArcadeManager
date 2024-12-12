@@ -118,7 +118,6 @@ class FilterGamesApp:
             self.Themes_games = Themes(self.Themes_games_tab)
 
         # MultiPath Themes tab
-        #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND VIDEOS FROM MULTIPLE FOLDERS
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
             self.multi_path_themes_tab = self.tabview.add("AURA Themes")
             self.multi_path_themes = MultiPathThemes(self.multi_path_themes_tab)
@@ -619,7 +618,6 @@ class ConfigManager:
         return self._build_type
 
     def get_theme_paths(self):
-        
         """Get theme paths with caching."""
         if self._theme_paths is not None:
             return self._theme_paths
@@ -638,13 +636,13 @@ class ConfigManager:
         self._theme_paths = paths
         return paths
 
-    #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND VIDEOS FROM MULTIPLE FOLDERS
+    #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND
     def get_theme_paths_multi(self):
         # Return arrays of paths for ROMs, videos, and logos
         return {
             'roms': [
                 "- Themes AURA",
-                "- Themes Home"
+                "collections/zzzShutdown/roms"
             ],
             'videos': [
                 "collections/SETTINGS AURA/medium_artwork/video",
@@ -656,17 +654,21 @@ class ConfigManager:
             ]
         }
     
-    #USED FOR MY PERSONAL BUILD TO SHOW ROMS, LOGOS, AND VIDEOS FROM MULTIPLE FOLDERS
     def get_ignore_list(self):
         # Return a list of ROMs to ignore
         return [
             'Theme STREET FIGHTER ARCADES.bat',
-            'Theme STREET FIGHTER AURA.bat',
-            'Theme AURA FANART BASIC',
-            'Trigger Indigo Beats ON OFF'
-
+            'Theme STREET FIGHTER AURA.bat'
         ]
     
+    def update_custom_paths(self, roms_path, videos_path, logos_path):
+        # Update the custom paths in the configuration
+        pass
+
+    def update_theme_location(self, location):
+        # Update the theme location in the configuration
+        pass
+
     def _get_dynamic_paths(self):
         """Get paths based on build type."""
         build_type = self._build_type or self._determine_build_type()
@@ -3921,6 +3923,7 @@ class MultiPathThemes:
         self.last_frame_time = 0
         self.target_fps = 40
         self.frame_interval = 1000 / self.target_fps  # ms
+        self.current_rom_folder_index = 0  # Track the current ROM folder index
 
         self._setup_ui()
         self.load_themes()
@@ -3980,7 +3983,7 @@ class MultiPathThemes:
         if self.current_viewer and self.current_viewer.is_playing:
             self.current_viewer.stop_video()
 
-        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
         self.theme_label.configure(text=f"Theme: {display_name}")
 
@@ -4009,7 +4012,7 @@ class MultiPathThemes:
         if not self.themes_list:
             return
 
-        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
         self.theme_label.configure(text=f"Theme: {display_name}")
 
@@ -4091,11 +4094,11 @@ class MultiPathThemes:
                             break
 
                     if video_path and os.path.isfile(video_path):
-                        self.themes_list.append((filename, video_path, png_path if os.path.isfile(png_path) else None))
+                        self.themes_list.append((filename, video_path, png_path if os.path.isfile(png_path) else None, rom_folder))
                     elif png_path and os.path.isfile(png_path):
-                        self.themes_list.append((filename, None, png_path))
+                        self.themes_list.append((filename, None, png_path, rom_folder))
                     else:
-                        self.themes_list.append((filename, None, None))
+                        self.themes_list.append((filename, None, None, rom_folder))
 
     def show_thumbnail(self):
         """Display the current theme's thumbnail"""
@@ -4320,14 +4323,15 @@ class MultiPathThemes:
         self.button_frame.pack(fill="x", padx=5, pady=5)  # Always pack this frame
 
         # Configure grid layout
-        self.button_frame.grid_columnconfigure((0, 1, 2), weight=1)
-        self.status_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        self.button_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        self.status_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         # Navigation and control buttons
         buttons = [
             ("Previous", self.show_previous_theme, 0),
             ("Apply Theme", self.run_selected_script, 1, "green", "darkgreen"),
-            ("Next", self.show_next_theme, 2)
+            ("Next", self.show_next_theme, 2),
+            ("Jump Category", self.jump_to_start, 3)  # New button for quick navigation
         ]
 
         for btn_data in buttons:
@@ -4477,7 +4481,7 @@ class MultiPathThemes:
             print("No themes available")
             return
 
-        theme_name, video_path, png_path = self.themes_list[self.current_theme_index]
+        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
         display_name = os.path.splitext(theme_name)[0]
         self.theme_label.configure(text=f"Theme: {display_name}")
 
@@ -4535,7 +4539,7 @@ class MultiPathThemes:
             return
 
         # Get the script filename (without extension)
-        script_filename, _, _ = self.themes_list[self.current_theme_index]
+        script_filename, _, _, _ = self.themes_list[self.current_theme_index]
         script_name_without_extension = os.path.splitext(script_filename)[0]  # Remove extension
         script_path = os.path.join(self.rom_folders[0], script_filename)
 
@@ -4593,6 +4597,36 @@ class MultiPathThemes:
             # Catch any unexpected critical errors
             print(f"Critical error while executing script: {e}")
             self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
+
+    def jump_to_start(self):
+        """Jump to the start of each ROM folder for quick navigation"""
+        print("Jumping to the start of each ROM folder...")
+        self.cycle_rom_folders()
+
+    def cycle_rom_folders(self):
+        """Cycle through the ROM folders and display the first theme in each folder"""
+        print("Cycling through ROM folders...")
+        if not self.rom_folders:
+            print("No ROM folders available")
+            return
+
+        # Move to the next ROM folder
+        self.current_rom_folder_index = (self.current_rom_folder_index + 1) % len(self.rom_folders)
+        current_rom_folder = self.rom_folders[self.current_rom_folder_index]
+        print(f"Moved to next ROM folder: {current_rom_folder}")
+
+        # Find the first theme in the current ROM folder
+        first_theme_found = False
+        for theme_index, (theme_name, video_path, png_path, rom_folder) in enumerate(self.themes_list):
+            if rom_folder == current_rom_folder:
+                self.current_theme_index = theme_index
+                self.show_current_theme()
+                first_theme_found = True
+                break
+
+        if not first_theme_found:
+            print(f"No themes found in folder: {current_rom_folder}")
+
 
 class AdvancedConfigs:
     def __init__(self, parent_tab):
