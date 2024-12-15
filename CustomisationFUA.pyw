@@ -395,9 +395,10 @@ class ConfigManager:
     def version_check(self):
         """
         Check and handle configuration file version compatibility.
+        Ensures that the config version is checked in the DEFAULT section.
         """
         try:
-            # If config file doesn't exist, it will be created with current version
+            # If config file doesn't exist, create it with current version
             if not os.path.exists(self.config_path):
                 self._log("Config file not found. Will create with current version.")
                 self._reset_config_to_defaults()
@@ -406,40 +407,76 @@ class ConfigManager:
             # Read existing config
             self.config.read(self.config_path)
             
-            # Check for version key in DEFAULT section
+            # Ensure DEFAULT section exists
+            if 'DEFAULT' not in self.config:
+                self.config['DEFAULT'] = {}
+            
+            # Check for version key specifically in DEFAULT section
             current_version = self.config.get('DEFAULT', self.CONFIG_VERSION_KEY, fallback=None)
             
             # If version is missing or different, reset configuration
             if current_version != self.CONFIG_FILE_VERSION:
                 self._log(f"Config version mismatch. Current: {current_version}, Expected: {self.CONFIG_FILE_VERSION}")
                 self._reset_config_to_defaults()
+            
         except Exception as e:
             self._log(f"Error during version check: {e}")
             self._reset_config_to_defaults()
 
     def _reset_config_to_defaults(self):
-        """Reset configuration and update version without adding all defaults."""
+        """
+        Reset configuration to hardcoded defaults for all non-hidden settings.
+        """
+        # Create a new config parser
         new_config = configparser.ConfigParser()
-        for section in self.config.sections():
-            new_config[section] = dict(self.config[section])
         
-        # Update version in DEFAULT section
+        # Populate sections and settings with their hardcoded defaults
+        for section, settings in self.AVAILABLE_SETTINGS.items():
+            new_config[section] = {}
+            for key, setting_info in settings.items():
+                if not setting_info.get('hidden', False):
+                    # Use the hardcoded default value, converting to string
+                    default_value = setting_info['default']
+                    
+                    # Special handling for different types
+                    if setting_info['type'] == bool:
+                        # Convert boolean to lowercase string
+                        default_value = str(default_value).lower()
+                    elif setting_info['type'] == List[str]:
+                        # Convert list to comma-separated string
+                        default_value = ','.join(default_value) if default_value else ''
+                    else:
+                        # Convert to string for other types
+                        default_value = str(default_value)
+                    
+                    new_config[section][key] = default_value
+        
+        # Ensure DEFAULT section exists with version
         new_config['DEFAULT'] = {
             self.CONFIG_VERSION_KEY: self.CONFIG_FILE_VERSION
         }
         
+        # Update the current config
         self.config = new_config
-        self._log("Configuration reset without pre-filling defaults.")
+        
+        self._log("Configuration reset to hardcoded defaults.")
         self.save_config()
 
-
     def save_config(self):
-        """Write only existing settings to the INI file."""
+        """
+        Write configuration to file, ensuring version is in DEFAULT section.
+        """
+        # Ensure DEFAULT section exists with version
         if 'DEFAULT' not in self.config:
             self.config['DEFAULT'] = {}
+        
+        # Always update version in DEFAULT section
         self.config['DEFAULT'][self.CONFIG_VERSION_KEY] = self.CONFIG_FILE_VERSION
         
+        # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+        
+        # Write config to file
         with open(self.config_path, 'w') as configfile:
             self.config.write(configfile)
 
