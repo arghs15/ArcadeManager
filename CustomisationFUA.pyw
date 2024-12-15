@@ -289,6 +289,18 @@ class ConfigManager:
                 'description': 'Show Move ROMs button',
                 'type': bool,
                 'hidden': True
+            },
+            'show_move_artwork_instructions': {
+                'default': 'True',
+                'description': 'Show Move Artwork instructions',
+                'type': bool,
+                'hidden': True
+            },
+            'show_move_roms_instructions': {
+                'default': 'True',
+                'description': 'Show Move ROMs instructions',
+                'type': bool,
+                'hidden': True
             }
         },
         'Controls': {
@@ -310,7 +322,6 @@ class ConfigManager:
                 'type': str,
                 'hidden': True
             }
-            
         },
         'Tabs': {
             'themes_games_tab': {
@@ -359,21 +370,21 @@ class ConfigManager:
     }
 
     BUILD_TYPE_PATHS = {
-    'D': {  # Dynamic build type
-        'roms': "- Themes",  # Relative to `self.base_path`
-        'videos': os.path.join("autochanger", "themes", "video"),
-        'logos': os.path.join("autochanger", "themes", "logo")
-    },
-    'U': {  # User build type
-        'roms': os.path.join("collections", "zzzShutdown", "roms"),
-        'videos': os.path.join("collections", "zzzShutdown", "medium_artwork", "video"),
-        'logos': os.path.join("collections", "zzzShutdown", "medium_artwork", "logo")
-    },
-    'S': {  # Settings build type
-        'roms': os.path.join("collections", "zzzSettings", "roms"),
-        'videos': os.path.join("collections", "zzzSettings", "medium_artwork", "video"),
-        'logos': os.path.join("collections", "zzzSettings", "medium_artwork", "logo")
-    }
+        'D': {  # Dynamic build type
+            'roms': "- Themes",  # Relative to `self.base_path`
+            'videos': os.path.join("autochanger", "themes", "video"),
+            'logos': os.path.join("autochanger", "themes", "logo")
+        },
+        'U': {  # User build type
+            'roms': os.path.join("collections", "zzzShutdown", "roms"),
+            'videos': os.path.join("collections", "zzzShutdown", "medium_artwork", "video"),
+            'logos': os.path.join("collections", "zzzShutdown", "medium_artwork", "logo")
+        },
+        'S': {  # Settings build type
+            'roms': os.path.join("collections", "zzzSettings", "roms"),
+            'videos': os.path.join("collections", "zzzSettings", "medium_artwork", "video"),
+            'logos': os.path.join("collections", "zzzSettings", "medium_artwork", "logo")
+        }
     }
 
     def __init__(self, debug=True):
@@ -403,22 +414,22 @@ class ConfigManager:
                 self._log("Config file not found. Will create with current version.")
                 self._reset_config_to_defaults()
                 return
-            
+
             # Read existing config
             self.config.read(self.config_path)
-            
+
             # Ensure DEFAULT section exists
             if 'DEFAULT' not in self.config:
                 self.config['DEFAULT'] = {}
-            
+
             # Check for version key specifically in DEFAULT section
             current_version = self.config.get('DEFAULT', self.CONFIG_VERSION_KEY, fallback=None)
-            
+
             # If version is missing or different, reset configuration
             if current_version != self.CONFIG_FILE_VERSION:
                 self._log(f"Config version mismatch. Current: {current_version}, Expected: {self.CONFIG_FILE_VERSION}")
                 self._reset_config_to_defaults()
-            
+
         except Exception as e:
             self._log(f"Error during version check: {e}")
             self._reset_config_to_defaults()
@@ -429,7 +440,7 @@ class ConfigManager:
         """
         # Create a new config parser
         new_config = configparser.ConfigParser()
-        
+
         # Populate sections and settings with their hardcoded defaults
         for section, settings in self.AVAILABLE_SETTINGS.items():
             new_config[section] = {}
@@ -437,7 +448,7 @@ class ConfigManager:
                 if not setting_info.get('hidden', False):
                     # Use the hardcoded default value, converting to string
                     default_value = setting_info['default']
-                    
+
                     # Special handling for different types
                     if setting_info['type'] == bool:
                         # Convert boolean to lowercase string
@@ -448,17 +459,17 @@ class ConfigManager:
                     else:
                         # Convert to string for other types
                         default_value = str(default_value)
-                    
+
                     new_config[section][key] = default_value
-        
+
         # Ensure DEFAULT section exists with version
         new_config['DEFAULT'] = {
             self.CONFIG_VERSION_KEY: self.CONFIG_FILE_VERSION
         }
-        
+
         # Update the current config
         self.config = new_config
-        
+
         self._log("Configuration reset to hardcoded defaults.")
         self.save_config()
 
@@ -469,17 +480,16 @@ class ConfigManager:
         # Ensure DEFAULT section exists with version
         if 'DEFAULT' not in self.config:
             self.config['DEFAULT'] = {}
-        
+
         # Always update version in DEFAULT section
         self.config['DEFAULT'][self.CONFIG_VERSION_KEY] = self.CONFIG_FILE_VERSION
-        
+
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        
+
         # Write config to file
         with open(self.config_path, 'w') as configfile:
             self.config.write(configfile)
-
 
     def initialize_config(self):
         """Initialize the INI file with only visible settings if it doesn't exist."""
@@ -489,7 +499,6 @@ class ConfigManager:
             self.save_config()  # Save immediately to create the file
         else:
             self.config.read(self.config_path)
-
 
     def _initialize_default_config(self):
         """Initialize the INI file with only visible (non-hidden) default settings."""
@@ -516,12 +525,11 @@ class ConfigManager:
             self._log("Config file updated with missing visible settings.")
             self.save_config()
 
-
     def determine_tab_visibility(self, tab_name):
         """
         Determine tab visibility based on configuration and context.
-        
-        :param tab_name: Name of the tab 
+
+        :param tab_name: Name of the tab
         :return: Boolean indicating whether the tab should be displayed
         """
         try:
@@ -541,7 +549,7 @@ class ConfigManager:
                 return False
             elif visibility == 'auto':
                 print(f"Checking auto visibility for {tab_name} tab")
-                
+
                 # Auto mode: use context-specific logic
                 if tab_name in ['controls', 'view_games']:
                     build_type = self.get_playlist_location()
@@ -549,7 +557,7 @@ class ConfigManager:
                     is_visible = build_type == 'U'
                     print(f"Controls/View Games visibility: {is_visible}")
                     return is_visible
-                
+
                 elif tab_name == 'themes_games':
                     # Check if themes folder exists
                     themes_paths = [
@@ -557,21 +565,21 @@ class ConfigManager:
                         os.path.join(os.getcwd(), "collections", "zzzSettings"),
                         os.path.join(os.getcwd(), "collections", "zzzShutdown")
                     ]
-                    
+
                     existing_paths = [path for path in themes_paths if os.path.isdir(path)]
                     is_visible = bool(existing_paths)
-                    
+
                     print("Themes Paths:")
                     for path in themes_paths:
                         print(f"  {path}: {'EXISTS' if os.path.isdir(path) else 'NOT FOUND'}")
                     print(f"Themes tab visibility: {is_visible}")
-                    
+
                     return is_visible
-                
+
                 # Other tabs like advanced_configs, playlists, filter_games are always visible
                 print(f"✓ {tab_name} tab VISIBLE (default auto setting)")
                 return True
-            
+
             print(f"✗ {tab_name} tab HIDDEN (no condition met)")
             return False
 
@@ -582,14 +590,14 @@ class ConfigManager:
     def update_tab_visibility(self, tab_name, visibility):
         """
         Update tab visibility setting.
-        
-        :param tab_name: Name of the tab 
+
+        :param tab_name: Name of the tab
         :param visibility: Visibility mode ('auto', 'always', 'never')
         """
         try:
             if visibility not in ['auto', 'always', 'never']:
                 raise ValueError("Invalid visibility mode. Must be 'auto', 'always', or 'never'")
-            
+
             setting_key = f'{tab_name}_tab'
             self.config.set('Tabs', setting_key, visibility)
             self.save_config()
@@ -606,17 +614,17 @@ class ConfigManager:
             if setting_type == List[str]:
                 return value.split(',') if value.strip() else []
             return setting_type(value)
-        
+
         # Return default directly, without modifying self.config
         if section in self.AVAILABLE_SETTINGS and key in self.AVAILABLE_SETTINGS[section]:
             return self.AVAILABLE_SETTINGS[section][key].get('default', default)
-        
+
         return default
 
     def setting_exists(self, section, key):
         """Check if a setting exists in the configuration."""
         return section in self.config and key in self.config[section]
-        
+
     def _log(self, message, section=None):
         """Centralized logging method."""
         if self.debug:
@@ -5468,14 +5476,14 @@ class ViewRoms:
             'show_move_artwork_button': ctk.CTkButton(
                 button_frame,
                 text="Move Artwork",
-                command=self.move_artwork,
+                command=lambda: self.show_instructions_popup('show_move_artwork_button'),
                 width=100,
                 font=self.button_font
             ),
             'show_move_roms_button': ctk.CTkButton(
                 button_frame,
                 text="Move ROMs",
-                command=self.move_roms,
+                command=lambda: self.show_instructions_popup('show_move_roms_button'),
                 width=100,
                 font=self.button_font
             )
@@ -5511,25 +5519,112 @@ class ViewRoms:
 
         # Pack buttons based on visibility setting
         self.update_button_visibility()
-        #self.toggle_button_visibility(show_move_artwork=False, show_move_roms=True)
 
-    '''
-    #THIS IS AN EXAMPLE OF HIDING ONLY THE MOVE ROMS BUTTON.
-    def update_button_visibility(self):
-        """Update the visibility of the buttons based on the configuration."""
-        for setting_key, button in self.buttons.items():
-            if setting_key == 'show_move_artwork_button':
-                button.pack(side='right', padx=5)  # Always show the Move Artwork button
-            else:
-                show_button = self.config_manager.setting_exists('Settings', setting_key) and \
-                              self.config_manager.get_setting('Settings', setting_key, False)
-                if show_button:
-                    button.pack(side='right', padx=5)
-                else:
-                    button.pack_forget()
-    '''
-    
-    #THIS IS AN EXAMPLE OF HIDING ALL THE BUTTONS. ATM IM ALWAYS SHOWING THE ARTOWKR BUTTON
+    def show_instructions_popup(self, button_key):
+        """Show the instructions popup for the given button."""
+        def show_popup():
+            popup = tk.Toplevel(self.parent_tab)
+            popup.title("Instructions")
+            popup.geometry("600x400")  # Slightly increased height to accommodate title
+            popup.configure(bg='#2c2c2c')
+
+            # Center the window on the screen
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            window_width = 600
+            window_height = 400
+            x = (screen_width // 2) - (window_width // 2)
+            y = (screen_height // 2) - (window_height // 2)
+            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+            # Title label
+            title_text = "Instructions for Moving Artwork" if button_key == 'show_move_artwork_button' else "Instructions for Removing ROMs"
+            title_label = ctk.CTkLabel(
+                popup,
+                text=title_text,
+                wraplength=500,
+                text_color='white',
+                font=('Helvetica', 18, 'bold')  # Larger and bold
+            )
+            title_label.pack(pady=(20, 10))  # Reduced bottom padding
+
+            # Instructions text box
+            instructions_text = ctk.CTkTextbox(
+                popup,
+                width=500,
+                height=200,
+                text_color='white',
+                font=('Helvetica', 14),
+                fg_color='#2c2c2c',
+                state='normal'  # Allows setting text
+            )
+            instructions_text.insert('1.0', self.get_instructions(button_key))
+            instructions_text.configure(state='disabled')  # Make it read-only
+            instructions_text.pack(pady=(10, 20), padx=20)
+
+            # Do not display again checkbox
+            do_not_show_var = tk.BooleanVar()
+            do_not_show_checkbox = ctk.CTkCheckBox(
+                popup,
+                text="Do not show again",
+                variable=do_not_show_var,
+                font=('Helvetica', 12)
+            )
+            do_not_show_checkbox.pack(pady=10)
+
+            # OK button
+            def on_ok():
+                if do_not_show_var.get():
+                    self.config_manager.config.set('Settings', f'show_{button_key}_instructions', 'False')
+                    self.config_manager.save_config()
+                popup.destroy()
+                self.execute_button_action(button_key)
+
+            ok_button = ctk.CTkButton(
+                popup,
+                text="OK",
+                command=on_ok,
+                fg_color='#4CAF50',
+                hover_color='#45a049'
+            )
+            ok_button.pack(pady=20)
+
+            popup.transient(self.parent_tab)
+            popup.grab_set()
+            popup.update()
+
+        # Check if the popup should be shown
+        show_popup_flag = self.config_manager.get_setting('Settings', f'show_{button_key}_instructions', 'True')
+        if show_popup_flag == 'True':
+            show_popup()
+        else:
+            self.execute_button_action(button_key)
+
+    def execute_button_action(self, button_key):
+        """Execute the action associated with the button."""
+        if button_key == 'show_move_artwork_button':
+            self.move_artwork()
+        elif button_key == 'show_move_roms_button':
+            self.move_roms()
+
+    def get_instructions(self, button_key):
+        """Return the instructions text for the given button."""
+        if button_key == 'show_move_artwork_button':
+            return (
+                "1. Select a Collection from the dropdown menu.\n\n"
+                "2. All artwork that does not have an associated ROM file under the system's ROM folder will be moved to medium_artwork_removed.\n"
+            )
+        elif button_key == 'show_move_roms_button':
+            return (
+                "1. Select a Collection from the dropdown menu.\n\n"
+                "2. Click 'Move ROMs' and navigate to the text file containing the ROMs.\n\n"
+                "3. Each ROM should be on a new line. No file extensions.\n\n"
+                "4. All ROMs in the text file will be moved to the Collections folder under roms_removed.\n\n"
+                "5. Move Artwork will move all the artwork for the selected ROMs to medium_artwork_removed.\n"
+            )
+        return ""
+
+
     def update_button_visibility(self):
         """Update the visibility of the buttons based on the configuration."""
         for setting_key, button in self.buttons.items():
@@ -5539,8 +5634,7 @@ class ViewRoms:
                 button.pack(side='right', padx=5)
             else:
                 button.pack_forget()
-           
-       
+
     def toggle_button_visibility(self, **kwargs):
         """Toggle the visibility of the buttons internally."""
         for setting_key, button in self.buttons.items():
@@ -5710,7 +5804,6 @@ class ViewRoms:
         }
 
         return rom_list, simple_rom_collections
-
 
     def handle_sort_change(self, _):
         """Handle sorting toggle change"""
@@ -6290,8 +6383,6 @@ class ViewRoms:
             messagebox.showerror("Error", f"Error moving artwork: {str(e)}")
             self.status_bar.configure(text="Error moving artwork")
 
-
-
     def resolve_path(self, path, variables):
         for var, value in variables.items():
             path = path.replace(f"%{var}%", value)
@@ -6325,8 +6416,6 @@ class ViewRoms:
         popup.update()
         return popup
 
-    
-    
     def show_scrollable_list_with_prompt(self, title, items):
         confirm_window = tk.Toplevel()
         confirm_window.title(title)
@@ -6396,6 +6485,7 @@ class ViewRoms:
         cancel_button.pack(side='left', padx=5)
 
         confirm_window.grab_set()  # Make the window modal
+
 
 # Main application driver
 if __name__ == "__main__":
