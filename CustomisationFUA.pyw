@@ -5935,7 +5935,6 @@ class ViewRoms:
             messagebox.showerror("Error", f"Error moving artwork: {str(e)}")
             self.status_bar.configure(text="Error moving artwork")
 
-
     def move_roms(self):
         """Move ROMs based on a list from a text file"""
         try:
@@ -6062,13 +6061,13 @@ class ViewRoms:
             self.status_bar.configure(text=f"Moved {moved_count} ROMs to 'roms_REMOVED' folder")
 
             # Write the list of moved ROMs to a text file
-            moved_roms_log_path = os.path.join(moved_roms_path, 'moved_roms.txt')
+            moved_roms_log_path = os.path.join(moved_roms_path, '_moved_roms.txt')
             with open(moved_roms_log_path, 'w') as log_file:
                 for rom in moved_roms:
                     log_file.write(f"{rom}\n")
 
             # Write the list of not found ROMs to a text file
-            not_found_roms_log_path = os.path.join(moved_roms_path, 'not_found_roms.txt')
+            not_found_roms_log_path = os.path.join(moved_roms_path, '_roms_not_found.txt')
             with open(not_found_roms_log_path, 'w') as log_file:
                 for rom in not_found_roms:
                     log_file.write(f"{rom}\n")
@@ -6079,14 +6078,182 @@ class ViewRoms:
                 for rom in not_found_roms:
                     print(rom)
 
-            # Show scrollable list of moved ROMs with artwork prompt
-            self.show_scrollable_list_with_prompt("ROMs Moved", moved_roms)
+            # Call the new method to move artwork for the moved ROMs
+            self.move_artwork_for_roms(moved_roms)
 
         except Exception as e:
             import traceback
             traceback.print_exc()  # This will print the full stack trace
             messagebox.showerror("Error", f"Error moving ROMs: {str(e)}")
             self.status_bar.configure(text="Error moving ROMs")
+
+    def move_artwork_for_roms(self, rom_list):
+        """Move artwork files for the specified ROMs"""
+        try:
+            # Get the selected collection
+            selected_collection = self.collection_var.get()
+            if selected_collection == "All Collections":
+                messagebox.showerror("Error", "Please select a specific collection.")
+                return
+
+            root_dir = os.getcwd()
+            collections_dir = os.path.join(root_dir, 'collections')
+            collection_path = os.path.join(collections_dir, selected_collection)
+            settings_path = os.path.join(collection_path, 'settings.conf')
+
+            # Default to 'roms' folder if no specific path found
+            rom_folder = os.path.join(collection_path, 'roms')
+            variables = {
+                "BASE_ITEM_PATH": collections_dir,
+                "ITEM_COLLECTION_NAME": selected_collection
+            }
+
+            # Try to read list.path from settings.conf
+            if os.path.isfile(settings_path):
+                with open(settings_path, 'r') as settings_file:
+                    for line in settings_file:
+                        line = line.strip()
+                        if line.startswith("list.path"):
+                            rom_folder = line.split("=", 1)[1].strip()
+                            rom_folder = self.resolve_path(rom_folder, variables)
+                            break
+
+            # Validate ROM folder
+            if not os.path.isdir(rom_folder):
+                messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
+                return
+
+            # Source path for medium artwork (with collection name)
+            source_path = os.path.join(collections_dir, selected_collection, 'medium_artwork')
+            if not os.path.exists(source_path):
+                messagebox.showerror("Error", f"Medium artwork folder not found: {source_path}")
+                return
+
+            # Convert rom_list to a set of lowercase ROM names (without extension)
+            rom_names_set = set(rom.lower() for rom in rom_list)
+
+            # Find artwork files for the specified ROMs
+            artwork_to_move = set()
+            for subfolder in os.listdir(source_path):
+                subfolder_path = os.path.join(source_path, subfolder)
+                if os.path.isdir(subfolder_path):
+                    for file in os.listdir(subfolder_path):
+                        file_base_name = os.path.splitext(file)[0].lower()
+                        if file_base_name in rom_names_set:
+                            artwork_to_move.add(file_base_name)
+
+            # Debugging: Print the number of artwork files identified
+            print(f"Artwork to move: {len(artwork_to_move)}")
+
+            # If no artwork to move, exit
+            if not artwork_to_move:
+                messagebox.showinfo("No Artwork", "No artwork found for the specified ROMs.")
+                return
+
+            # Custom confirmation dialog with scrollable list
+            def create_scrollable_confirmation():
+                confirm_window = tk.Toplevel()
+                confirm_window.title(f"Confirm Artwork Move - {selected_collection}")
+                confirm_window.geometry("400x500")
+                confirm_window.configure(bg='#2c2c2c')
+
+                # Center the window on the screen
+                screen_width = confirm_window.winfo_screenwidth()
+                screen_height = confirm_window.winfo_screenheight()
+                window_width = 400
+                window_height = 500
+                x = (screen_width // 2) - (window_width // 2)
+                y = (screen_height // 2) - (window_height // 2)
+                confirm_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+                # Label with improved styling
+                label = ctk.CTkLabel(
+                    confirm_window,
+                    text=f"Are you sure you want to move artwork for these {len(artwork_to_move)} ROMs in the '{selected_collection}' collection?",
+                    wraplength=380,
+                    text_color='white',
+                    font=('Helvetica', 14)
+                )
+                label.pack(pady=10, padx=10)
+
+                # Scrollable text widget with dark theme
+                text_frame = ctk.CTkFrame(confirm_window, fg_color='#3c3c3c')
+                text_frame.pack(expand=True, fill='both', padx=10, pady=10)
+
+                text_widget = ctk.CTkTextbox(
+                    text_frame,
+                    height=300,
+                    text_color='white',
+                    fg_color='#3c3c3c',
+                )
+                text_widget.pack(expand=True, fill='both')
+
+                # Sort and insert ROM names
+                for rom in sorted(artwork_to_move):
+                    text_widget.insert('end', f"{rom}\n")
+                text_widget.configure(state='disabled')  # Make read-only
+
+                # Buttons frame with improved styling
+                button_frame = ctk.CTkFrame(confirm_window, fg_color='#2c2c2c')
+                button_frame.pack(pady=10)
+
+                def on_confirm():
+                    confirm_window.destroy()
+                    proceed_with_move()
+
+                confirm_button = ctk.CTkButton(
+                    button_frame,
+                    text="Confirm",
+                    command=on_confirm,
+                    fg_color='#4CAF50',
+                    hover_color='#45a049'
+                )
+                confirm_button.pack(side='left', padx=5)
+
+                cancel_button = ctk.CTkButton(
+                    button_frame,
+                    text="Cancel",
+                    command=confirm_window.destroy,
+                    fg_color='#f44336',
+                    hover_color='#da190b'
+                )
+                cancel_button.pack(side='left', padx=5)
+
+                confirm_window.grab_set()  # Make the window modal
+
+            def proceed_with_move():
+                # Move artwork logic
+                moved_artwork_path = os.path.join(collection_path, 'medium_artwork_REMOVED')
+
+                for subfolder in os.listdir(source_path):
+                    subfolder_path = os.path.join(source_path, subfolder)
+                    if os.path.isdir(subfolder_path):
+                        dest_subfolder = os.path.join(moved_artwork_path, subfolder)
+                        artwork_found = False
+
+                        for file in os.listdir(subfolder_path):
+                            file_base_name = os.path.splitext(file)[0].lower()
+                            if file_base_name in artwork_to_move:
+                                artwork_found = True
+                                file_path = os.path.join(subfolder_path, file)
+                                if not os.path.exists(dest_subfolder):
+                                    os.makedirs(dest_subfolder)
+                                shutil.move(file_path, os.path.join(dest_subfolder, file))
+
+                        # Only create the destination folder if artwork was found
+                        if artwork_found and not os.path.exists(dest_subfolder):
+                            os.makedirs(dest_subfolder)
+
+                self.status_bar.configure(text="Artwork for specified ROMs moved successfully")
+
+            # Show custom confirmation dialog
+            create_scrollable_confirmation()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error moving artwork: {str(e)}")
+            self.status_bar.configure(text="Error moving artwork")
+
+
 
     def resolve_path(self, path, variables):
         for var, value in variables.items():
@@ -6121,6 +6288,8 @@ class ViewRoms:
         popup.update()
         return popup
 
+    
+    
     def show_scrollable_list_with_prompt(self, title, items):
         confirm_window = tk.Toplevel()
         confirm_window.title(title)
