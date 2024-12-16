@@ -119,7 +119,7 @@ class FilterGamesApp:
 
         # MultiPath Themes tab
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
-            self.multi_path_themes_tab = self.tabview.add("AURA Themes")
+            self.multi_path_themes_tab = self.tabview.add("ALPHA Themes")
             self.multi_path_themes = MultiPathThemes(self.multi_path_themes_tab)
 
         # Advanced Configurations tab
@@ -686,17 +686,17 @@ class ConfigManager:
         # Return arrays of paths for ROMs, videos, and logos
         return {
             'roms': [
-                "- Themes AURA",
+                "- Themes ALPHA",
                 "collections/zzzShutdown/roms",
                 "collections/zzzBezels/roms"
             ],
             'videos': [
-                "collections/zzzAura/medium_artwork/video",
+                "collections/zzzAlpha/medium_artwork/video",
                 "collections/zzzShutdown/medium_artwork/video",
                 "collections/zzzBezels/medium_artwork/video"
             ],
             'logos': [
-                "collections/zzzAura/medium_artwork/logo",
+                "collections/zzzAlpha/medium_artwork/logo",
                 "collections/zzzShutdown/medium_artwork/logo",
                 "collections/zzzBezels/medium_artwork/logo"
             ]
@@ -4723,7 +4723,9 @@ class AdvancedConfigs:
             "- Themes Arcade", 
             "- Themes Console", 
             "- Themes Handheld", 
-            "- Themes Home"
+            "- Themes Home",
+            "- Themes ALPHA",
+            "- Themes Character"
             ]
 
         # Choose the appropriate config folders based on 'playlist_location'
@@ -4774,9 +4776,6 @@ class AdvancedConfigs:
         if self.playlist_location == 'U':
             self.folder_to_tab_mapping.update({
                 "- Themes Arcade": "Themes",
-                "- Themes Console": "Themes Console",
-                "- Themes Handheld": "Themes Handheld",
-                "- Themes Home": "Themes Home",
                 "- Themes 2nd Screen": "2nd Screen",
                 "- Bezels Glass and Scanlines": "Bezels & Effects"
             })
@@ -5047,10 +5046,13 @@ class AdvancedConfigs:
             # List of theme sub-folders to check and their corresponding tab names
             theme_sub_folders = [
                 ("- Themes Arcade", "Themes"),
+                ("- Themes ALPHA", "Themes ALPHA"),
                 ("- Themes Console", "Themes Console"),
+                ("- Themes Handheld", "Themes Handheld"),
+                ("- Themes Character", "Themes Character"),
                 ("- Themes Home", "Themes Home"),
                 # Optionally, specify other sub-folders explicitly
-                ("- Themes Handheld", "Themes Handheld")
+                
             ]
 
             # Add sub-tabs only if their corresponding folders exist
@@ -5078,6 +5080,8 @@ class AdvancedConfigs:
                         # Updated to explicitly check each folder and its corresponding tab
                         tab_mappings = {
                             "- Themes Arcade": "Themes",
+                            "- Themes ALPHA": "Themes ALPHA",
+                            "- Themes Character": "Themes Character",
                             "- Themes Console": "Themes Console",
                             "- Themes Home": "Themes Home",
                             "- Themes Handheld": "Themes Handheld"
@@ -5168,7 +5172,7 @@ class AdvancedConfigs:
                         if self.playlist_location == 'U':
                             # Check which theme sub-folders actually exist
                             sub_tabs = []
-                            potential_sub_tabs = ["Themes", "Themes Console", "Themes Handheld", "Themes Home"]
+                            potential_sub_tabs = ["Themes", "Themes Console", "Themes Handheld", "Themes Home", "Themes ALPHA", "Themes Character"]
                             
                             for sub_tab in potential_sub_tabs:
                                 # Convert sub-tab name to corresponding folder name
@@ -5176,7 +5180,9 @@ class AdvancedConfigs:
                                     "Themes": "- Themes Arcade",
                                     "Themes Console": "- Themes Console",
                                     "Themes Handheld": "- Themes Handheld",
-                                    "Themes Home": "- Themes Home"
+                                    "Themes Home": "- Themes Home",
+                                    "Themes ALPHA": "- Themes ALPHA",
+                                    "Themes Character": "- Themes Character"
                                 }
                                 
                                 # Check if the corresponding folder exists and has scripts
@@ -5700,8 +5706,8 @@ class ViewRoms:
         # Default exclude lists
         default_collection_excludes = [
             "*Collection*", "*zzzRecord*", "*zzzSettings*", "*zzzShutdown*",
-            "*PCGameLauncher*", "*FBNeo*", "*SETTINGS AURA*", "*SETTINGS BEZELS*",
-            "*MAME*", "*Settings*"
+            "*PCGameLauncher*", "*FBNeo*", "*zzzAlpha*", "*SETTINGS BEZELS*",
+            "*MAME*", "*Settings*", "*zzzBezels*"
         ]
 
         default_rom_excludes = ["*cmd*"]
