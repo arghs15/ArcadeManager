@@ -426,7 +426,7 @@ class ConfigManager:
             current_version = self.config.get('DEFAULT', self.CONFIG_VERSION_KEY, fallback=None)
 
             # If version is missing or different, reset configuration
-            if current_version != self.CONFIG_FILE_VERSION:
+            if current_version is None or (current_version != self.CONFIG_FILE_VERSION and current_version != '528'):
                 self._log(f"Config version mismatch. Current: {current_version}, Expected: {self.CONFIG_FILE_VERSION}")
                 self._reset_config_to_defaults()
 
