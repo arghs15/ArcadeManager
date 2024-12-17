@@ -49,7 +49,17 @@ class FilterGamesApp:
         
     def __init__(self, root):
         self.root = root
-        self.root.title("Customisation")
+        #self.root.title("Customisation")
+
+        # If running in a development environment, use the script name without the extension
+        script_name = os.path.splitext(os.path.basename(__file__))[0]
+
+        # Check if the script name is 'noname'
+        if script_name == 'noname':
+            self.root.title("")  # No title
+        else:
+            self.root.title(script_name)
+
         self.root.geometry("1920x1080")  # Set the initial size (you can adjust as needed)
         self.root.resizable(True, True)  # Enable window resizing
 
@@ -5700,10 +5710,10 @@ class ViewRoms:
                                     list(rom_collections[filename_without_extension]['collections'])
 
         # Print duplicate ROMs for debugging
-        if duplicate_roms:
-            print("\nDuplicate ROMs found:")
-            for rom, collections in duplicate_roms.items():
-                print(f"{rom} found in collections: {', '.join(collections)}")
+        #if duplicate_roms:
+        #    print("\nDuplicate ROMs found:")
+        #    for rom, collections in duplicate_roms.items():
+        #        print(f"{rom} found in collections: {', '.join(collections)}")
 
         # Convert rom_collections to a format that maps ROMs to their most specific collection
         simple_rom_collections = {
