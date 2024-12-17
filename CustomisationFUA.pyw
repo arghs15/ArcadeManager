@@ -172,7 +172,7 @@ class FilterGamesApp:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # Add exe file selector on the right side
-        self.exe_selector = ExeFileSelector(self.exe_selector_frame) 
+        self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
         
         # Bottom frame for Appearance Mode options
         #self.add_appearance_mode_frame()
@@ -311,6 +311,12 @@ class ConfigManager:
                 'description': 'Show Move ROMs instructions',
                 'type': bool,
                 'hidden': True
+            },
+            'close_gui_after_running': {
+                'default': 'True',
+                'description': 'Close GUI after running executable',
+                'type': bool,
+                'hidden': False
             }
         },
         'Controls': {
@@ -435,10 +441,29 @@ class ConfigManager:
             # Check for version key specifically in DEFAULT section
             current_version = self.config.get('DEFAULT', self.CONFIG_VERSION_KEY, fallback=None)
 
-            # If version is missing or different, reset configuration
-            if current_version is None or (current_version != self.CONFIG_FILE_VERSION and current_version != '528'):
-                self._log(f"Config version mismatch. Current: {current_version}, Expected: {self.CONFIG_FILE_VERSION}")
+            # Preserve 528 version or set to current version if missing
+            if current_version is None or current_version not in ['528', self.CONFIG_FILE_VERSION]:
+                self._log(f"Config version updating. Old version: {current_version}, New version: {self.CONFIG_FILE_VERSION}")
+                # Ensure we don't completely reset the config
+                old_config = dict(self.config)
                 self._reset_config_to_defaults()
+                
+                # Restore non-hidden settings from the old config
+                for section in old_config.sections():
+                    if section != 'DEFAULT':
+                        for key, value in old_config[section].items():
+                            if section not in self.config or key not in self.config[section]:
+                                try:
+                                    setting_type = self.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('type', str)
+                                    if setting_type == bool:
+                                        value = str(value).lower() in ['true', '1', 'yes']
+                                    elif setting_type == List[str]:
+                                        value = ','.join(value) if isinstance(value, list) else value
+                                    self.config[section][key] = str(value)
+                                except Exception as e:
+                                    print(f"Could not restore setting {section}.{key}: {e}")
+                
+                self.save_config()
 
         except Exception as e:
             self._log(f"Error during version check: {e}")
@@ -485,21 +510,57 @@ class ConfigManager:
 
     def save_config(self):
         """
-        Write configuration to file, ensuring version is in DEFAULT section.
+        Write configuration to file, but only if changes have been made.
         """
-        # Ensure DEFAULT section exists with version
-        if 'DEFAULT' not in self.config:
-            self.config['DEFAULT'] = {}
-
-        # Always update version in DEFAULT section
-        self.config['DEFAULT'][self.CONFIG_VERSION_KEY] = self.CONFIG_FILE_VERSION
-
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
 
-        # Write config to file
+        # Check if the current configuration differs from the existing file
+        if os.path.exists(self.config_path):
+            # Read the existing configuration
+            existing_config = configparser.ConfigParser()
+            existing_config.read(self.config_path)
+
+            # Compare the current configuration with the existing one
+            if self._configs_are_identical(existing_config, self.config):
+                # No changes, so no need to write
+                return
+
+        # Write config to file if there are changes
         with open(self.config_path, 'w') as configfile:
             self.config.write(configfile)
+
+    def _configs_are_identical(self, config1, config2):
+        """
+        Compare two ConfigParser configurations for equality.
+        
+        :param config1: First configuration to compare
+        :param config2: Second configuration to compare
+        :return: True if configurations are identical, False otherwise
+        """
+        # Compare sections
+        if set(config1.sections()) != set(config2.sections()):
+            return False
+
+        # Compare values in each section
+        for section in config1.sections():
+            if section not in config2:
+                return False
+            
+            # Compare keys in the section
+            if set(config1[section].keys()) != set(config2[section].keys()):
+                return False
+            
+            # Compare values
+            for key in config1[section]:
+                # Normalize values (convert to string for comparison)
+                val1 = str(config1[section][key]).strip()
+                val2 = str(config2[section][key]).strip()
+                
+                if val1 != val2:
+                    return False
+
+        return True
 
     def initialize_config(self):
         """Initialize the INI file with only visible settings if it doesn't exist."""
@@ -959,7 +1020,7 @@ class ConfigManager:
             self.config.set('Settings', 'settings_file', settings_value)
             self.save_config()
         except Exception as e:
-            print(f"Error updating settings file: {str(e)}")    
+            print(f"Error updating settings file: {str(e)}")     
 
 class Controls:
     def __init__(self, parent):
@@ -1838,14 +1899,16 @@ class Controls:
         self.parent.after(1000, self.check_controller)
 
 class ExeFileSelector:
-    def __init__(self, parent_frame):
-        # Store a reference to the parent frame
+    def __init__(self, parent_frame, config_manager):
         self.parent_frame = parent_frame
-        
-        # Create a new frame for the .exe radio buttons with fixed size
-        self.exe_frame = ctk.CTkFrame(parent_frame, width=300, height=400, corner_radius=10)  # Fixed width and height
+        self.config_manager = config_manager
+
+        # Retrieve the close_gui_after_running setting directly from the config manager
+        close_gui_after_running = self.config_manager.get_setting('Settings', 'close_gui_after_running', True)
+
+        self.exe_frame = ctk.CTkFrame(parent_frame, width=300, height=400, corner_radius=10)
         self.exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)
-        
+
         parent_frame.grid_columnconfigure(1, weight=1)
         parent_frame.grid_rowconfigure(1, weight=1)
 
@@ -1857,83 +1920,69 @@ class ExeFileSelector:
         try:
             # Load the original image
             logo_original = Image.open(logo_image_path)
-            
-            # Set maximum dimensions
-            MAX_WIDTH = 300  # Maximum width in pixels
-            MAX_HEIGHT = 150  # Maximum height in pixels
-            
             # Calculate scaled dimensions while maintaining aspect ratio
+            MAX_WIDTH = 300
+            MAX_HEIGHT = 150
             width_ratio = MAX_WIDTH / logo_original.width
             height_ratio = MAX_HEIGHT / logo_original.height
             scale_ratio = min(width_ratio, height_ratio)
-            
             new_width = int(logo_original.width * scale_ratio)
             new_height = int(logo_original.height * scale_ratio)
-            
             # Create the CTkImage with the calculated dimensions
             logo_image = ctk.CTkImage(
                 light_image=logo_original,
                 dark_image=logo_original,
                 size=(new_width, new_height)
             )
-            
             # Add the logo label to the exe_frame
             logo_label = ctk.CTkLabel(self.exe_frame, text="", image=logo_image)
             logo_label.pack(pady=(10, 0))
-            
         except Exception as e:
-            # Fallback in case loading the image fails
             title_label = ctk.CTkLabel(self.exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
             title_label.pack(padx=10, pady=10)
             print(f"Error loading logo: {e}")
-
         # Create a scrollable frame inside exe_frame to hold the radio buttons
-        self.scrollable_frame = ctk.CTkScrollableFrame(self.exe_frame, width=300, height=200, corner_radius=10)  # Set fixed width
+        self.scrollable_frame = ctk.CTkScrollableFrame(self.exe_frame, width=300, height=200, corner_radius=10)
         self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
         # Find all .exe files in the directory
         self.exe_files = self.find_exe_files()
-        
-        # Variable to hold the selected exe file
-        # Default to the first exe file if available
         default_exe = self.exe_files[0] if self.exe_files else ""
         self.exe_var = tk.StringVar(value=default_exe)
-        
         # Add a radio button for each .exe file found inside the scrollable frame
         for exe in self.exe_files:
             rbutton = ctk.CTkRadioButton(self.scrollable_frame, text=exe, variable=self.exe_var, value=exe)
             rbutton.pack(anchor="w", padx=20, pady=5)
 
-        # Add a switch to control closing the GUI
+        # Create the switch with the retrieved setting
+        self.close_gui_var = tk.BooleanVar(value=close_gui_after_running)
         self.close_gui_switch = ctk.CTkSwitch(
             self.exe_frame,
             text="Close GUI After Running",
             onvalue=True,
             offvalue=False,
-            variable=tk.BooleanVar(value=True),
+            variable=self.close_gui_var,
             command=self.update_switch_text
         )
         self.close_gui_switch.pack(pady=10)
-        
         # Update switch text initially
         self.update_switch_text()
-        
         # Add a button to run the selected exe
         run_exe_button = ctk.CTkButton(self.exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
         run_exe_button.pack(pady=20)
-        
         # Call a method to add the batch file dropdown and button frame below this frame
         self.add_batch_file_dropdown(parent_frame)
 
     def update_switch_text(self):
-        if self.close_gui_switch.get():
-            # True/default Value - Gui will close on run
+        # Update the visual text based on the current switch state
+        if self.close_gui_var.get():
             self.close_gui_switch.configure(text="Exit the GUI after execution")
         else:
-            # False value - Gui will stay open on run
             self.close_gui_switch.configure(text="Stay in the GUI after execution")
+        
+        # Save the current switch state to the configuration
+        self.config_manager.config['Settings']['close_gui_after_running'] = str(self.close_gui_var.get()).lower()
+        self.config_manager.save_config()
 
-    
     def add_batch_file_dropdown(self, parent_frame):
         # Create a frame for batch file dropdown below the exe frame
         self.batch_file_frame = ctk.CTkFrame(parent_frame, corner_radius=10, fg_color="transparent")
