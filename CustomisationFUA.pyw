@@ -4699,62 +4699,37 @@ class MultiPathThemes:
         if not first_theme_found:
             print(f"No themes found in folder: {current_rom_folder}")
 
-
 class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
         self.config_manager = ConfigManager()  # Assuming ConfigManager instance is available
-        self.playlist_location = self.config_manager.get_playlist_location()  # Get location ('S', 'D', or 'U')
 
-        # Define base config folders for non-'U' mode
-        self.config_folders_default = [
+        # Define potential config folders for all playlist locations
+        self.config_folders_all = [
             "- Advanced Configs", 
             "- Themes", 
             "- Themes 2nd Screen", 
-            "- Bezels Glass and Scanlines"
-            ]
-
-        # Define config folders for 'U' mode
-        self.config_folders_u = [
-            "- Advanced Configs", 
-            "- Mods", 
-            "- Themes 2nd Screen", 
+            "- Bezels Glass and Scanlines",
+            "- Mods",
             "- Themes Arcade", 
+            "- Themes ALPHA",
             "- Themes Console", 
             "- Themes Handheld", 
             "- Themes Home",
-            "- Themes ALPHA",
             "- Themes Character"
-            ]
+        ]
 
-        # Choose the appropriate config folders based on 'playlist_location'
-        if self.playlist_location == 'U':
-            self.config_folders = self.config_folders_u
-        else:
-            self.config_folders = self.config_folders_default
+        # Filter config folders to only those that exist
+        self.config_folders = [
+            folder for folder in self.config_folders_all 
+            if os.path.isdir(os.path.join(self.base_path, folder))
+        ]
 
-        # Define base keywords
+        # Keep the existing tab keywords and other initializations
         self.tab_keywords = {
             "Favorites": None,
             "Themes": None,
-            "2nd Screen": None,
-            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],
-            "Overlays": ["OVERLAY"],
-            "InigoBeats": ["MUSIC"],
-            "Attract": ["Attract", "Scroll"],           
-            "Monitor": ["Monitor"],
-            "Splash": ["Splash"],
-            "Front End": ["FRONT END"],
-            "Other": None
-        }
-        
-        # Modify keywords for 'U' mode if necessary
-        if self.playlist_location == 'U':
-            self.tab_keywords = {
-            "Favorites": None,
-            "Themes": None,
-            "2nd Screen": None,
             "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],
             "Overlays": ["OVERLAY"],
             "InigoBeats": ["MUSIC"],
@@ -4765,21 +4740,25 @@ class AdvancedConfigs:
             "Other": None
         }
 
-        # Define folder to tab mapping
+        # Updated folder to tab mapping to handle both U and non-U cases
         self.folder_to_tab_mapping = {
-                "- Themes": "Themes",
-                "- Themes 2nd Screen": "2nd Screen",
-                "- Bezels Glass and Scanlines": "Bezels & Effects"
+            "- Themes": "Themes",
+            "- Themes Arcade": "Themes",   
+            "- Bezels Glass and Scanlines": "Bezels & Effects"
         }
-        
-        # Modify folder_to_tab_mapping for 'U' mode to include new mappings
-        if self.playlist_location == 'U':
-            self.folder_to_tab_mapping.update({
-                "- Themes Arcade": "Themes",
-                "- Themes 2nd Screen": "2nd Screen",
-                "- Bezels Glass and Scanlines": "Bezels & Effects"
-            })
-        
+
+        # List of potential theme sub-tabs in order of priority
+        self.potential_sub_tabs = [
+            ("- Themes", "Themes"),
+            ("- Themes Arcade", "Themes"),
+            ("- Themes Console", "Themes Console"),
+            ("- Themes Handheld", "Themes Handheld"),
+            ("- Themes Home", "Themes Home"),
+            ("- Themes ALPHA", "Themes ALPHA"),
+            ("- Themes Character", "Themes Character"),
+            ("- Themes 2nd Screen", "2nd Screen")
+        ]
+            
         self.tab_radio_vars = {}
         self.radio_button_script_mapping = {}
         self.radio_buttons = {}
@@ -5041,30 +5020,7 @@ class AdvancedConfigs:
         # Initialize an empty script categories dictionary
         script_categories = {tab: {} for tab in self.tab_keywords}
 
-        # If in 'U' mode, check for existence of theme sub-folders
-        if self.playlist_location == 'U':
-            # List of theme sub-folders to check and their corresponding tab names
-            theme_sub_folders = [
-                ("- Themes Arcade", "Themes"),
-                ("- Themes ALPHA", "Themes ALPHA"),
-                ("- Themes Console", "Themes Console"),
-                ("- Themes Handheld", "Themes Handheld"),
-                ("- Themes Character", "Themes Character"),
-                ("- Themes Home", "Themes Home"),
-                # Optionally, specify other sub-folders explicitly
-                
-            ]
-
-            # Add sub-tabs only if their corresponding folders exist
-            for folder, tab_name in theme_sub_folders:
-                folder_path = os.path.join(self.base_path, folder)
-                if os.path.isdir(folder_path):
-                    # Check if there are any scripts in the folder
-                    scripts = [f for f in os.listdir(folder_path) if f.endswith(".bat") or f.endswith(".cmd")]
-                    if scripts:
-                        script_categories[tab_name] = {}
-
-        # Modify folder iteration to check for tab existence
+        # Iterate through config folders
         for folder in self.config_folders:
             folder_path = os.path.join(self.base_path, folder)
             if not os.path.isdir(folder_path):
@@ -5075,33 +5031,14 @@ class AdvancedConfigs:
                 if filename.endswith(".bat") or filename.endswith(".cmd"):
                     added_to_tab = False
 
-                    # Special handling for 'U' mode theme sub-tabs
-                    if self.playlist_location == 'U':
-                        # Updated to explicitly check each folder and its corresponding tab
-                        tab_mappings = {
-                            "- Themes Arcade": "Themes",
-                            "- Themes ALPHA": "Themes ALPHA",
-                            "- Themes Character": "Themes Character",
-                            "- Themes Console": "Themes Console",
-                            "- Themes Home": "Themes Home",
-                            "- Themes Handheld": "Themes Handheld"
-                        }
-                        
-                        if folder in tab_mappings:
-                            tab_name = tab_mappings[folder]
-                            # Only add if the tab actually exists in script_categories
-                            if tab_name in script_categories:
-                                script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
-                                added_to_tab = True
-
-                    # Rest of the existing categorization logic remains the same
-                    if not added_to_tab and folder in self.folder_to_tab_mapping:
+                    # Check folder to tab mapping first
+                    if folder in self.folder_to_tab_mapping:
                         tab_name = self.folder_to_tab_mapping.get(folder)
                         if tab_name in script_categories:
                             script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
                             added_to_tab = True
                     
-                    # Existing keyword-based categorization
+                    # If not added by folder mapping, try keyword-based categorization
                     if not added_to_tab:
                         for tab, keywords in self.tab_keywords.items():
                             if keywords:
@@ -5166,124 +5103,90 @@ class AdvancedConfigs:
         for tab_name, scripts in script_categories.items():
             if scripts or tab_name == "Favorites":
                 try:
-                    print(f"Creating tab: {tab_name}")  # Debugging print statement
-                    
+                    # Special handling for Themes tab with dynamic sub-tabs
                     if tab_name == "Themes":
-                        if self.playlist_location == 'U':
-                            # Check which theme sub-folders actually exist
-                            sub_tabs = []
-                            potential_sub_tabs = ["Themes", "Themes Console", "Themes Handheld", "Themes Home", "Themes ALPHA", "Themes Character"]
-                            
-                            for sub_tab in potential_sub_tabs:
-                                # Convert sub-tab name to corresponding folder name
-                                folder_map = {
-                                    "Themes": "- Themes Arcade",
-                                    "Themes Console": "- Themes Console",
-                                    "Themes Handheld": "- Themes Handheld",
-                                    "Themes Home": "- Themes Home",
-                                    "Themes ALPHA": "- Themes ALPHA",
-                                    "Themes Character": "- Themes Character"
-                                }
-                                
-                                # Check if the corresponding folder exists and has scripts
-                                folder_path = os.path.join(self.base_path, folder_map[sub_tab])
-                                if os.path.isdir(folder_path):
-                                    scripts = [f for f in os.listdir(folder_path) if f.endswith('.sh') or f.endswith('.bat')]
-                                    if scripts:
-                                        sub_tabs.append(sub_tab)
+                        themes_tab = self.tabview.add("Themes")
+                        themes_tabview = ctk.CTkTabview(themes_tab)
+                        themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
 
-                            themes_tab = self.tabview.add("Themes")
-                            themes_tabview = ctk.CTkTabview(themes_tab)
-                            themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
+                        # Track created sub-tabs to avoid duplicates
+                        created_sub_tabs = set()
 
-                            for sub_tab in sub_tabs:
-                                print(f"Creating sub-tab: {sub_tab}")  # Debugging print statement
-                                themes_tabview.add(sub_tab)
-                                self.tab_radio_vars[sub_tab] = tk.IntVar(value=0)
-                                self.radio_button_script_mapping[sub_tab] = script_categories.get(sub_tab, {})
-                                self.radio_buttons[sub_tab] = []
-                                self.favorite_buttons[sub_tab] = {}
+                        for folder, sub_tab_name in self.potential_sub_tabs:
+                            folder_path = os.path.join(self.base_path, folder)
+                            print(f"Checking folder: {folder_path}")  # Debugging print
 
-                                scrollable_frame = ctk.CTkScrollableFrame(themes_tabview.tab(sub_tab), width=400, height=400)
-                                scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+                            if os.path.isdir(folder_path):
+                                scripts = [f for f in os.listdir(folder_path) if f.endswith('.bat') or f.endswith('.cmd')]
+                                print(f"Scripts in {folder}: {scripts}")  # Debugging print
 
-                                for i, script_name in self.radio_button_script_mapping[sub_tab].items():
-                                    script_label = os.path.splitext(script_name)[0]
-                                    print(f"Adding script to {sub_tab}: {script_name}")  # Debugging print statement
+                                # Avoid duplicate sub-tabs
+                                if sub_tab_name not in created_sub_tabs and scripts:
+                                    try:
+                                        themes_tabview.add(sub_tab_name)
+                                        print(f"Successfully added sub-tab: {sub_tab_name}")  # Debugging print
+                                        created_sub_tabs.add(sub_tab_name)
 
-                                    # Create frame for radio button and favorite button
-                                    frame = ctk.CTkFrame(scrollable_frame)
-                                    frame.pack(fill="x", padx=5, pady=2)
+                                        self.tab_radio_vars[sub_tab_name] = tk.IntVar(value=0)
 
-                                    radio_button = ctk.CTkRadioButton(
-                                        frame,
-                                        text=script_label,
-                                        variable=self.tab_radio_vars[sub_tab],
-                                        value=i,
-                                        command=lambda t=sub_tab, v=i: self.on_radio_select(t, v)
-                                    )
-                                    radio_button.pack(side="left", padx=5)
+                                        # Get scripts for this specific sub-tab
+                                        sub_tab_scripts = {
+                                            i+1: script for i, script in enumerate(scripts)
+                                        }
 
-                                    # Add favorite toggle button
-                                    favorite_button = ctk.CTkButton(
-                                        frame,
-                                        text="★" if script_name in self.favorites else "☆",
-                                        width=30,
-                                        command=lambda t=sub_tab, s=script_name, b=None: self.toggle_favorite(t, s, b)
-                                    )
-                                    favorite_button.pack(side="right", padx=5)
+                                        self.radio_button_script_mapping[sub_tab_name] = sub_tab_scripts
+                                        self.radio_buttons[sub_tab_name] = []
+                                        self.favorite_buttons[sub_tab_name] = {}
 
-                                    # Store the button reference for later updates
-                                    self.favorite_buttons[sub_tab][script_name] = favorite_button
-                                    favorite_button.configure(command=lambda t=sub_tab, s=script_name, b=favorite_button:
-                                                                self.toggle_favorite(t, s, b))
+                                        scrollable_frame = ctk.CTkScrollableFrame(themes_tabview.tab(sub_tab_name), width=400, height=400)
+                                        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-                                    self.radio_buttons[sub_tab].append(radio_button)
-                        else:
-                            # For non-U playlist locations, create a single Themes tab
-                            themes_tab = self.tabview.add("Themes")
-                            self.tab_radio_vars["Themes"] = tk.IntVar(value=0)
-                            self.radio_button_script_mapping["Themes"] = script_categories.get("Themes", {})
-                            self.radio_buttons["Themes"] = []
-                            self.favorite_buttons["Themes"] = {}
+                                        for i, script_name in sub_tab_scripts.items():
+                                            script_label = os.path.splitext(script_name)[0]
 
-                            scrollable_frame = ctk.CTkScrollableFrame(themes_tab, width=400, height=400)
-                            scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+                                            # Create frame for radio button and favorite button
+                                            frame = ctk.CTkFrame(scrollable_frame)
+                                            frame.pack(fill="x", padx=5, pady=2)
 
-                            for i, script_name in self.radio_button_script_mapping["Themes"].items():
-                                script_label = os.path.splitext(script_name)[0]
+                                            radio_button = ctk.CTkRadioButton(
+                                                frame,
+                                                text=script_label,
+                                                variable=self.tab_radio_vars[sub_tab_name],
+                                                value=i,
+                                                command=lambda t=sub_tab_name, v=i: self.on_radio_select(t, v)
+                                            )
+                                            radio_button.pack(side="left", padx=5)
 
-                                # Create frame for radio button and favorite button
-                                frame = ctk.CTkFrame(scrollable_frame)
-                                frame.pack(fill="x", padx=5, pady=2)
+                                            # Add favorite toggle button
+                                            favorite_button = ctk.CTkButton(
+                                                frame,
+                                                text="★" if script_name in self.favorites else "☆",
+                                                width=30,
+                                                command=lambda t=sub_tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
+                                            )
+                                            favorite_button.pack(side="right", padx=5)
 
-                                radio_button = ctk.CTkRadioButton(
-                                    frame,
-                                    text=script_label,
-                                    variable=self.tab_radio_vars["Themes"],
-                                    value=i,
-                                    command=lambda t="Themes", v=i: self.on_radio_select(t, v)
-                                )
-                                radio_button.pack(side="left", padx=5)
+                                            # Store the button reference for later updates
+                                            self.favorite_buttons[sub_tab_name][script_name] = favorite_button
+                                            favorite_button.configure(command=lambda t=sub_tab_name, s=script_name, b=favorite_button:
+                                                                        self.toggle_favorite(t, s, b))
 
-                                # Add favorite toggle button
-                                favorite_button = ctk.CTkButton(
-                                    frame,
-                                    text="★" if script_name in self.favorites else "☆",
-                                    width=30,
-                                    command=lambda t="Themes", s=script_name, b=None: self.toggle_favorite(t, s, b)
-                                )
-                                favorite_button.pack(side="right", padx=5)
+                                            self.radio_buttons[sub_tab_name].append(radio_button)
 
-                                # Store the button reference for later updates
-                                self.favorite_buttons["Themes"][script_name] = favorite_button
-                                favorite_button.configure(command=lambda t="Themes", s=script_name, b=favorite_button:
-                                                            self.toggle_favorite(t, s, b))
+                                    except Exception as sub_tab_error:
+                                        print(f"Error adding sub-tab {sub_tab_name}: {sub_tab_error}")
 
-                                self.radio_buttons["Themes"].append(radio_button)
+                        # Print out created sub-tabs for verification
+                        print("Created sub-tabs:", created_sub_tabs)
+
+                    # Handle Favorites tab
+                    elif tab_name == "Favorites":
+                        self.tabview.add("Favorites")
+                        self.update_favorites_tab()
+
+                    # Handle other tabs (non-Themes)
                     else:
-                        # Handle other tabs (Favorites and non-Themes tabs)
-                        if tab_name == "Favorites" or tab_name not in (sub_tabs if self.playlist_location == 'U' else []):
+                        if tab_name not in created_sub_tabs:
                             self.tabview.add(tab_name)
                             self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
                             self.radio_button_script_mapping[tab_name] = scripts
@@ -5293,46 +5196,45 @@ class AdvancedConfigs:
                             scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
                             scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-                            if tab_name == "Favorites":
-                                self.update_favorites_tab()
-                            else:
-                                for i, script_name in scripts.items():
-                                    script_label = os.path.splitext(script_name)[0]
+                            for i, script_name in scripts.items():
+                                script_label = os.path.splitext(script_name)[0]
 
-                                    # Create frame for radio button and favorite button
-                                    frame = ctk.CTkFrame(scrollable_frame)
-                                    frame.pack(fill="x", padx=5, pady=2)
+                                # Create frame for radio button and favorite button
+                                frame = ctk.CTkFrame(scrollable_frame)
+                                frame.pack(fill="x", padx=5, pady=2)
 
-                                    radio_button = ctk.CTkRadioButton(
-                                        frame,
-                                        text=script_label,
-                                        variable=self.tab_radio_vars[tab_name],
-                                        value=i,
-                                        command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
-                                    )
-                                    radio_button.pack(side="left", padx=5)
+                                radio_button = ctk.CTkRadioButton(
+                                    frame,
+                                    text=script_label,
+                                    variable=self.tab_radio_vars[tab_name],
+                                    value=i,
+                                    command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+                                )
+                                radio_button.pack(side="left", padx=5)
 
-                                    # Add favorite toggle button
-                                    favorite_button = ctk.CTkButton(
-                                        frame,
-                                        text="★" if script_name in self.favorites else "☆",
-                                        width=30,
-                                        command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
-                                    )
-                                    favorite_button.pack(side="right", padx=5)
+                                # Add favorite toggle button
+                                favorite_button = ctk.CTkButton(
+                                    frame,
+                                    text="★" if script_name in self.favorites else "☆",
+                                    width=30,
+                                    command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
+                                )
+                                favorite_button.pack(side="right", padx=5)
 
-                                    # Store the button reference for later updates
-                                    self.favorite_buttons[tab_name][script_name] = favorite_button
-                                    favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button:
-                                                                self.toggle_favorite(t, s, b))
+                                # Store the button reference for later updates
+                                self.favorite_buttons[tab_name][script_name] = favorite_button
+                                favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button:
+                                                            self.toggle_favorite(t, s, b))
 
-                                    self.radio_buttons[tab_name].append(radio_button)
+                                self.radio_buttons[tab_name].append(radio_button)
+
                 except Exception as e:
                     print(f"Error creating tab {tab_name}: {str(e)}")
                     continue
 
         # Set initial tab after all tabs are created
         self.set_initial_tab()
+
 
     def set_gui_state(self, enabled):
         """Enable or disable all script-related GUI elements without disabling the tabview itself."""
