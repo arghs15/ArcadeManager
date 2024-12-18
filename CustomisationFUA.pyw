@@ -29,6 +29,8 @@ import keyboard
 import time
 from inputs import get_gamepad, devices
 import fnmatch
+import concurrent.futures
+from functools import lru_cache
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
@@ -416,8 +418,15 @@ class ConfigManager:
 
         self.initialize_config()
         self._build_type = self._determine_build_type()
+        # Cache build type during initialization
+        self._build_type = self._determine_build_type()
 
         self.version_check()
+
+        # Pre-compute tab visibility during initialization
+        self._tab_visibility_cache = {}
+        for tab in ['controls', 'view_games', 'themes_games', 'advanced_configs', 'playlists', 'filter_games', 'multi_path_themes_tab']:
+            self._tab_visibility_cache[tab] = self.determine_tab_visibility(tab)
 
     def version_check(self):
         """
@@ -597,62 +606,47 @@ class ConfigManager:
             self.save_config()
 
     def determine_tab_visibility(self, tab_name):
-        """
-        Determine tab visibility based on configuration and context.
-
-        :param tab_name: Name of the tab
-        :return: Boolean indicating whether the tab should be displayed
-        """
         try:
             # Get the tab visibility setting
             setting_key = f'{tab_name}_tab'
             visibility = self.get_setting('Tabs', setting_key, 'auto')
 
-            print(f"=== Tab Visibility Check for {tab_name} ===")
-            print(f"Visibility Setting: {visibility}")
+            # Cache these results to avoid repeated filesystem checks
+            if not hasattr(self, '_tab_visibility_cache'):
+                self._tab_visibility_cache = {}
+
+            # Check cache first
+            if tab_name in self._tab_visibility_cache:
+                return self._tab_visibility_cache[tab_name]
 
             # Handle different visibility modes
             if visibility == 'always':
-                print(f"✓ {tab_name} tab ALWAYS visible (always setting)")
+                self._tab_visibility_cache[tab_name] = True
                 return True
             elif visibility == 'never':
-                print(f"✗ {tab_name} tab HIDDEN (never setting)")
+                self._tab_visibility_cache[tab_name] = False
                 return False
-            elif visibility == 'auto':
-                print(f"Checking auto visibility for {tab_name} tab")
 
-                # Auto mode: use context-specific logic
+            # Auto mode: use context-specific logic
+            result = False
+            if visibility == 'auto':
                 if tab_name in ['controls', 'view_games']:
-                    build_type = self.get_playlist_location()
-                    print(f"Build Type for controls/view_games: {build_type}")
-                    is_visible = build_type == 'U'
-                    print(f"Controls/View Games visibility: {is_visible}")
-                    return is_visible
-
+                    result = self.get_playlist_location() == 'U'
                 elif tab_name == 'themes_games':
-                    # Check if themes folder exists
+                    # Optimize path checking: use a single, quick check
                     themes_paths = [
                         os.path.join(os.getcwd(), "autochanger", "themes"),
                         os.path.join(os.getcwd(), "collections", "zzzSettings"),
                         os.path.join(os.getcwd(), "collections", "zzzShutdown")
                     ]
+                    result = any(os.path.exists(path) for path in themes_paths)
+                else:
+                    # Other tabs like advanced_configs, playlists, filter_games are always visible
+                    result = True
 
-                    existing_paths = [path for path in themes_paths if os.path.isdir(path)]
-                    is_visible = bool(existing_paths)
-
-                    print("Themes Paths:")
-                    for path in themes_paths:
-                        print(f"  {path}: {'EXISTS' if os.path.isdir(path) else 'NOT FOUND'}")
-                    print(f"Themes tab visibility: {is_visible}")
-
-                    return is_visible
-
-                # Other tabs like advanced_configs, playlists, filter_games are always visible
-                print(f"✓ {tab_name} tab VISIBLE (default auto setting)")
-                return True
-
-            print(f"✗ {tab_name} tab HIDDEN (no condition met)")
-            return False
+            # Cache and return result
+            self._tab_visibility_cache[tab_name] = result
+            return result
 
         except Exception as e:
             print(f"ERROR determining tab visibility for {tab_name}: {e}")
@@ -713,17 +707,27 @@ class ConfigManager:
     
     def _determine_build_type(self):
         """Determine build type based on directory structure."""
+        # Use cached result if available
         if self._build_type is not None:
             return self._build_type
 
-        self._log("Detecting Build Type", section="Build Type Detection")
+        # Optimize by caching path validation results
+        if not hasattr(self, '_build_type_cache'):
+            self._build_type_cache = {}
+
+        # Check cached results first
         for build_type, relative_paths in self.BUILD_TYPE_PATHS.items():
-            paths = self._get_absolute_paths(relative_paths)
-            if self._validate_paths(paths):
+            # Generate absolute paths only once
+            if build_type not in self._build_type_cache:
+                paths = self._get_absolute_paths(relative_paths)
+                self._build_type_cache[build_type] = self._validate_paths(paths)
+
+            # If paths are valid, return the build type
+            if self._build_type_cache[build_type]:
                 self._log(f"✓ Found valid paths for build type: {build_type}")
-                self._paths_cache[build_type] = paths
                 return build_type
 
+        # Default to 'S' if no valid build type found
         self._log("✗ No valid build type found, defaulting to 'S'")
         return 'S'
 
@@ -833,20 +837,10 @@ class ConfigManager:
         print(f"✗ Some {location} paths missing, falling back to dynamic paths")
         return self.get_dynamic_paths()
 
-    def _validate_and_log_paths(self, paths):
-        """Helper method to validate paths and log their status."""
-        all_valid = True
-        for key, path in paths.items():
-            if not path:  # Handle empty paths
-                print(f"Checking {key}: EMPTY PATH")
-                all_valid = False
-                continue
-                
-            exists = os.path.exists(path)
-            print(f"Checking {key}: {path} - {'EXISTS' if exists else 'NOT FOUND'}")
-            if not exists:
-                all_valid = False
-        return all_valid
+    def _validate_paths(self, paths):
+        """Validate paths efficiently."""
+        # Use a single pass to check all paths
+        return all(os.path.exists(path) for path in paths.values())
 
     def _get_absolute_paths(self, relative_paths):
         """Convert relative paths to absolute paths."""
@@ -5076,44 +5070,146 @@ class AdvancedConfigs:
                 self.radio_button_script_mapping["Favorites"][i] = script_name
 
     def categorize_scripts(self):
-        # Initialize an empty script categories dictionary
-        script_categories = {tab: {} for tab in self.tab_keywords}
-
-        # Iterate through config folders
+        # Check for cached results first
+        cache_path = os.path.join(self.base_path, "autochanger", "script_categories_cache.json")
+        
+        try:
+            with open(cache_path, 'r') as f:
+                cached_data = json.load(f)
+                last_scan_time = cached_data.get('scan_time', 0)
+        except (FileNotFoundError, json.JSONDecodeError):
+            last_scan_time = 0
+        
+        # Check if any config folder has been modified since last scan
+        def folder_modified(folder_path):
+            try:
+                # Safely check if folder exists before attempting to list or get modification time
+                if not os.path.isdir(folder_path):
+                    return 0
+                
+                return max(
+                    os.path.getmtime(os.path.join(folder_path, f)) 
+                    for f in os.listdir(folder_path) 
+                    if f.endswith(('.bat', '.cmd'))
+                ) if os.listdir(folder_path) else 0
+            except Exception:
+                return 0
+        
+        # Determine if rescan is needed
+        max_modification_time = 0
         for folder in self.config_folders:
-            folder_path = os.path.join(self.base_path, folder)
-            if not os.path.isdir(folder_path):
-                print(f"Folder does not exist: {folder_path}")
+            try:
+                full_path = os.path.join(self.base_path, folder)
+                mod_time = folder_modified(full_path)
+                max_modification_time = max(max_modification_time, mod_time)
+            except Exception:
                 continue
-
-            for filename in os.listdir(folder_path):
-                if filename.endswith(".bat") or filename.endswith(".cmd"):
-                    added_to_tab = False
-
-                    # Check folder to tab mapping first
-                    if folder in self.folder_to_tab_mapping:
-                        tab_name = self.folder_to_tab_mapping.get(folder)
-                        if tab_name in script_categories:
-                            script_categories[tab_name][len(script_categories[tab_name]) + 1] = filename
-                            added_to_tab = True
-                    
-                    # If not added by folder mapping, try keyword-based categorization
-                    if not added_to_tab:
-                        for tab, keywords in self.tab_keywords.items():
-                            if keywords:
-                                for keyword in keywords:
-                                    if keyword.lower() in filename.lower():
-                                        if tab in script_categories:
-                                            script_categories[tab][len(script_categories[tab]) + 1] = filename
-                                            added_to_tab = True
-                                            break
-                            if added_to_tab:
+        
+        if max_modification_time <= last_scan_time:
+            return cached_data.get('categories', {})
+        
+        # Parallel script scanning
+        def scan_folder(folder):
+            try:
+                folder_path = os.path.join(self.base_path, folder)
+                
+                # Immediately return empty dict if folder doesn't exist
+                if not os.path.isdir(folder_path):
+                    return {}
+                
+                folder_scripts = {}
+                
+                with os.scandir(folder_path) as entries:
+                    for entry in entries:
+                        if entry.is_file() and (entry.name.endswith('.bat') or entry.name.endswith('.cmd')):
+                            # Existing categorization logic
+                            added_to_tab = False
+                            
+                            # Check folder to tab mapping first
+                            if folder in self.folder_to_tab_mapping:
+                                tab_name = self.folder_to_tab_mapping.get(folder)
+                                folder_scripts[len(folder_scripts) + 1] = entry.name
+                                added_to_tab = True
+                            
+                            # Keyword-based categorization
+                            if not added_to_tab:
+                                for tab, keywords in self.tab_keywords.items():
+                                    if keywords:
+                                        for keyword in keywords:
+                                            if keyword.lower() in entry.name.lower():
+                                                folder_scripts[len(folder_scripts) + 1] = entry.name
+                                                added_to_tab = True
+                                                break
+                                    if added_to_tab:
+                                        break
+                            
+                            # Add to Other tab if no other category matched
+                            if not added_to_tab:
+                                folder_scripts[len(folder_scripts) + 1] = entry.name
+                
+                return folder_scripts
+            except Exception as e:
+                # Silently handle any errors for this specific folder
+                print(f"Error scanning folder {folder}: {e}")
+                return {}
+        
+        # Use concurrent processing with error handling
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            results = list(executor.map(scan_folder, self.config_folders))
+        
+        # Initialize script categories
+        script_categories = {tab: {} for tab in self.tab_keywords}
+        script_categories["Favorites"] = {}
+        script_categories["Other"] = {}
+        
+        # Combine results
+        for folder_result in results:
+            for script_number, script_name in folder_result.items():
+                # Categorize scripts
+                categorized = False
+                
+                # Check folder to tab mapping
+                for folder, tab_name in self.folder_to_tab_mapping.items():
+                    try:
+                        folder_path = os.path.join(self.base_path, folder)
+                        if os.path.isdir(folder_path) and script_name in os.listdir(folder_path):
+                            if tab_name in script_categories:
+                                script_categories[tab_name][len(script_categories[tab_name]) + 1] = script_name
+                                categorized = True
                                 break
-
-                    # Add to Other tab if no other category matched
-                    if not added_to_tab and "Other" in script_categories:
-                        script_categories["Other"][len(script_categories["Other"]) + 1] = filename
-
+                    except Exception:
+                        continue
+                
+                # Keyword-based categorization
+                if not categorized:
+                    for tab, keywords in self.tab_keywords.items():
+                        if keywords:
+                            for keyword in keywords:
+                                if keyword.lower() in script_name.lower():
+                                    if tab in script_categories:
+                                        script_categories[tab][len(script_categories[tab]) + 1] = script_name
+                                        categorized = True
+                                        break
+                        if categorized:
+                            break
+                
+                # Add to Other tab if not categorized
+                if not categorized:
+                    script_categories["Other"][len(script_categories["Other"]) + 1] = script_name
+        
+        # Cache the results
+        try:
+            cache_data = {
+                'scan_time': max_modification_time,
+                'categories': script_categories
+            }
+            
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            with open(cache_path, 'w') as f:
+                json.dump(cache_data, f)
+        except Exception as e:
+            print(f"Error caching script categories: {e}")
+        
         return script_categories
 
     def load_favorites(self):
@@ -5173,11 +5269,11 @@ class AdvancedConfigs:
 
                         for folder, sub_tab_name in self.potential_sub_tabs:
                             folder_path = os.path.join(self.base_path, folder)
-                            print(f"Checking folder: {folder_path}")  # Debugging print
+                            ##print(f"Checking folder: {folder_path}")  # Debugging print
 
                             if os.path.isdir(folder_path):
                                 scripts = [f for f in os.listdir(folder_path) if f.endswith('.bat') or f.endswith('.cmd')]
-                                print(f"Scripts in {folder}: {scripts}")  # Debugging print
+                                ##print(f"Scripts in {folder}: {scripts}")  # Debugging print
 
                                 # Avoid duplicate sub-tabs
                                 if sub_tab_name not in created_sub_tabs and scripts:
@@ -5236,7 +5332,7 @@ class AdvancedConfigs:
                                         print(f"Error adding sub-tab {sub_tab_name}: {sub_tab_error}")
 
                         # Print out created sub-tabs for verification
-                        print("Created sub-tabs:", created_sub_tabs)
+                        #print("Created sub-tabs:", created_sub_tabs)
 
                     # Handle Favorites tab
                     elif tab_name == "Favorites":

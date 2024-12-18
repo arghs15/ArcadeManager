@@ -1,4 +1,4 @@
-Advanced Configs: Fix type U folder not found message on launch when a scripts folder for advanced configs is not found
+DONE - Advanced Configs: Fix type U folder not found message on launch when a scripts folder for advanced configs is not found
 Add reset INI (delete)
 Add/Edit entry to CSV
 
