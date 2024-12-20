@@ -1,10 +1,11 @@
+from ctypes.wintypes import SIZE
 import os
 import sys
 import csv
 import re
 import subprocess
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import PhotoImage, messagebox
 from tkinter import Canvas
 from PIL import Image, ImageTk
 import customtkinter as ctk
@@ -31,6 +32,7 @@ from inputs import get_gamepad, devices
 import fnmatch
 import concurrent.futures
 from functools import lru_cache
+
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
@@ -98,6 +100,8 @@ class FilterGamesApp:
         ## Moved here to stop other frames from pushing it out of view
         self.add_appearance_mode_frame()
 
+        
+
         # Main container to hold both the tabview and exe selector
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
@@ -164,7 +168,7 @@ class FilterGamesApp:
         # Check configuration visibility for View Games tab
         view_games_visibility = self.config_manager.get_setting('Tabs', 'view_games_tab', 'auto')
         if view_games_visibility == 'always' or (view_games_visibility == 'auto' and self.playlist_location == 'U'):
-            self.view_games_tab = self.tabview.add("All Games")
+            self.view_games_tab = self.tabview.add("Manage Games")
             self.view_games = ViewRoms(self.view_games_tab, self.config_manager)
             print(f"Adding All Games Tab")
         else:
@@ -178,7 +182,510 @@ class FilterGamesApp:
         
         # Bottom frame for Appearance Mode options
         #self.add_appearance_mode_frame()
+
+        # Check if the "What's New" popup should be shown
+        show_whats_new_flag = self.config_manager.get_setting('Settings', 'show_whats_new', 'auto')
+        print(f"Show What's New flag: {show_whats_new_flag}")  # Debug statement
+        if show_whats_new_flag == 'auto':
+            # Schedule the popup to be shown after a short delay
+            self.root.after(100, self.show_whats_new_popup)
+
+    '''def show_whats_new_popup(self):
+        """Show the 'What's New' popup with the latest updates."""
+        def show_popup():
+            popup = tk.Toplevel(self.root)
+            popup.title("What's New")
+            popup.geometry("700x600")
+            popup.configure(bg='#2c2c2c')
+
+            # Center the window
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            window_width = 700
+            window_height = 600
+            x = (screen_width // 2) - (window_width // 2)
+            y = (screen_height // 2) - (window_height // 2)
+            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+            # Create main frame for content with padding
+            main_frame = ctk.CTkFrame(popup, fg_color='#2c2c2c')
+            main_frame.pack(fill="both", expand=True, padx=20, pady=20)
+
+            # Title label (centered)
+            title_label = ctk.CTkLabel(
+                main_frame,
+                text="What's New in Version 2.0! 🎉",
+                text_color='#ffffff',
+                font=('Helvetica', 24, 'bold'),
+            )
+            title_label.pack(pady=(0, 20))
+
+            # Content frame for left-aligned items
+            content_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
+            content_frame.pack(fill="both", expand=True, padx=10)
+
+            # New Features section
+            new_features_label = ctk.CTkLabel(
+                content_frame,
+                text="New Features",
+                text_color='#4CAF50',  # Green color for section header
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            new_features_label.pack(fill="x", pady=(0, 10))
+
+            features = [
+                "⭐ Controls Tab\nSet controls with the press of a button on your xinput device or keyboard.",
+                "⭐ Manage ROMs Tab\nMove artwork and ROMs easily with a few clicks of a button!",
+                "⭐ GUI Exit State\nThe application now remembers your last state after execution."
+            ]
+
+            for feature in features:
+                feature_label = ctk.CTkLabel(
+                    content_frame,
+                    text=feature,
+                    text_color="#e0e0e0",
+                    font=("Helvetica", 14),
+                    anchor="w",
+                    justify="left"
+                )
+                feature_label.pack(fill="x", pady=(0, 10))
+
+            # Bug Fixes section
+            bug_fixes_label = ctk.CTkLabel(
+                content_frame,
+                text="Improvements & Bug Fixes",
+                text_color='#FF9800',  # Orange color for section header
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            bug_fixes_label.pack(fill="x", pady=(20, 10))
+
+            fixes = [
+                "👾 Various bug fixes and stability improvements",
+                "🚀 Performance optimizations and enhancements"
+            ]
+
+            for fix in fixes:
+                fix_label = ctk.CTkLabel(
+                    content_frame,
+                    text=fix,
+                    text_color="#e0e0e0",
+                    font=("Helvetica", 14),
+                    anchor="w",
+                    justify="left"
+                )
+                fix_label.pack(fill="x", pady=(0, 5))
+
+            # Bottom frame for checkbox and button
+            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
+            bottom_frame.pack(fill="x", pady=(20, 0))
+
+            # Do not show again checkbox
+            do_not_show_var = tk.BooleanVar()
+            do_not_show_checkbox = ctk.CTkCheckBox(
+                bottom_frame,
+                text="Do not show again",
+                variable=do_not_show_var,
+                font=('Helvetica', 12),
+                text_color="#e0e0e0"
+            )
+            do_not_show_checkbox.pack(side="left", padx=(0, 10))
+
+            # OK button
+            def on_ok():
+                if do_not_show_var.get():
+                    self.config_manager.config.set('Settings', 'show_whats_new', 'False')
+                    self.config_manager.save_config()
+                popup.destroy()
+
+            ok_button = ctk.CTkButton(
+                bottom_frame,
+                text="Got it!",
+                command=on_ok,
+                fg_color='#4CAF50',
+                hover_color='#45a049',
+                width=100
+            )
+            ok_button.pack(side="right")
+
+            popup.transient(self.root)
+            popup.grab_set()
+            popup.wait_window()
+
+        show_popup()'''
     
+    def show_whats_new_popup(self):
+        """Show the 'What's New' popup with the latest updates."""
+        # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
+        WINDOW_SIZE = {
+            'width': 800,
+            'height': 800,
+        }
+
+        SIZES = {
+            'icon': 20,  # Size in pixels for feature/bug icons
+            'screenshot': 400,  # Max width for screenshots in pixels
+            'window_padding': 20,  # Padding around the main window
+            'content_padding': 15,  # Padding for content elements
+            'button_spacing': 30,  # Spacing from scrollbar for bottom elements
+        }
+        # =================================================
+
+        # Helper function to get correct asset path
+        def get_asset_path(relative_path):
+            # First try the regular assets path
+            regular_path = os.path.join('assets', relative_path)
+            # Then try the PyInstaller temp directory path
+            bundled_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'assets', relative_path)
+            # Return the first path that exists
+            return regular_path if os.path.exists(regular_path) else bundled_path
+
+        # Define all asset paths using the helper function
+        assets = {
+            'feature_icon': get_asset_path('icons/feature_icon.png'),
+            'bug_icon': get_asset_path('icons/bug_icon.png'),
+            'rocket_icon': get_asset_path('icons/rocket_icon.png'),
+            'controls_tab': get_asset_path('screenshots/controls_tab.png'),
+            'exit_state': get_asset_path('screenshots/exit_state.png'),
+            'manage_roms_tab': get_asset_path('screenshots/manage_roms_tab.png'),
+            'filter_games_tab': get_asset_path('screenshots/filter_games_tab.png')
+        }
+
+        def load_icon(icon_path, fallback="⭐"):
+            """Load PNG icon with fallback to text symbol."""
+            try:
+                original = tk.PhotoImage(file=icon_path)
+                aspect_ratio = original.width() / original.height()
+                new_width = SIZES['icon']
+                new_height = int(SIZES['icon'] / aspect_ratio)
+                subsample_x = original.width() // new_width
+                subsample_y = original.height() // new_height
+                if subsample_x > 0 and subsample_y > 0:
+                    return original.subsample(subsample_x, subsample_y)
+                return original
+            except (tk.TclError, FileNotFoundError):
+                print(f"Could not load icon from {icon_path}, using fallback")
+                return fallback
+
+        def resize_screenshot(screenshot):
+            """Resize screenshot to fit the desired width while maintaining aspect ratio."""
+            original_width = screenshot.width()
+            original_height = screenshot.height()
+
+            if original_width > SIZES['screenshot']:
+                aspect_ratio = original_width / original_height
+                new_width = SIZES['screenshot']
+                new_height = int(SIZES['screenshot'] / aspect_ratio)
+
+                subsample_x = original_width // new_width
+                subsample_y = original_height // new_height
+
+                if subsample_x > 0 and subsample_y > 0:
+                    return screenshot.subsample(subsample_x, subsample_y)
+            return screenshot
+
+        def create_feature_frame(parent, icon, title, description, image_path=None, full_width=False):
+            """Create a framed feature that can be either full-width or split layout."""
+            # Main outer frame with a darker background and rounded corners
+            outer_frame = ctk.CTkFrame(
+                parent,
+                fg_color='#1e1e1e',
+                corner_radius=10,
+                height=140 if full_width else 200  # Reduced height for full-width items
+            )
+            outer_frame.pack(fill="x", pady=(0, 20), padx=5)
+            outer_frame.pack_propagate(False)
+            
+            if full_width:
+                # Single content frame for full width
+                content = ctk.CTkFrame(
+                    outer_frame,
+                    fg_color='#252525',
+                    corner_radius=8
+                )
+                content.pack(fill="both", expand=True, padx=10, pady=10)
+                
+                # Header frame
+                header_frame = ctk.CTkFrame(content, fg_color='transparent')
+                header_frame.pack(fill="x", pady=(10, 5), padx=10)
+                
+                if isinstance(icon, str):
+                    icon_label = ctk.CTkLabel(
+                        header_frame,
+                        text=icon,
+                        font=("Helvetica", 14),
+                        width=SIZES['icon']
+                    )
+                else:
+                    icon_label = tk.Label(
+                        header_frame,
+                        image=icon,
+                        bg='#252525'
+                    )
+                icon_label.pack(side="left", padx=(5, 10))
+                
+                title_label = ctk.CTkLabel(
+                    header_frame,
+                    text=title,
+                    text_color="#ffffff",
+                    font=("Helvetica", 16, "bold"),
+                    anchor="w"
+                )
+                title_label.pack(side="left", fill="x", expand=True)
+                
+                # Description
+                desc_label = ctk.CTkLabel(
+                    content,
+                    text=description,
+                    text_color="#e0e0e0",
+                    font=("Helvetica", 12),
+                    justify="left",
+                    anchor="w",
+                    wraplength=800  # Increased for full width
+                )
+                desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
+                
+            else:
+                # Split layout code (unchanged from previous version)
+                outer_frame.grid_columnconfigure(0, weight=45)
+                outer_frame.grid_columnconfigure(1, weight=55)
+                
+                # Left content
+                left_content = ctk.CTkFrame(
+                    outer_frame,
+                    fg_color='#252525',
+                    corner_radius=8
+                )
+                left_content.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+                
+                header_frame = ctk.CTkFrame(left_content, fg_color='transparent')
+                header_frame.pack(fill="x", pady=(10, 5), padx=10)
+                
+                if isinstance(icon, str):
+                    icon_label = ctk.CTkLabel(
+                        header_frame,
+                        text=icon,
+                        font=("Helvetica", 14),
+                        width=SIZES['icon']
+                    )
+                else:
+                    icon_label = tk.Label(
+                        header_frame,
+                        image=icon,
+                        bg='#252525'
+                    )
+                icon_label.pack(side="left", padx=(5, 10))
+                
+                title_label = ctk.CTkLabel(
+                    header_frame,
+                    text=title,
+                    text_color="#ffffff",
+                    font=("Helvetica", 16, "bold"),
+                    anchor="w"
+                )
+                title_label.pack(side="left", fill="x", expand=True)
+                
+                desc_label = ctk.CTkLabel(
+                    left_content,
+                    text=description,
+                    text_color="#e0e0e0",
+                    font=("Helvetica", 12),
+                    justify="left",
+                    anchor="w",
+                    wraplength=400
+                )
+                desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
+                
+                # Right side - Screenshot
+                if image_path:
+                    try:
+                        right_content = ctk.CTkFrame(
+                            outer_frame,
+                            fg_color='#252525',
+                            corner_radius=8
+                        )
+                        right_content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+                        
+                        original_screenshot = tk.PhotoImage(file=image_path)
+                        
+                        max_width = 450
+                        max_height = 160
+                        
+                        width_ratio = max_width / original_screenshot.width()
+                        height_ratio = max_height / original_screenshot.height()
+                        scale_factor = min(width_ratio, height_ratio)
+                        
+                        new_width = int(original_screenshot.width() * scale_factor)
+                        new_height = int(original_screenshot.height() * scale_factor)
+                        
+                        subsample_x = max(1, int(original_screenshot.width() / new_width))
+                        subsample_y = max(1, int(original_screenshot.height() / new_height))
+                        
+                        resized_screenshot = original_screenshot.subsample(subsample_x, subsample_y)
+                        
+                        screenshot_label = tk.Label(
+                            right_content,
+                            image=resized_screenshot,
+                            bg='#252525'
+                        )
+                        screenshot_label.image = resized_screenshot
+                        screenshot_label.pack(expand=True, padx=5, pady=5)
+                        
+                    except (tk.TclError, FileNotFoundError) as e:
+                        print(f"Failed to load screenshot {image_path}: {e}")
+            
+            return outer_frame
+
+        def show_popup():
+            popup = tk.Toplevel(self.root)
+            popup.title("What's New")
+            popup.configure(bg='#2c2c2c')
+            
+            window_width = 1000
+            window_height = 700
+            
+            # Center the window
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            x = (screen_width // 2) - (window_width // 2)
+            y = (screen_height // 2) - (window_height // 2)
+            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+            
+            # Main scrollable frame with darker background
+            main_frame = ctk.CTkScrollableFrame(
+                popup,
+                fg_color='#2c2c2c',
+                scrollbar_button_color='#4CAF50',
+                scrollbar_button_hover_color='#45a049',
+                width=window_width - 40
+            )
+            main_frame.pack(
+                fill="both",
+                expand=True,
+                padx=SIZES['window_padding'],
+                pady=SIZES['window_padding']
+            )
+            
+            # Title with more contrast
+            title_label = ctk.CTkLabel(
+                main_frame,
+                text="What's New in Version 2.0! 🎉",
+                text_color='#ffffff',
+                font=('Helvetica', 24, 'bold'),
+            )
+            title_label.pack(pady=(0, 30))
+
+            # Load icons with fallbacks
+            feature_icon = load_icon(assets['feature_icon'], "⭐")
+            bug_icon = load_icon(assets['bug_icon'], "👾")
+            rocket_icon = load_icon(assets['rocket_icon'], "🚀")
+
+            # New Features section
+            new_features_label = ctk.CTkLabel(
+                main_frame,
+                text="New Features",
+                text_color='#4CAF50',
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            new_features_label.pack(fill="x", pady=(0, 10))
+
+            # Features with split layout (images)
+            create_feature_frame(
+                main_frame,
+                feature_icon,
+                "Controls Tab",
+                "Set controls with the press of a button on your xinput device or keyboard.",
+                assets['controls_tab'],
+                full_width=False
+            )
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
+                "Manage Games Tab",
+                "Move artwork and ROMs easily with a few clicks of a button!",
+                assets['manage_roms_tab'],
+                full_width=False
+            )
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
+                "Exclude Games",
+                "You can now toggle betwene Include and Exlude in the Filter Games section.",
+                assets['filter_games_tab'],
+                full_width=False
+            )
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
+                "GUI Exit State",
+                "The application now remembers your last state after execution.",
+                assets['exit_state'],
+                full_width=False
+            )
+
+            # Full-width features (no images)
+            create_feature_frame(
+                main_frame,
+                bug_icon,
+                "Bug Fixes",
+                "Various bug fixes and stability improvements",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
+                rocket_icon,
+                "Performance Improvements",
+                "Performance optimizations and enhancements",
+                full_width=True
+            )
+
+            # Bottom frame with adjusted spacing
+            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
+            bottom_frame.pack(fill="x", pady=(20, 0))
+
+            # Do not show again checkbox
+            do_not_show_var = tk.BooleanVar()
+            do_not_show_checkbox = ctk.CTkCheckBox(
+                bottom_frame,
+                text="Do not show again",
+                variable=do_not_show_var,
+                font=('Helvetica', 12),
+                text_color="#e0e0e0"
+            )
+            do_not_show_checkbox.pack(side="left", padx=(0, 10))
+
+            # OK button
+            def on_ok():
+                if do_not_show_var.get():
+                    self.config_manager.config.set('Settings', 'show_whats_new', 'False')
+                    self.config_manager.save_config()
+                popup.destroy()
+
+            ok_button = ctk.CTkButton(
+                bottom_frame,
+                text="Got it!",
+                command=on_ok,
+                fg_color='#4CAF50',
+                hover_color='#45a049',
+                width=100
+            )
+            ok_button.pack(side="right", padx=(0, SIZES['button_spacing']))
+
+            popup.transient(self.root)
+            popup.grab_set()
+            popup.wait_window()
+
+        show_popup()
+
     def on_closing(self):
         if hasattr(self, 'controls'):
             self.controls.cleanup()
@@ -312,6 +819,12 @@ class ConfigManager:
                 'default': 'True',
                 'description': 'Show Move ROMs instructions',
                 'type': bool,
+                'hidden': True
+            },
+            'show_whats_new': {
+                'default': 'auto',
+                'description': 'Show What\'s New popup',
+                'type': str,
                 'hidden': True
             },
             'close_gui_after_running': {
@@ -5683,10 +6196,13 @@ class  ViewRoms:
         elif button_key == 'show_move_roms_button':
             return (
                 "1. Select a Collection from the dropdown menu.\n\n"
+                "Note. Even though you can naviagte to any folder, you must move ROMs\n"
+                "from the collection you pick from in the dropdown menu, so the\napp"
+                " knows the rom path.\n\n"
                 "2. Click 'Move ROMs' and navigate to the text file containing the ROMs.\n\n"
-                "3. Each ROM should be on a new line. No file extensions.\n\n"
-                "4. All ROMs in the text file will be moved to the Collections folder under roms_moved.\n\n"
-                "5. Move Artwork will move all the artwork for the selected ROMs to medium_artwork_moved.\n"
+                "3. In the TXT file, each ROM should be on a new line.\nDo not add file extensions.\n\n"
+                "4. All ROMs in the text file will be moved to the Collections folder under\nroms_moved.\n\n"
+                "5. Move Artwork will move all the artwork for the selected ROMs\nto medium_artwork_moved.\n"
             )
         return ""
 
@@ -6614,7 +7130,6 @@ class  ViewRoms:
         cancel_button.pack(side='left', padx=5)
 
         confirm_window.grab_set()  # Make the window modal
-
 
 # Main application driver
 if __name__ == "__main__":
