@@ -804,7 +804,7 @@ class ConfigManager:
                 'hidden': True
             },
             'show_move_roms_button': {
-                'default': 'True',
+                'default': 'auto',
                 'description': 'Show Move ROMs button',
                 'type': bool,
                 'hidden': True
@@ -5990,6 +5990,13 @@ class  ViewRoms:
         self.config_manager = config_manager
         self.rom_descriptions = {}  # Make sure this is initialized
         self.parent_tab = parent_tab
+        self.selected_roms = set()  # Track selected ROMs
+
+        # Add pagination variables
+        self.page_size = 50
+        self.current_page = 0
+        self.total_pages = 0
+        self.current_filtered_roms = []
 
         # Main container
         main_container = ctk.CTkFrame(self.parent_tab)
@@ -6040,6 +6047,18 @@ class  ViewRoms:
         )
         self.sort_toggle.pack(side='right', padx=(0, 5))
 
+        # Add Remove Selected button to button_frame
+        self.remove_selected_button = ctk.CTkButton(
+            button_frame,
+            text="Remove Selected Roms",
+            command=self.remove_selected_roms,
+            width=120,
+            font=self.button_font,
+            fg_color='#f44336',
+            hover_color='#da190b'
+        )
+        self.remove_selected_button.pack(side='right', padx=5)
+
         # Clear filters button with custom font
         clear_button = ctk.CTkButton(
             button_frame,
@@ -6068,16 +6087,11 @@ class  ViewRoms:
             )
         }
 
-        # ROM list frame
-        list_frame = ctk.CTkFrame(main_container)
-        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
-
-        # ROM listbox with custom font
-        self.rom_listbox = ctk.CTkTextbox(
-            list_frame,
-            font=self.list_font  # Using the custom list font
-        )
-        self.rom_listbox.pack(fill='both', expand=True, side='left')
+        # Cache for filtered results
+        self.filtered_cache = {}
+        self.last_search = ""
+        self.last_collection = ""
+        self.last_sort = ""
 
         # Status bar with custom font
         self.status_bar = ctk.CTkLabel(
@@ -6088,15 +6102,60 @@ class  ViewRoms:
         )
         self.status_bar.pack(fill='x', padx=5, pady=(5, 0))
 
-        # Store collections data
+        # List frame
+        list_frame = ctk.CTkFrame(main_container)
+        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+        self.scrollable_frame = ctk.CTkScrollableFrame(list_frame)
+        self.scrollable_frame.pack(fill='both', expand=True)
+
+        # Add pagination controls frame
+        pagination_frame = ctk.CTkFrame(main_container)
+        pagination_frame.pack(fill='x', padx=5, pady=5)
+
+        self.prev_page_button = ctk.CTkButton(
+            pagination_frame,
+            text="Previous",
+            command=self.previous_page,
+            font=self.button_font,
+            width=100
+        )
+        self.prev_page_button.pack(side='left', padx=5)
+
+        self.page_label = ctk.CTkLabel(
+            pagination_frame,
+            text="Page 1 of 1",
+            font=self.label_font
+        )
+        self.page_label.pack(side='left', padx=5)
+
+        self.next_page_button = ctk.CTkButton(
+            pagination_frame,
+            text="Next",
+            command=self.next_page,
+            font=self.button_font,
+            width=100
+        )
+        self.next_page_button.pack(side='left', padx=5)
+
+        # Status bar
+        self.status_bar = ctk.CTkLabel(
+            main_container,
+            text="Ready",
+            anchor='w',
+            font=self.label_font
+        )
+        self.status_bar.pack(fill='x', padx=5, pady=(5, 0))
+
+        # Initialize other necessary attributes
+        self.rom_checkboxes = {}
         self.rom_list = []
         self.rom_collections = {}
         self.rom_descriptions = {}
+        self.filtered_cache = {}
 
-        # Populate ROM list and collection dropdown
+        # Load initial data
         self.load_initial_data()
-
-        # Pack buttons based on visibility setting
         self.update_button_visibility()
 
     def show_instructions_popup(self, button_key):
@@ -6206,6 +6265,8 @@ class  ViewRoms:
             )
         return ""
 
+    '''
+    #SHOW BOTH MOVE ARTWORK AND MOVE ROMS
     def update_button_visibility(self):
         """Update the visibility of the buttons based on the configuration."""
         for setting_key, button in self.buttons.items():
@@ -6214,7 +6275,21 @@ class  ViewRoms:
                 button.pack(side='right', padx=5)
             else:
                 button.pack_forget()
-
+    '''
+    #THIS IS AN EXAMPLE OF HIDING ONLY THE MOVE ROMS BUTTON.
+    def update_button_visibility(self):
+        """Update the visibility of the buttons based on the configuration."""
+        for setting_key, button in self.buttons.items():
+            if setting_key == 'show_move_artwork_button':
+                button.pack(side='right', padx=5)  # Always show the Move Artwork button
+            else:
+                show_button = self.config_manager.setting_exists('Settings', setting_key) and \
+                              self.config_manager.get_setting('Settings', setting_key, False)
+                if show_button:
+                    button.pack(side='right', padx=5)
+                else:
+                    button.pack_forget()
+    
     def toggle_button_visibility(self, **kwargs):
         """Toggle the visibility of the buttons internally."""
         for setting_key, button in self.buttons.items():
@@ -6405,62 +6480,208 @@ class  ViewRoms:
 
     def populate_rom_list(self):
         try:
+            # Reset scroll position when populating new list
+            self.scrollable_frame._parent_canvas.yview_moveto(0)
             self.filter_roms()
         except Exception as e:
             messagebox.showerror("Error", f"Error loading ROM list: {str(e)}")
             self.status_bar.configure(text="Error loading ROMs")
 
     def filter_roms(self, *args):
+        """Filter ROMs and implement pagination"""
         try:
-            # Clear previous list
-            self.rom_listbox.delete('1.0', 'end')
-
-            # Get filter values
             search_term = self.search_var.get().lower()
             selected_collection = self.collection_var.get()
+            current_sort = self.sort_var.get()
+
+            # Clear previous selections when changing collection
+            if selected_collection != "All Collections":
+                self.selected_roms.clear()
 
             # Filter ROMs
             filtered_roms = []
             for rom in self.rom_list:
-                # Split ROM name and collection info
-                base_rom_name = rom.split(" (")[0]
-                collection_info = rom.split("(")[-1].strip(")")
+                parts = rom.split(" (", 1)
+                base_rom_name = parts[0]
+                collection_info = parts[1].rstrip(")")
 
-                # Strict collection filtering
-                if selected_collection != "All Collections":
-                    # Exact collection match only
-                    if selected_collection != collection_info:
-                        continue
+                # Only show ROMs from selected collection
+                if selected_collection != "All Collections" and selected_collection != collection_info:
+                    continue
 
-                # Get description if available and create display text
                 description = self.rom_descriptions.get(base_rom_name, '')
                 display_text = f"{description if description else base_rom_name} ({collection_info})"
 
-                # Check search term against both description and ROM name
-                if (search_term in display_text.lower() or
-                    search_term in base_rom_name.lower()):
-                    filtered_roms.append(display_text)
+                if search_term in display_text.lower() or search_term in base_rom_name.lower():
+                    filtered_roms.append((display_text, base_rom_name, collection_info))
 
-            # Sort filtered ROMs based on toggle
-            if self.sort_var.get() == "Name":
-                filtered_roms = sorted(filtered_roms)
-            else:
-                filtered_roms = sorted(
-                    filtered_roms,
-                    key=lambda rom: rom.split("(")[-1].strip(")")
-                )
+            # Sort filtered ROMs
+            filtered_roms.sort(key=lambda x: x[0] if current_sort == "Name" else x[2])
 
-            # Display filtered ROMs
-            self.rom_listbox.insert('1.0', f"Matching ROMs: {len(filtered_roms)}\n\n")
-            for rom in filtered_roms:
-                self.rom_listbox.insert('end', f"{rom}\n")
+            # Store filtered results and update pagination
+            self.current_filtered_roms = filtered_roms
+            self.total_pages = max(1, (len(filtered_roms) + self.page_size - 1) // self.page_size)
+            self.current_page = 0  # Reset to first page when filter changes
 
-            # Update status
-            self.status_bar.configure(text=f"Found {len(filtered_roms)} matching ROMs")
+            # Display current page
+            self.display_current_page()
 
         except Exception as e:
             messagebox.showerror("Error", f"Error filtering ROM list: {str(e)}")
             self.status_bar.configure(text="Error filtering ROMs")
+
+    def display_current_page(self):
+        """Display the current page of ROMs"""
+        # Clear existing widgets
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.rom_checkboxes.clear()
+
+        # Calculate page bounds
+        start_idx = self.current_page * self.page_size
+        end_idx = min(start_idx + self.page_size, len(self.current_filtered_roms))
+
+        # Create header label
+        header_label = ctk.CTkLabel(
+            self.scrollable_frame,
+            text=f"Showing {start_idx + 1}-{end_idx} of {len(self.current_filtered_roms)} ROMs",
+            font=self.label_font
+        )
+        header_label.pack(pady=(0, 10))
+
+        # Display ROMs for current page
+        for i in range(start_idx, end_idx):
+            display_text, base_rom_name, _ = self.current_filtered_roms[i]
+            checkbox_var = tk.BooleanVar(value=base_rom_name in self.selected_roms)
+            
+            checkbox = ctk.CTkCheckBox(
+                self.scrollable_frame,
+                text=display_text,
+                font=self.list_font,
+                variable=checkbox_var,
+                command=lambda n=base_rom_name, v=checkbox_var: self.handle_checkbox_change(n, v)
+            )
+            checkbox.pack(pady=2, anchor='w')
+            self.rom_checkboxes[base_rom_name] = (checkbox, checkbox_var)
+
+        # Update pagination controls
+        self.update_pagination_controls()
+        
+        # Update status
+        self.status_bar.configure(
+            text=f"Showing page {self.current_page + 1} of {self.total_pages}"
+        )
+
+    def update_pagination_controls(self):
+        """Update pagination buttons and label"""
+        self.prev_page_button.configure(state='normal' if self.current_page > 0 else 'disabled')
+        self.next_page_button.configure(state='normal' if self.current_page < self.total_pages - 1 else 'disabled')
+        self.page_label.configure(text=f"Page {self.current_page + 1} of {self.total_pages}")
+
+    def next_page(self):
+        """Go to next page"""
+        if self.current_page < self.total_pages - 1:
+            self.current_page += 1
+            self.display_current_page()
+
+    def previous_page(self):
+        """Go to previous page"""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.display_current_page()
+
+    def handle_collection_change(self, *args):
+        """Handle collection change"""
+        # Clear selections when changing collections
+        self.selected_roms.clear()
+        # Reset to first page
+        self.current_page = 0
+        # Reset scroll position
+        self.scrollable_frame._parent_canvas.yview_moveto(0)
+        # Clear cache and update display
+        self.filtered_cache.clear()
+        self.filter_roms()
+
+    def display_filtered_results(self, filtered_roms):
+        """Separate display logic for better performance"""
+        # Clear existing widgets
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.rom_checkboxes.clear()
+
+        # Create header label
+        header_label = ctk.CTkLabel(
+            self.scrollable_frame,
+            text=f"Matching ROMs: {len(filtered_roms)}",
+            font=self.label_font
+        )
+        header_label.pack(pady=(0, 10))
+
+        # Create checkboxes in batches for better performance
+        BATCH_SIZE = 50
+        for i in range(0, len(filtered_roms), BATCH_SIZE):
+            batch = filtered_roms[i:i + BATCH_SIZE]
+            self.create_checkbox_batch(batch)
+            
+            # Update UI periodically
+            if i % (BATCH_SIZE * 2) == 0:
+                self.scrollable_frame.update()
+
+        # Update status
+        self.status_bar.configure(text=f"Found {len(filtered_roms)} matching ROMs")
+
+    def create_checkbox_batch(self, batch):
+        """Create a batch of checkboxes efficiently"""
+        for display_text, base_rom_name, _ in batch:
+            checkbox_var = tk.BooleanVar(value=base_rom_name in self.selected_roms)
+            
+            checkbox = ctk.CTkCheckBox(
+                self.scrollable_frame,
+                text=display_text,
+                font=self.list_font,
+                variable=checkbox_var,
+                command=lambda n=base_rom_name, v=checkbox_var: self.handle_checkbox_change(n, v)
+            )
+            checkbox.pack(pady=2, anchor='w')
+            self.rom_checkboxes[base_rom_name] = (checkbox, checkbox_var)
+
+    def handle_collection_change(self, *args):
+        """Handle collection change and reset scroll"""
+        # Reset scroll position
+        self.scrollable_frame._parent_canvas.yview_moveto(0)
+        # Clear cache when changing collections
+        self.filtered_cache.clear()
+        # Update the list
+        self.filter_roms()
+
+    def handle_checkbox_change(self, rom_name, checkbox_var):
+        """Handle checkbox state changes"""
+        if checkbox_var.get():
+            self.selected_roms.add(rom_name)
+        else:
+            self.selected_roms.discard(rom_name)
+
+    def remove_selected_roms(self):
+        """Remove the selected ROMs"""
+        if not self.selected_roms:
+            messagebox.showinfo("No Selection", "Please select ROMs to remove.")
+            return
+
+        # Get the selected collection
+        selected_collection = self.collection_var.get()
+        if selected_collection == "All Collections":
+            messagebox.showerror("Error", "Please select a specific collection.")
+            return
+
+        # Create confirmation dialog
+        if messagebox.askyesno("Confirm Remove", 
+                             f"Are you sure you want to remove {len(self.selected_roms)} selected ROMs?"):
+            # Reuse existing move_roms logic with the selected ROMs
+            self.move_roms(list(self.selected_roms))
+            
+            # Clear selections after moving
+            self.selected_roms.clear()
+            self.populate_rom_list()
 
     def move_artwork(self):
         """Move artwork files based on the selected collection"""
@@ -6645,8 +6866,8 @@ class  ViewRoms:
             messagebox.showerror("Error", f"Error moving artwork: {str(e)}")
             self.status_bar.configure(text="Error moving artwork")
 
-    def move_roms(self):
-        """Move ROMs based on a list from a text file"""
+    def move_roms(self, rom_list=None):
+        """Move ROMs based on a list from a text file or selected checkboxes"""
         try:
             # Get the selected collection
             selected_collection = self.collection_var.get()
@@ -6654,18 +6875,19 @@ class  ViewRoms:
                 messagebox.showerror("Error", "Please select a specific collection.")
                 return
 
-            # Prompt the user to select the text file containing the list of ROMs
-            file_path = filedialog.askopenfilename(
-                title="Select ROM List File",
-                filetypes=[("Text Files", "*.txt")]
-            )
-            if not file_path:
-                messagebox.showinfo("Cancelled", "Operation cancelled by the user.")
-                return
+            # If no rom_list provided, prompt for text file
+            if rom_list is None:
+                file_path = filedialog.askopenfilename(
+                    title="Select ROM List File",
+                    filetypes=[("Text Files", "*.txt")]
+                )
+                if not file_path:
+                    messagebox.showinfo("Cancelled", "Operation cancelled by the user.")
+                    return
 
-            # Read the list of ROM names from the text file (without extensions)
-            with open(file_path, 'r') as file:
-                rom_list = [line.strip() for line in file.readlines()]
+                # Read the list of ROM names from the text file (without extensions)
+                with open(file_path, 'r') as file:
+                    rom_list = [line.strip() for line in file.readlines()]
 
             root_dir = os.getcwd()
             collections_dir = os.path.join(root_dir, 'collections')
@@ -6699,7 +6921,7 @@ class  ViewRoms:
             # Debugging print statements
             print(f"ROM Folder: {rom_folder}")
             print(f"Parsed Extensions: {extensions}")
-            print(f"ROM List from file: {rom_list}")
+            print(f"ROM List: {rom_list}")
 
             # Validate ROM folder
             if not os.path.isdir(rom_folder):
@@ -6718,7 +6940,7 @@ class  ViewRoms:
             moved_roms = []
             not_found_roms = []
 
-            # Iterate through ROM names in the text file
+            # Iterate through ROM names in the list
             for rom_name in rom_list:
                 if rom_name in file_dict:
                     source_path = file_dict[rom_name]
@@ -6848,8 +7070,11 @@ class  ViewRoms:
                     for rom in not_found_roms:
                         print(rom)
 
-                # Call the new method to move artwork for the moved ROMs
+                # Call the method to move artwork for the moved ROMs
                 self.move_artwork_for_roms(moved_roms)
+
+                # Refresh the ROM list display after moving
+                self.populate_rom_list()
 
             # Show custom confirmation dialog
             create_scrollable_confirmation()
@@ -6859,8 +7084,6 @@ class  ViewRoms:
             traceback.print_exc()  # This will print the full stack trace
             messagebox.showerror("Error", f"Error moving ROMs: {str(e)}")
             self.status_bar.configure(text="Error moving ROMs")
-
-
 
     def move_artwork_for_roms(self, rom_list):
         """Move artwork files for the specified ROMs"""
