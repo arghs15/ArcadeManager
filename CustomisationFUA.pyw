@@ -572,7 +572,7 @@ class FilterGamesApp:
             # Title with more contrast
             title_label = ctk.CTkLabel(
                 main_frame,
-                text="What's New in Version 2.0! 🎉",
+                text="What's New in Version 2.1! 🎉",
                 text_color='#ffffff',
                 font=('Helvetica', 24, 'bold'),
             )
@@ -598,18 +598,19 @@ class FilterGamesApp:
             create_feature_frame(
                 main_frame,
                 feature_icon,
-                "Controls Tab",
-                "Set controls with the press of a button on your xinput device or keyboard.",
-                assets['controls_tab'],
+                "Manage ROMs Tab",
+                "Now you can select roms to move via the GUI!.",
+                assets['manage_roms_tab'],
                 full_width=False
             )
 
+            # Features with split layout (images)
             create_feature_frame(
                 main_frame,
                 feature_icon,
-                "Manage Games Tab",
-                "Move artwork and ROMs easily with a few clicks of a button!",
-                assets['manage_roms_tab'],
+                "Controls Tab",
+                "Set controls with the press of a button on your xinput device or keyboard.",
+                assets['controls_tab'],
                 full_width=False
             )
 
@@ -744,7 +745,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.0"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.1"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
