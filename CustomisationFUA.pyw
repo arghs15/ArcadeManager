@@ -745,7 +745,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.1"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -799,13 +799,13 @@ class ConfigManager:
                 'hidden': True
             },
             'show_move_artwork_button': {
-                'default': 'True',
+                'default': 'False',
                 'description': 'Show Move Artwork button',
                 'type': bool,
                 'hidden': True
             },
             'show_move_roms_button': {
-                'default': 'auto',
+                'default': 'False',
                 'description': 'Show Move ROMs button',
                 'type': bool,
                 'hidden': True
@@ -823,7 +823,7 @@ class ConfigManager:
                 'hidden': True
             },
             'show_whats_new': {
-                'default': 'auto',
+                'default': 'False',
                 'description': 'Show What\'s New popup',
                 'type': str,
                 'hidden': True
@@ -887,13 +887,13 @@ class ConfigManager:
                 'hidden': True
             },
             'controls_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Controls tab',
                 'type': str,
                 'hidden': True
             },
             'view_games_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of All Games tab',
                 'type': str,
                 'hidden': True
