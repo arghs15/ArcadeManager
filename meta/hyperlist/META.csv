@@ -710,18 +710,21 @@ arcade,srally2,Sega Rally 2,,,MAX,MAX,,,,,,HORIZONTAL,1998,1,analog,4,SEGA,,,,,,
 arcade,Ultra Street Fighter IV,Ultra Street Fighter IV,,,MAX,MAX,,,,,,HORIZONTAL,2008,2,8 way,6,Capcom,,,,,,,#N/A
 CONSOLE,Paradroid,,,,,,,,,,,CONSOLE,,1,8 way,1,,,,,,,,#N/A
 CONSOLE,Uridium,,,,,,,,,,,CONSOLE,,1,8 way,1,,,,,,,,#N/A
-CONSOLE,gnw_dkjr,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_dkong,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_dkong2,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_fire,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_ghouse,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_mickdon,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_octopus,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_opanic,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_pchute,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_popeye,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_stennis,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
-CONSOLE,gnw_tbridge,,,,,,,,,,,CONSOLE,,1,4 way,6,,,,,,,,#N/A
+CONSOLE,gnw_fireatk,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,
+CONSOLE,gnw_mariocm,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,
+CONSOLE,gnw_zelda,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,
+CONSOLE,gnw_dkjr,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_dkong,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_dkong2,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_fire,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_ghouse,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_mickdon,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_octopus,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_opanic,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_pchute,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_popeye,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_stennis,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
+CONSOLE,gnw_tbridge,,,,,,,,,,,CONSOLE,,1,4 way,6,Nintendo,,,,,,,#N/A
 CONSOLE,International Karate Plus,,,,,,,,,,,CONSOLE,,1,8 way,6,,,,,,,,#N/A
 CONSOLE,Comix Zone,,,,,,,,,,,CONSOLE,,1,8 way,6,,,,,,,,#N/A
 CONSOLE,Earthworm Jim,,,,,,,,,,,CONSOLE,,1,8 way,6,,,,,,,,#N/A
