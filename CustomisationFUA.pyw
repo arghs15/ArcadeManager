@@ -887,13 +887,13 @@ class ConfigManager:
                 'hidden': True
             },
             'controls_tab': {
-                'default': 'never',  # 'auto', 'always', or 'never'
+                'default': 'always',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Controls tab',
                 'type': str,
                 'hidden': True
             },
             'view_games_tab': {
-                'default': 'never',  # 'auto', 'always', or 'never'
+                'default': 'always',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of All Games tab',
                 'type': str,
                 'hidden': True
