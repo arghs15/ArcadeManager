@@ -5504,20 +5504,21 @@ class AdvancedConfigs:
 
     def _create_tabs(self, script_categories: Dict[str, Dict[int, str]]):
         """Create tabs with optimized GUI creation"""
+        # Always add the Favorites tab first
+        self.tabview.add("Favorites")
+        self.update_favorites_tab()
+
         # Always create Themes tab first if theme folders exist
         if any(Path(self.base_path, folder).is_dir() for folder, _ in self.potential_sub_tabs):
             self._create_themes_tab({})  # Pass empty scripts dict
-        
+
         for tab_name, scripts in script_categories.items():
-            if not scripts and tab_name != "Favorites":
+            if not scripts or tab_name == "Favorites":
                 continue
 
             try:
                 if tab_name == "Themes":
                     self._create_themes_tab(scripts)
-                elif tab_name == "Favorites":
-                    self.tabview.add("Favorites")
-                    self.update_favorites_tab()
                 else:
                     self._create_regular_tab(tab_name, scripts)
 
