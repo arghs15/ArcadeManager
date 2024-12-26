@@ -32,6 +32,9 @@ from inputs import get_gamepad, devices
 import fnmatch
 import concurrent.futures
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor
+from typing import Dict, List, Set, Optional
+from pathlib import Path
 
 
 # Check if the script is running in a bundled environment
@@ -5272,52 +5275,73 @@ class MultiPathThemes:
 class AdvancedConfigs:
     def __init__(self, parent_tab):
         self.parent_tab = parent_tab
-        self.base_path = os.getcwd()
-        self.config_manager = ConfigManager()  # Assuming ConfigManager instance is available
-
-        # Define potential config folders for all playlist locations
+        self.base_path = Path.cwd()
+        self.config_manager = ConfigManager()
+        
+        # Convert config folders to Path objects for better performance
         self.config_folders_all = [
-            "- Advanced Configs", 
-            "- Themes", 
-            "- Themes 2nd Screen", 
-            "- Bezels Glass and Scanlines",
-            "- Mods",
-            "- Themes Arcade", 
-            "- Themes ALPHA",
-            "- Themes Console", 
-            "- Themes Handheld", 
-            "- Themes Home",
-            "- Themes Character"
+            Path(self.base_path, folder) for folder in [
+                "- Advanced Configs", 
+                "- Themes", 
+                "- Themes 2nd Screen", 
+                "- Bezels Glass and Scanlines",
+                "- Mods",
+                "- Themes Arcade", 
+                "- Themes ALPHA",
+                "- Themes Console", 
+                "- Themes Handheld", 
+                "- Themes Home",
+                "- Themes Character"
+            ]
         ]
+        
+        # Filter existing folders using Path objects (faster than os.path)
+        self.config_folders = [folder for folder in self.config_folders_all if folder.is_dir()]
+        
+        # Cache commonly accessed paths
+        self.cache_path = Path(self.base_path, "autochanger", "script_categories_cache.json")
+        self.favorites_path = Path(self.base_path, "autochanger", "favorites.json")
+        
+        # Pre-compile tab configurations
+        self._init_tab_configs()
+        
+        # Initialize state variables
+        self.tab_radio_vars = {}
+        self.radio_button_script_mapping = {}
+        self.radio_buttons = {}
+        self.favorite_buttons = {}
+        self.is_running_all = False
+        
+        # Load favorites asynchronously
+        self.favorites = self._load_favorites()
+        
+        # Initialize GUI elements
+        self._init_gui_elements()
+        
+        # Populate tabs asynchronously
+        self.parent_tab.after(10, self._async_populate_tabs)
 
-        # Filter config folders to only those that exist
-        self.config_folders = [
-            folder for folder in self.config_folders_all 
-            if os.path.isdir(os.path.join(self.base_path, folder))
-        ]
-
-        # Keep the existing tab keywords and other initializations
+    def _init_tab_configs(self):
+        """Initialize tab configurations with optimized data structures"""
         self.tab_keywords = {
-            "Favorites": None,
-            "Themes": None,
-            "Bezels & Effects": ["Bezel", "SCANLINE", "GLASS EFFECTS"],
-            "Overlays": ["OVERLAY"],
-            "InigoBeats": ["MUSIC"],
-            "Attract": ["Attract", "Scroll"],           
-            "Monitor": ["Monitor"],
-            "Splash": ["Splash"],
-            "Front End": ["FRONT END"],
-            "Other": None
+            "Favorites": frozenset(),
+            "Themes": frozenset(),
+            "Bezels & Effects": frozenset(["Bezel", "SCANLINE", "GLASS EFFECTS"]),
+            "Overlays": frozenset(["OVERLAY"]),
+            "InigoBeats": frozenset(["MUSIC"]),
+            "Attract": frozenset(["Attract", "Scroll"]),           
+            "Monitor": frozenset(["Monitor"]),
+            "Splash": frozenset(["Splash"]),
+            "Front End": frozenset(["FRONT END"]),
+            "Other": frozenset()
         }
 
-        # Updated folder to tab mapping to handle both U and non-U cases
         self.folder_to_tab_mapping = {
             "- Themes": "Themes",
             "- Themes Arcade": "Themes",   
             "- Bezels Glass and Scanlines": "Bezels & Effects"
         }
 
-        # List of potential theme sub-tabs in order of priority
         self.potential_sub_tabs = [
             ("- Themes", "Themes"),
             ("- Themes Arcade", "Themes"),
@@ -5328,53 +5352,531 @@ class AdvancedConfigs:
             ("- Themes Character", "Themes Character"),
             ("- Themes 2nd Screen", "2nd Screen")
         ]
-            
-        self.tab_radio_vars = {}
-        self.radio_button_script_mapping = {}
-        self.radio_buttons = {}
-        self.favorite_buttons = {}
-        self.favorites = self.load_favorites()
+
+    def _init_gui_elements(self):
+        """Initialize GUI elements with optimized settings"""
+        # Create all GUI elements at once to reduce redraws
+        gui_elements = {
+            'status_label': ctk.CTkLabel(
+                self.parent_tab,
+                text="",
+                text_color="green",
+                bg_color="transparent",
+                corner_radius=8,
+                font=("", 14, "bold")
+            ),
+            'loading_label': ctk.CTkLabel(
+                self.parent_tab,
+                text="Processing...",
+                text_color="gray70"
+            ),
+            'progress_frame': ctk.CTkFrame(self.parent_tab),
+            'tabview': ctk.CTkTabview(self.parent_tab)
+        }
+
+        # Add progress elements to frame
+        gui_elements['progress_bar'] = ctk.CTkProgressBar(gui_elements['progress_frame'])
+        gui_elements['progress_label'] = ctk.CTkLabel(gui_elements['progress_frame'], text="")
         
-        # Create status label (hidden by default)
-        self.status_label = ctk.CTkLabel(
-            self.parent_tab,
-            text="",
-            text_color="green",
-            bg_color="transparent",
-            corner_radius=8,
-            font=("", 14, "bold")
+        # Store references
+        self.__dict__.update(gui_elements)
+        
+        # Configure progress bar
+        self.progress_bar.set(0)
+        
+        # Pack tabview
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+
+    @lru_cache(maxsize=128)
+    def _get_script_path(self, script_name: str) -> Optional[Path]:
+        """Cached function to find script path"""
+        for folder in self.config_folders:
+            script_path = folder / script_name
+            if script_path.is_file():
+                return script_path
+        return None
+
+    def _load_favorites(self) -> List[str]:
+        """Load favorites with error handling"""
+        try:
+            return json.loads(self.favorites_path.read_text()) if self.favorites_path.exists() else []
+        except (json.JSONDecodeError, OSError):
+            return []
+
+    def _save_favorites(self):
+        """Save favorites with error handling"""
+        try:
+            self.favorites_path.parent.mkdir(parents=True, exist_ok=True)
+            self.favorites_path.write_text(json.dumps(self.favorites))
+        except OSError:
+            pass  # Handle saving error gracefully
+
+    async def _scan_folder(self, folder: Path) -> Dict[int, str]:
+        """Scan a single folder for scripts asynchronously"""
+        try:
+            if not folder.is_dir():
+                return {}
+            
+            scripts = {}
+            script_count = 0
+            
+            async def process_file(entry):
+                nonlocal script_count
+                if entry.name.endswith(('.bat', '.cmd')):
+                    script_count += 1
+                    return script_count, entry.name
+                return None
+            
+            # Process files concurrently
+            tasks = []
+            for entry in folder.iterdir():
+                if entry.is_file():
+                    tasks.append(process_file(entry))
+            
+            results = await asyncio.gather(*tasks)
+            return {idx: name for result in results if result for idx, name in [result]}
+            
+        except Exception:
+            return {}
+
+    async def _categorize_scripts_async(self) -> Dict[str, Dict[int, str]]:
+        """Categorize scripts asynchronously with caching"""
+        # Check cache first
+        try:
+            if self.cache_path.exists():
+                cache_data = json.loads(self.cache_path.read_text())
+                last_scan_time = cache_data.get('scan_time', 0)
+                
+                # Check if rescan needed
+                max_mod_time = max(
+                    (folder.stat().st_mtime for folder in self.config_folders if folder.exists()),
+                    default=0
+                )
+                
+                if max_mod_time <= last_scan_time:
+                    return cache_data.get('categories', {})
+        except (json.JSONDecodeError, OSError):
+            pass
+
+        # Scan folders concurrently
+        tasks = [self._scan_folder(folder) for folder in self.config_folders]
+        folder_results = await asyncio.gather(*tasks)
+
+        # Process results
+        script_categories = {tab: {} for tab in self.tab_keywords}
+        
+        for folder_scripts in folder_results:
+            for script_name in folder_scripts.values():
+                self._categorize_script(script_name, script_categories)
+
+        # Cache results
+        try:
+            cache_data = {
+                'scan_time': max(folder.stat().st_mtime for folder in self.config_folders if folder.exists()),
+                'categories': script_categories
+            }
+            self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_path.write_text(json.dumps(cache_data))
+        except OSError:
+            pass
+
+        return script_categories
+
+    def _categorize_script(self, script_name: str, categories: Dict[str, Dict[int, str]]):
+        """Categorize a single script"""
+        for tab, keywords in self.tab_keywords.items():
+            if any(keyword.lower() in script_name.lower() for keyword in keywords):
+                idx = len(categories[tab]) + 1
+                categories[tab][idx] = script_name
+                return
+        
+        # Add to Other if no category matched
+        idx = len(categories["Other"]) + 1
+        categories["Other"][idx] = script_name
+
+    def _async_populate_tabs(self):
+        """Populate tabs asynchronously"""
+        async def populate():
+            script_categories = await self._categorize_scripts_async()
+            self.parent_tab.after(0, lambda: self._create_tabs(script_categories))
+
+        asyncio.run(populate())
+
+    def _create_tabs(self, script_categories: Dict[str, Dict[int, str]]):
+        """Create tabs with optimized GUI creation"""
+        # Always create Themes tab first if theme folders exist
+        if any(Path(self.base_path, folder).is_dir() for folder, _ in self.potential_sub_tabs):
+            self._create_themes_tab({})  # Pass empty scripts dict
+        
+        for tab_name, scripts in script_categories.items():
+            if not scripts and tab_name != "Favorites":
+                continue
+
+            try:
+                if tab_name == "Themes":
+                    self._create_themes_tab(scripts)
+                elif tab_name == "Favorites":
+                    self.tabview.add("Favorites")
+                    self.update_favorites_tab()
+                else:
+                    self._create_regular_tab(tab_name, scripts)
+
+            except Exception as e:
+                print(f"Error creating tab {tab_name}: {str(e)}")
+                continue
+
+        self.set_initial_tab()
+
+    def _create_themes_tab(self, scripts: Dict[int, str]):
+        """Create themes tab with sub-tabs"""
+        themes_tab = self.tabview.add("Themes")
+        themes_tabview = ctk.CTkTabview(themes_tab)
+        themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
+
+        created_sub_tabs = set()
+
+        for folder, sub_tab_name in self.potential_sub_tabs:
+            folder_path = Path(self.base_path, folder)
+            if not folder_path.is_dir():
+                continue
+
+            scripts = [f.name for f in folder_path.iterdir() 
+                      if f.is_file() and f.suffix in ('.bat', '.cmd')]
+            
+            if scripts and sub_tab_name not in created_sub_tabs:
+                self._create_theme_sub_tab(themes_tabview, sub_tab_name, scripts)
+                created_sub_tabs.add(sub_tab_name)
+
+    def _create_theme_sub_tab(self, themes_tabview, sub_tab_name: str, scripts: List[str]):
+        """Create a single theme sub-tab"""
+        themes_tabview.add(sub_tab_name)
+        self.tab_radio_vars[sub_tab_name] = tk.IntVar(value=0)
+        
+        sub_tab_scripts = {i+1: script for i, script in enumerate(scripts)}
+        self.radio_button_script_mapping[sub_tab_name] = sub_tab_scripts
+        self.radio_buttons[sub_tab_name] = []
+        self.favorite_buttons[sub_tab_name] = {}
+
+        scrollable_frame = ctk.CTkScrollableFrame(
+            themes_tabview.tab(sub_tab_name), 
+            width=400, 
+            height=400
+        )
+        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self._create_script_buttons(
+            scrollable_frame, 
+            sub_tab_name, 
+            sub_tab_scripts
         )
 
-        # Create loading label
-        self.loading_label = ctk.CTkLabel(
-            self.parent_tab,
-            text="Processing...",
-            text_color="gray70"
+    def _create_regular_tab(self, tab_name: str, scripts: Dict[int, str]):
+        """Create a regular (non-Themes) tab"""
+        self.tabview.add(tab_name)
+        self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
+        self.radio_button_script_mapping[tab_name] = scripts
+        self.radio_buttons[tab_name] = []
+        self.favorite_buttons[tab_name] = {}
+
+        scrollable_frame = ctk.CTkScrollableFrame(
+            self.tabview.tab(tab_name), 
+            width=400, 
+            height=400
         )
+        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self._create_script_buttons(scrollable_frame, tab_name, scripts)
+
+    def _create_script_buttons(self, parent_frame, tab_name: str, scripts: Dict[int, str]):
+        """Create radio and favorite buttons for scripts"""
+        for i, script_name in scripts.items():
+            script_label = Path(script_name).stem
+
+            frame = ctk.CTkFrame(parent_frame)
+            frame.pack(fill="x", padx=5, pady=2)
+
+            radio_button = ctk.CTkRadioButton(
+                frame,
+                text=script_label,
+                variable=self.tab_radio_vars[tab_name],
+                value=i,
+                command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+            )
+            radio_button.pack(side="left", padx=5)
+
+            favorite_button = ctk.CTkButton(
+                frame,
+                text="★" if script_name in self.favorites else "☆",
+                width=30,
+                command=lambda t=tab_name, s=script_name, b=None: 
+                    self.toggle_favorite(t, s, b)
+            )
+            favorite_button.pack(side="right", padx=5)
+
+            self.favorite_buttons[tab_name][script_name] = favorite_button
+            favorite_button.configure(
+                command=lambda t=tab_name, s=script_name, b=favorite_button:
+                    self.toggle_favorite(t, s, b)
+            )
+
+            self.radio_buttons[tab_name].append(radio_button)
+
+    def update_favorites_tab(self):
+        """Update favorites tab with optimized GUI updates"""
+        tab = self.tabview.tab("Favorites")
+        for widget in tab.winfo_children():
+            widget.destroy()
+
+        scrollable_frame = ctk.CTkScrollableFrame(tab, width=400, height=400)
+        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        if self.favorites:
+            run_all_frame = ctk.CTkFrame(scrollable_frame)
+            run_all_frame.pack(fill="x", padx=5, pady=5)
+            
+            run_all_button = ctk.CTkButton(
+                run_all_frame,
+                text="Run All Favorites Sequentially",
+                command=self.run_all_favorites
+            )
+            run_all_button.pack(fill="x", padx=5, pady=5)
+
+        if not self.favorites:
+            ctk.CTkLabel(scrollable_frame, text="No favorites added yet").pack(pady=10)
+            return
+
+        self.tab_radio_vars["Favorites"] = tk.IntVar(value=0)
+        self.radio_buttons["Favorites"] = []
+        self.radio_button_script_mapping["Favorites"] = {}
+
+        for i, script_name in enumerate(self.favorites, 1):
+            script_label = Path(script_name).stem
+            script_exists = bool(self._get_script_path(script_name))
+            
+            frame = ctk.CTkFrame(scrollable_frame)
+            frame.pack(fill="x", padx=5, pady=2)
+
+            radio_button = ctk.CTkRadioButton(
+                frame,
+                text=script_label,
+                variable=self.tab_radio_vars["Favorites"],
+                value=i,
+                command=lambda t="Favorites", v=i: self.on_radio_select(t, v),
+                state="normal" if script_exists else "disabled",
+                text_color="gray50" if not script_exists else None
+            )
+            radio_button.pack(side="left", padx=5)
+
+            if not script_exists:
+                warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+                warning_frame.pack(side="left", padx=2)
+                
+                warning_label = ctk.CTkLabel(
+                    warning_frame,
+                    text="⚠️ Script not found",
+                    text_color="orange"
+                )
+                warning_label.pack(side="left")
+
+            remove_button = ctk.CTkButton(
+                frame,
+                text="Remove",
+                width=60,
+                command=lambda s=script_name, b=radio_button: 
+                    self.remove_favorite(s, b)
+            )
+            remove_button.pack(side="right", padx=5)
+
+            if script_exists:
+                self.radio_buttons["Favorites"].append(radio_button)
+                self.radio_button_script_mapping["Favorites"][i] = script_name
+
+    async def run_script_async(self, script_path: Path) -> bool:
+        """Run a script asynchronously"""
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "cmd.exe", "/c", str(script_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=script_path.parent
+            )
+            await process.communicate()
+            return True
+        except Exception as e:
+            print(f"Error running script: {e}")
+            return False
+
+    def run_script_threaded(self, script_path: Path):
+        """Run script in a thread with optimized process handling"""
+        def script_worker():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                with subprocess.Popen(
+                    ["cmd.exe", "/c", str(script_path)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=script_path.parent,
+                    startupinfo=startupinfo
+                ) as process:
+                    for line in process.stdout:
+                        print(line, end='')
+                    for line in process.stderr:
+                        print(line, end='')
+            finally:
+                self.parent_tab.after(0, lambda: self.set_gui_state(True))
+
+        thread = threading.Thread(target=script_worker, daemon=True)
+        thread.start()
+
+    def set_gui_state(self, enabled: bool):
+        """Update GUI state with minimal redraws"""
+        for buttons in self.radio_buttons.values():
+            for button in buttons:
+                button.configure(state="normal" if enabled else "disabled")
+
+        if enabled:
+            self.loading_label.pack_forget()
+        else:
+            self.loading_label.pack(side="bottom", pady=5)
         
-        # Create progress bar (hidden by default)
-        self.progress_frame = ctk.CTkFrame(self.parent_tab)
-        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
-        self.progress_bar.set(0)
-        self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
+        self.parent_tab.update_idletasks()
+
+    def show_status(self, message: str, duration: int = 2000, color: str = "green"):
+        """Show status with optimized animation"""
+        self.status_label.configure(text=message, text_color=color)
+        self.status_label.pack(side="bottom", pady=10)
         
-        # Create the tab view in the parent tab
-        self.tabview = ctk.CTkTabview(self.parent_tab)
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+        def fade_out(alpha: float = 1.0):
+            if alpha <= 0:
+                self.status_label.pack_forget()
+                return
+            
+            if color.startswith('#'):
+                rgb = [int(int(color[i:i+2], 16) * alpha) for i in (1, 3, 5)]
+                color_with_alpha = f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
+                self.status_label.configure(text_color=color_with_alpha)
+            
+            self.parent_tab.after(50, lambda: fade_out(alpha - 0.1))
         
-        # Flag to track if scripts are currently running
-        self.is_running_all = False
+        self.parent_tab.after(duration, lambda: fade_out())
+
+    def toggle_favorite(self, tab_name: str, script_name: str, button: Optional[ctk.CTkButton]):
+        """Toggle favorite status with optimized updates"""
+        if script_name in self.favorites:
+            self.favorites.remove(script_name)
+            new_state = "☆"
+        else:
+            self.favorites.append(script_name)
+            new_state = "★"
         
-        # Populate the tabs and scripts dynamically
-        self.populate_tabs_and_scripts()
+        if button:
+            button.configure(text=new_state)
+        
+        self._save_favorites()
+        self.update_favorites_tab()
+
+    def remove_favorite(self, script_name: str, button: ctk.CTkRadioButton):
+        """Remove favorite with optimized updates"""
+        if script_name in self.favorites:
+            self.favorites.remove(script_name)
+            self._save_favorites()
+            self.update_favorites_tab()
+            
+            for tab_buttons in self.favorite_buttons.values():
+                if script_name in tab_buttons:
+                    tab_buttons[script_name].configure(text="☆")
+
+    def on_radio_select(self, tab_name: str, value: int):
+        """Handle radio selection with optimized script execution"""
+        if value not in self.radio_button_script_mapping[tab_name]:
+            return
+
+        script_name = self.radio_button_script_mapping[tab_name][value]
+        script_path = self._get_script_path(script_name)
+
+        if not script_path:
+            messagebox.showerror("Error", f"Script not found: {script_name}")
+            return
+
+        self.set_gui_state(False)
+        self.run_script_threaded(script_path)
+
+    async def run_all_favorites_async(self):
+        """Run all favorite scripts sequentially with progress tracking"""
+        if not self.favorites or self.is_running_all:
+            return
+
+        self.is_running_all = True
+        self.set_gui_state(False)
+        
+        # Filter to existing scripts
+        existing_scripts = [
+            script for script in self.favorites 
+            if self._get_script_path(script)
+        ]
+        total_scripts = len(existing_scripts)
+        
+        if total_scripts == 0:
+            self.show_status("No valid scripts found in favorites!", color="orange")
+            self.is_running_all = False
+            self.set_gui_state(True)
+            return
+
+        self.show_progress(True)
+        completed = 0
+        
+        try:
+            for script_name in existing_scripts:
+                script_path = self._get_script_path(script_name)
+                if script_path:
+                    # Update progress before running script
+                    self.update_progress(completed, total_scripts, script_name)
+                    
+                    # Run script and wait for completion
+                    await self.run_script_async(script_path)
+                    
+                    # Update progress after script completion
+                    completed += 1
+                    self.update_progress(completed, total_scripts, script_name)
+
+        finally:
+            self.is_running_all = False
+            self.set_gui_state(True)
+            self.show_progress(False)
+            self.show_status("All available favorites executed successfully!", color="#2ecc71")
+
+    def run_all_favorites(self):
+        """Start the async run_all_favorites operation"""
+        asyncio.run(self.run_all_favorites_async())
+
+    def show_progress(self, show: bool = True):
+        """Show or hide the progress bar and label"""
+        if show:
+            self.progress_frame.pack(side="bottom", fill="x", padx=10, pady=5)
+            self.progress_label.pack(pady=(0, 5))
+            self.progress_bar.pack(fill="x", padx=10, pady=(0, 5))
+        else:
+            self.progress_frame.pack_forget()
+
+    def update_progress(self, current: int, total: int, script_name: str):
+        """Update progress bar and label"""
+        progress = current / total if total > 0 else 0
+        self.progress_bar.set(progress)
+        self.progress_label.configure(
+            text=f"Running {current}/{total}: {Path(script_name).stem}"
+        )
+        self.parent_tab.update_idletasks()
 
     def set_initial_tab(self):
         """Set the initial tab to Favorites if it contains values, else the first available tab."""
-        available_tabs = self.tabview.winfo_children()
-        if not available_tabs:
+        if not self.tabview.winfo_children():
             return
             
-        # Try to set to Favorites first
+        # Try to set to Favorites first if it has items
         if self.favorites and "Favorites" in self.tab_radio_vars:
             try:
                 self.tabview.set("Favorites")
@@ -5396,592 +5898,7 @@ class AdvancedConfigs:
             self.tabview.set(first_tab)
         except (StopIteration, ValueError):
             pass  # No tabs available
-    
-    def validate_script_exists(self, script_name):
-        """Check if a script exists in any of the config folders"""
-        for folder in self.config_folders:
-            potential_path = os.path.join(self.base_path, folder, script_name)
-            if os.path.isfile(potential_path):
-                return True
-        return False
 
-    def show_status(self, message, duration=2000, color="green"):
-        """Show a status message that automatically fades out"""
-        # Configure and show the status label
-        self.status_label.configure(text=message, text_color=color)
-        self.status_label.pack(side="bottom", pady=10)
-        self.parent_tab.update()
-        
-        # Schedule the fade out effect
-        def fade_out(alpha=1.0):
-            if alpha <= 0:
-                self.status_label.pack_forget()
-                return
-            
-            # Calculate color with alpha
-            rgb = [int(int(color[i:i+2], 16) * alpha) for i in (1, 3, 5)] if color.startswith('#') else None
-            if rgb:
-                color_with_alpha = f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
-                self.status_label.configure(text_color=color_with_alpha)
-            
-            self.parent_tab.update()
-            self.parent_tab.after(50, lambda: fade_out(alpha - 0.1))
-        
-        # Schedule the start of fade out
-        self.parent_tab.after(duration, lambda: fade_out())
-
-    def show_progress(self, show=True):
-        """Show or hide the progress bar and label"""
-        if show:
-            self.progress_frame.pack(side="bottom", fill="x", padx=10, pady=5)
-            self.progress_label.pack(pady=(0, 5))
-            self.progress_bar.pack(fill="x", padx=10, pady=(0, 5))
-        else:
-            self.progress_frame.pack_forget()
-
-    async def run_script_async(self, script_path):
-        """Run a script and return when it's complete"""
-        process = await asyncio.create_subprocess_exec(
-            "cmd.exe", "/c", script_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=os.path.dirname(script_path)
-        )
-        
-        # Wait for the process to complete
-        await process.communicate()
-        return True  # Return True as script completed running, regardless of errors
-
-    async def run_all_favorites_async(self):
-        """Run all favorite scripts sequentially with progress tracking"""
-        if not self.favorites or self.is_running_all:
-            return
-
-        self.is_running_all = True
-        self.set_gui_state(False)
-        
-        # Count only existing scripts for progress calculation
-        existing_scripts = [script for script in self.favorites if self.validate_script_exists(script)]
-        total_scripts = len(existing_scripts)
-        
-        if total_scripts == 0:
-            self.show_status("No valid scripts found in favorites!", color="orange")
-            self.is_running_all = False
-            self.set_gui_state(True)
-            return
-
-        # Show single progress bar
-        self.show_progress(True)
-        completed = 0
-        
-        try:
-            for script_name in self.favorites:
-                script_path = None
-                for folder in self.config_folders:
-                    potential_path = os.path.join(self.base_path, folder, script_name)
-                    if os.path.isfile(potential_path):
-                        script_path = potential_path
-                        break
-
-                if script_path:
-                    # Update progress before running script
-                    self.update_progress(completed, total_scripts, script_name)
-                    
-                    # Run script and wait for it to complete
-                    await self.run_script_async(script_path)
-                    
-                    # Increment progress as script has completed running
-                    completed += 1
-                    self.update_progress(completed, total_scripts, script_name)
-
-        finally:
-            self.is_running_all = False
-            self.set_gui_state(True)
-            self.show_progress(False)
-            self.show_status("All available favorites executed successfully!", color="#2ecc71")
-
-    def run_all_favorites(self):
-        """Start the async run_all_favorites operation"""
-        asyncio.run(self.run_all_favorites_async())
-
-    def update_progress(self, current, total, script_name):
-        """Update progress bar and label"""
-        progress = current / total if total > 0 else 0
-        self.progress_bar.set(progress)
-        self.progress_label.configure(text=f"Running {current}/{total}: {os.path.splitext(script_name)[0]}")
-        self.parent_tab.update()
-
-    def update_favorites_tab(self):
-        """Update the contents of the Favorites tab"""
-        # Clear existing content in Favorites tab
-        for widget in self.tabview.tab("Favorites").winfo_children():
-            widget.destroy()
-
-        # Create scrollable frame
-        scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab("Favorites"), width=400, height=400)
-        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Add "Run All Favorites" button at the top if there are favorites
-        if self.favorites:
-            run_all_frame = ctk.CTkFrame(scrollable_frame)
-            run_all_frame.pack(fill="x", padx=5, pady=5)
-            
-            run_all_button = ctk.CTkButton(
-                run_all_frame,
-                text="Run All Favorites Sequentially",
-                command=self.run_all_favorites
-            )
-            run_all_button.pack(fill="x", padx=5, pady=5)
-
-        # Add favorite scripts
-        if not self.favorites:
-            ctk.CTkLabel(scrollable_frame, text="No favorites added yet").pack(pady=10)
-            return
-
-        self.tab_radio_vars["Favorites"] = tk.IntVar(value=0)
-        self.radio_buttons["Favorites"] = []
-        self.radio_button_script_mapping["Favorites"] = {}
-
-        for i, script_name in enumerate(self.favorites, 1):
-            script_label = os.path.splitext(script_name)[0]
-            script_exists = self.validate_script_exists(script_name)
-            
-            # Create frame for radio button and remove button
-            frame = ctk.CTkFrame(scrollable_frame)
-            frame.pack(fill="x", padx=5, pady=2)
-
-            # Create radio button with different styling based on existence
-            radio_button = ctk.CTkRadioButton(
-                frame,
-                text=script_label,
-                variable=self.tab_radio_vars["Favorites"],
-                value=i,
-                command=lambda t="Favorites", v=i: self.on_radio_select(t, v),
-                state="normal" if script_exists else "disabled",
-                text_color="gray50" if not script_exists else None
-            )
-            radio_button.pack(side="left", padx=5)
-
-            # Add warning icon and text for missing scripts
-            if not script_exists:
-                warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
-                warning_frame.pack(side="left", padx=2)
-                
-                warning_label = ctk.CTkLabel(
-                    warning_frame,
-                    text="⚠️ Script not found",
-                    text_color="orange"
-                )
-                warning_label.pack(side="left")
-
-            remove_button = ctk.CTkButton(
-                frame,
-                text="Remove",
-                width=60,
-                command=lambda s=script_name, b=radio_button: self.remove_favorite(s, b),
-            )
-            remove_button.pack(side="right", padx=5)
-
-            if script_exists:
-                self.radio_buttons["Favorites"].append(radio_button)
-                self.radio_button_script_mapping["Favorites"][i] = script_name
-
-    def categorize_scripts(self):
-        # Check for cached results first
-        cache_path = os.path.join(self.base_path, "autochanger", "script_categories_cache.json")
-        
-        try:
-            with open(cache_path, 'r') as f:
-                cached_data = json.load(f)
-                last_scan_time = cached_data.get('scan_time', 0)
-        except (FileNotFoundError, json.JSONDecodeError):
-            last_scan_time = 0
-        
-        # Check if any config folder has been modified since last scan
-        def folder_modified(folder_path):
-            try:
-                # Safely check if folder exists before attempting to list or get modification time
-                if not os.path.isdir(folder_path):
-                    return 0
-                
-                return max(
-                    os.path.getmtime(os.path.join(folder_path, f)) 
-                    for f in os.listdir(folder_path) 
-                    if f.endswith(('.bat', '.cmd'))
-                ) if os.listdir(folder_path) else 0
-            except Exception:
-                return 0
-        
-        # Determine if rescan is needed
-        max_modification_time = 0
-        for folder in self.config_folders:
-            try:
-                full_path = os.path.join(self.base_path, folder)
-                mod_time = folder_modified(full_path)
-                max_modification_time = max(max_modification_time, mod_time)
-            except Exception:
-                continue
-        
-        if max_modification_time <= last_scan_time:
-            return cached_data.get('categories', {})
-        
-        # Parallel script scanning
-        def scan_folder(folder):
-            try:
-                folder_path = os.path.join(self.base_path, folder)
-                
-                # Immediately return empty dict if folder doesn't exist
-                if not os.path.isdir(folder_path):
-                    return {}
-                
-                folder_scripts = {}
-                
-                with os.scandir(folder_path) as entries:
-                    for entry in entries:
-                        if entry.is_file() and (entry.name.endswith('.bat') or entry.name.endswith('.cmd')):
-                            # Existing categorization logic
-                            added_to_tab = False
-                            
-                            # Check folder to tab mapping first
-                            if folder in self.folder_to_tab_mapping:
-                                tab_name = self.folder_to_tab_mapping.get(folder)
-                                folder_scripts[len(folder_scripts) + 1] = entry.name
-                                added_to_tab = True
-                            
-                            # Keyword-based categorization
-                            if not added_to_tab:
-                                for tab, keywords in self.tab_keywords.items():
-                                    if keywords:
-                                        for keyword in keywords:
-                                            if keyword.lower() in entry.name.lower():
-                                                folder_scripts[len(folder_scripts) + 1] = entry.name
-                                                added_to_tab = True
-                                                break
-                                    if added_to_tab:
-                                        break
-                            
-                            # Add to Other tab if no other category matched
-                            if not added_to_tab:
-                                folder_scripts[len(folder_scripts) + 1] = entry.name
-                
-                return folder_scripts
-            except Exception as e:
-                # Silently handle any errors for this specific folder
-                print(f"Error scanning folder {folder}: {e}")
-                return {}
-        
-        # Use concurrent processing with error handling
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(executor.map(scan_folder, self.config_folders))
-        
-        # Initialize script categories
-        script_categories = {tab: {} for tab in self.tab_keywords}
-        script_categories["Favorites"] = {}
-        script_categories["Other"] = {}
-        
-        # Combine results
-        for folder_result in results:
-            for script_number, script_name in folder_result.items():
-                # Categorize scripts
-                categorized = False
-                
-                # Check folder to tab mapping
-                for folder, tab_name in self.folder_to_tab_mapping.items():
-                    try:
-                        folder_path = os.path.join(self.base_path, folder)
-                        if os.path.isdir(folder_path) and script_name in os.listdir(folder_path):
-                            if tab_name in script_categories:
-                                script_categories[tab_name][len(script_categories[tab_name]) + 1] = script_name
-                                categorized = True
-                                break
-                    except Exception:
-                        continue
-                
-                # Keyword-based categorization
-                if not categorized:
-                    for tab, keywords in self.tab_keywords.items():
-                        if keywords:
-                            for keyword in keywords:
-                                if keyword.lower() in script_name.lower():
-                                    if tab in script_categories:
-                                        script_categories[tab][len(script_categories[tab]) + 1] = script_name
-                                        categorized = True
-                                        break
-                        if categorized:
-                            break
-                
-                # Add to Other tab if not categorized
-                if not categorized:
-                    script_categories["Other"][len(script_categories["Other"]) + 1] = script_name
-        
-        # Cache the results
-        try:
-            cache_data = {
-                'scan_time': max_modification_time,
-                'categories': script_categories
-            }
-            
-            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-            with open(cache_path, 'w') as f:
-                json.dump(cache_data, f)
-        except Exception as e:
-            print(f"Error caching script categories: {e}")
-        
-        return script_categories
-
-    def load_favorites(self):
-        """Load favorites from a JSON file"""
-        favorites_path = os.path.join(self.base_path, "autochanger", 'favorites.json')
-        try:
-            with open(favorites_path, 'r') as f:
-                return json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
-            return []
-
-    def save_favorites(self):
-        """Save favorites to a JSON file"""
-        favorites_path = os.path.join(self.base_path, "autochanger", 'favorites.json')
-        with open(favorites_path, 'w') as f:
-            json.dump(self.favorites, f)
-
-    def toggle_favorite(self, tab_name, script_name, button):
-        """Toggle favorite status for a script"""
-        if script_name in self.favorites:
-            self.favorites.remove(script_name)
-            button.configure(text="☆")  # Empty star
-        else:
-            self.favorites.append(script_name)
-            button.configure(text="★")  # Filled star
-        
-        self.save_favorites()
-        self.update_favorites_tab()
-
-    def remove_favorite(self, script_name, button):
-        """Remove a script from favorites"""
-        if script_name in self.favorites:
-            self.favorites.remove(script_name)
-            self.save_favorites()
-            self.update_favorites_tab()
-            
-            # Update the star button in the original tab if it exists
-            for tab_name in self.favorite_buttons:
-                if script_name in self.favorite_buttons[tab_name]:
-                    self.favorite_buttons[tab_name][script_name].configure(text="☆")
-
-    def populate_tabs_and_scripts(self):
-        script_categories = self.categorize_scripts()
-
-        # Create tabs only for categories that have scripts or are Favorites
-        for tab_name, scripts in script_categories.items():
-            if scripts or tab_name == "Favorites":
-                try:
-                    # Special handling for Themes tab with dynamic sub-tabs
-                    if tab_name == "Themes":
-                        themes_tab = self.tabview.add("Themes")
-                        themes_tabview = ctk.CTkTabview(themes_tab)
-                        themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
-                        # Track created sub-tabs to avoid duplicates
-                        created_sub_tabs = set()
-
-                        for folder, sub_tab_name in self.potential_sub_tabs:
-                            folder_path = os.path.join(self.base_path, folder)
-                            ##print(f"Checking folder: {folder_path}")  # Debugging print
-
-                            if os.path.isdir(folder_path):
-                                scripts = [f for f in os.listdir(folder_path) if f.endswith('.bat') or f.endswith('.cmd')]
-                                ##print(f"Scripts in {folder}: {scripts}")  # Debugging print
-
-                                # Avoid duplicate sub-tabs
-                                if sub_tab_name not in created_sub_tabs and scripts:
-                                    try:
-                                        themes_tabview.add(sub_tab_name)
-                                        print(f"Successfully added sub-tab: {sub_tab_name}")  # Debugging print
-                                        created_sub_tabs.add(sub_tab_name)
-
-                                        self.tab_radio_vars[sub_tab_name] = tk.IntVar(value=0)
-
-                                        # Get scripts for this specific sub-tab
-                                        sub_tab_scripts = {
-                                            i+1: script for i, script in enumerate(scripts)
-                                        }
-
-                                        self.radio_button_script_mapping[sub_tab_name] = sub_tab_scripts
-                                        self.radio_buttons[sub_tab_name] = []
-                                        self.favorite_buttons[sub_tab_name] = {}
-
-                                        scrollable_frame = ctk.CTkScrollableFrame(themes_tabview.tab(sub_tab_name), width=400, height=400)
-                                        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-                                        for i, script_name in sub_tab_scripts.items():
-                                            script_label = os.path.splitext(script_name)[0]
-
-                                            # Create frame for radio button and favorite button
-                                            frame = ctk.CTkFrame(scrollable_frame)
-                                            frame.pack(fill="x", padx=5, pady=2)
-
-                                            radio_button = ctk.CTkRadioButton(
-                                                frame,
-                                                text=script_label,
-                                                variable=self.tab_radio_vars[sub_tab_name],
-                                                value=i,
-                                                command=lambda t=sub_tab_name, v=i: self.on_radio_select(t, v)
-                                            )
-                                            radio_button.pack(side="left", padx=5)
-
-                                            # Add favorite toggle button
-                                            favorite_button = ctk.CTkButton(
-                                                frame,
-                                                text="★" if script_name in self.favorites else "☆",
-                                                width=30,
-                                                command=lambda t=sub_tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
-                                            )
-                                            favorite_button.pack(side="right", padx=5)
-
-                                            # Store the button reference for later updates
-                                            self.favorite_buttons[sub_tab_name][script_name] = favorite_button
-                                            favorite_button.configure(command=lambda t=sub_tab_name, s=script_name, b=favorite_button:
-                                                                        self.toggle_favorite(t, s, b))
-
-                                            self.radio_buttons[sub_tab_name].append(radio_button)
-
-                                    except Exception as sub_tab_error:
-                                        print(f"Error adding sub-tab {sub_tab_name}: {sub_tab_error}")
-
-                        # Print out created sub-tabs for verification
-                        #print("Created sub-tabs:", created_sub_tabs)
-
-                    # Handle Favorites tab
-                    elif tab_name == "Favorites":
-                        self.tabview.add("Favorites")
-                        self.update_favorites_tab()
-
-                    # Handle other tabs (non-Themes)
-                    else:
-                        if tab_name not in created_sub_tabs:
-                            self.tabview.add(tab_name)
-                            self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
-                            self.radio_button_script_mapping[tab_name] = scripts
-                            self.radio_buttons[tab_name] = []
-                            self.favorite_buttons[tab_name] = {}
-
-                            scrollable_frame = ctk.CTkScrollableFrame(self.tabview.tab(tab_name), width=400, height=400)
-                            scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-                            for i, script_name in scripts.items():
-                                script_label = os.path.splitext(script_name)[0]
-
-                                # Create frame for radio button and favorite button
-                                frame = ctk.CTkFrame(scrollable_frame)
-                                frame.pack(fill="x", padx=5, pady=2)
-
-                                radio_button = ctk.CTkRadioButton(
-                                    frame,
-                                    text=script_label,
-                                    variable=self.tab_radio_vars[tab_name],
-                                    value=i,
-                                    command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
-                                )
-                                radio_button.pack(side="left", padx=5)
-
-                                # Add favorite toggle button
-                                favorite_button = ctk.CTkButton(
-                                    frame,
-                                    text="★" if script_name in self.favorites else "☆",
-                                    width=30,
-                                    command=lambda t=tab_name, s=script_name, b=None: self.toggle_favorite(t, s, b)
-                                )
-                                favorite_button.pack(side="right", padx=5)
-
-                                # Store the button reference for later updates
-                                self.favorite_buttons[tab_name][script_name] = favorite_button
-                                favorite_button.configure(command=lambda t=tab_name, s=script_name, b=favorite_button:
-                                                            self.toggle_favorite(t, s, b))
-
-                                self.radio_buttons[tab_name].append(radio_button)
-
-                except Exception as e:
-                    print(f"Error creating tab {tab_name}: {str(e)}")
-                    continue
-
-        # Set initial tab after all tabs are created
-        self.set_initial_tab()
-
-
-    def set_gui_state(self, enabled):
-        """Enable or disable all script-related GUI elements without disabling the tabview itself."""
-        # Enable/disable all radio buttons without altering the tab appearance
-        for tab_buttons in self.radio_buttons.values():
-            for button in tab_buttons:
-                button.configure(state="normal" if enabled else "disabled")
-
-        # Show/hide loading label for feedback
-        if enabled:
-            self.loading_label.pack_forget()
-        else:
-            self.loading_label.pack(side="bottom", pady=5)
-        
-        # Force GUI update
-        self.parent_tab.update()
-
-    def run_script_threaded(self, script_path):
-        """Run the script in a separate thread and print output in real-time to VS Code terminal."""
-        import threading
-        
-        def script_worker():
-            try:
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-
-                process = subprocess.Popen(
-                    ["cmd.exe", "/c", script_path],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=os.path.dirname(script_path),
-                    startupinfo=startupinfo
-                )
-
-                # Output real-time stdout and stderr
-                for line in process.stdout:
-                    print(line, end='')  # Print each line as it's produced
-
-                for line in process.stderr:
-                    print(line, end='')  # Print each error line as it's produced
-
-                process.wait()  # Ensure process completes
-            finally:
-                # Re-enable the GUI in the main thread
-                self.parent_tab.after(0, lambda: self.set_gui_state(True))
-
-        # Start the script in a separate thread
-        thread = threading.Thread(target=script_worker)
-        thread.daemon = True  # Make thread daemon so it doesn't block program exit
-        thread.start()
-
-    def on_radio_select(self, tab_name, value):
-        """Handler for radio button selection that automatically runs the script"""
-        if value in self.radio_button_script_mapping[tab_name]:
-            script_to_run = self.radio_button_script_mapping[tab_name][value]
-
-            script_path = None
-            for folder in self.config_folders:
-                potential_path = os.path.join(self.base_path, folder, script_to_run)
-                if os.path.isfile(potential_path):
-                    script_path = potential_path
-                    break
-
-            if not script_path:
-                messagebox.showerror("Error", f"The script does not exist: {script_to_run}")
-                return
-
-            # Disable GUI and show loading state
-            self.set_gui_state(False)
-            
-            # Run the script in a separate thread
-            self.run_script_threaded(script_path)
-                         
 class ViewRoms:
     def __init__(self, parent_tab, config_manager):
         # Define font settings at the top of the class
