@@ -675,7 +675,7 @@ class FilterGamesApp:
         # Create version button
         version_button = ctk.CTkButton(
             appearance_frame,
-            text=f"Version: {current_version}",
+            text=f"Whats New v{current_version}",
             font=("Arial", 14, "bold"),
             command=lambda: self.on_version_button_click(version_button),
             fg_color=button_color,
