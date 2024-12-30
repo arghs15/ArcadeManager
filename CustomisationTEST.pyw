@@ -606,6 +606,14 @@ class FilterGamesApp:
 
             create_feature_frame(
                 main_frame,
+                feature_icon,
+                "Controls Tab",
+                "Added controller icon to xinput controls",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
                 rocket_icon,
                 "Manage ROMS Tab",
                 "Removed the Move Roms button that uses a text file\n",
@@ -617,14 +625,6 @@ class FilterGamesApp:
                 rocket_icon,
                 "Performance Improvements",
                 "Defer (Lazy) Creation of GUI Elements for Advanced Configs Tab\nShould load faster on startup, but may increase load times on initial loading of each tab",
-                full_width=True
-            )
-
-            create_feature_frame(
-                main_frame,
-                rocket_icon,
-                "Controls Tab",
-                "Added controller icon to xinput controls",
                 full_width=True
             )
 
