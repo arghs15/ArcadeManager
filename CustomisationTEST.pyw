@@ -2013,22 +2013,21 @@ class Controls:
                         if button_code:
                             # e.g. "A", "B", "X", etc.
                             friendly_label = self.friendly_names.get(button_code, value)
-                            display_values.append(friendly_label)
+                            display_values.append(f"🎮{friendly_label}")  # Controller icon prefix
                         else:
                             # fallback if not in reverse_button_map
-                            display_values.append(value)
+                            display_values.append(f"🎮{value}")  # Controller icon prefix
                     else:
                         # Not showing friendly names → display e.g. "joyButton0"
-                        display_values.append(value)
+                        display_values.append(f"🎮{value}")  # Controller icon prefix
 
                 else:
-                    # Otherwise assume it's a keyboard input
-                    # Always show "KB:" in front, ignoring the toggle
-                    display_values.append(f"KB: {value}")
+                    # Otherwise assume it's a keyboard input - no prefix
+                    display_values.append(value)
 
             # Now update the GUI Entry
             entry.delete(0, "end")
-            entry.insert(0, ', '.join(display_values))  # "A, B, KB: T" etc.
+            entry.insert(0, ', '.join(display_values))
 
 
     def create_control_frame(self, parent, control_name):
@@ -2084,6 +2083,7 @@ class Controls:
         """
         Called via self.parent.after(...).
         device_type can be "keyboard", "controller", or None.
+        Uses '🎮' for controller inputs to distinguish them.
         """
         print(f"_safe_update_entry called with input_name={input_name}, "
             f"friendly_name={friendly_name}, device_type={device_type}, "
@@ -2098,15 +2098,15 @@ class Controls:
             self.controls_config[self.current_control].append(internal_name)
 
             # Determine display name:
-            # -- ALWAYS tag keyboard inputs with "KB:".
-            # -- For controller inputs, use 'friendly' or 'internal' depending on the toggle.
+            # For controller inputs, add 🎮 prefix
+            # For keyboard inputs, just show the key name
             if device_type == "keyboard":
-                display_name = f"KB: {friendly_name}"
+                display_name = friendly_name  # No prefix for keyboard
             elif device_type == "controller":
                 if self.show_friendly_names:
-                    display_name = friendly_name   # e.g. "A", "B", "X", "Y"
+                    display_name = f"🎮{friendly_name}"   # Controller icon prefix
                 else:
-                    display_name = internal_name   # e.g. "joyButton0", etc.
+                    display_name = f"🎮{internal_name}"   # Controller icon prefix
             else:
                 # Fallback if device_type is somehow None or unknown
                 if self.show_friendly_names:
@@ -2130,7 +2130,6 @@ class Controls:
             entry.configure(border_color="gray", border_width=1)
 
             self.cleanup_capture()
-
 
     def clear_all_controls(self):
         """Clear all control bindings"""
