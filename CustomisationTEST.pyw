@@ -586,6 +586,15 @@ class FilterGamesApp:
             create_feature_frame(
                 main_frame,
                 feature_icon,
+                "Themes Tab",
+                "Can now have multiple roms, logo, and video folders added to INI file.\nIf found, a Jump Category button will show and allow you to jump between them.",
+                full_width=True
+            )
+
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
                 "Controls Tab",
                 "Added controller icon to xinput controls",
                 full_width=True
@@ -764,7 +773,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.1"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.2"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
