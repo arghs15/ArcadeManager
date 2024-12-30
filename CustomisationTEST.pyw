@@ -607,6 +607,14 @@ class FilterGamesApp:
             create_feature_frame(
                 main_frame,
                 rocket_icon,
+                "Manage ROMS Tab",
+                "Removed the Move Roms button that uses a text file\n",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
+                rocket_icon,
                 "Performance Improvements",
                 "Defer (Lazy) Creation of GUI Elements for Advanced Configs Tab\nShould load faster on startup, but may increase load times on initial loading of each tab",
                 full_width=True
@@ -616,7 +624,7 @@ class FilterGamesApp:
                 main_frame,
                 rocket_icon,
                 "Controls Tab",
-                "Added KB: infront of all keybaord keys, so it doesnt confuse with xinput keys.",
+                "Added controller icon to xinput controls",
                 full_width=True
             )
 
@@ -745,7 +753,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.1"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -798,18 +806,6 @@ class ConfigManager:
                 'type': List[str],
                 'hidden': True
             },
-            'show_move_artwork_button': {
-                'default': 'False',
-                'description': 'Show Move Artwork button',
-                'type': bool,
-                'hidden': True
-            },
-            'show_move_roms_button': {
-                'default': 'False',
-                'description': 'Show Move ROMs button',
-                'type': bool,
-                'hidden': True
-            },
             'show_move_artwork_instructions': {
                 'default': 'True',
                 'description': 'Show Move Artwork instructions',
@@ -823,7 +819,7 @@ class ConfigManager:
                 'hidden': True
             },
             'show_whats_new': {
-                'default': 'False',
+                'default': 'auto',
                 'description': 'Show What\'s New popup',
                 'type': str,
                 'hidden': True
@@ -901,6 +897,21 @@ class ConfigManager:
         }
     }
 
+    BUTTON_VISIBILITY_STATES = {
+        'show_move_artwork_button': {
+            'default': 'always',  # 'always', 'never'
+            'description': 'Controls visibility of Move Artwork button',
+            'type': str,
+            'hidden': True
+        },
+        'show_move_roms_button': {
+            'default': 'never',  # 'always', 'never'
+            'description': 'Controls visibility of Move ROMs button',
+            'type': str,
+            'hidden': True
+        }
+    }
+
     BUILD_TYPE_PATHS = {
         'D': {  # Dynamic build type
             'roms': "- Themes",  # Relative to `self.base_path`
@@ -935,6 +946,12 @@ class ConfigManager:
         self._build_type = self._determine_build_type()  # Only do once
 
         self.version_check()
+
+        # Add to existing __init__
+        self._button_visibility_cache = {}
+        # Initialize button visibility during initialization
+        for button in self.BUTTON_VISIBILITY_STATES:
+            self._button_visibility_cache[button] = self.determine_button_visibility(button)
 
         # Pre-compute tab visibility during initialization
         self._tab_visibility_cache = {}
@@ -991,6 +1008,68 @@ class ConfigManager:
             self._log(f"Error during version check: {e}")
             self._reset_config_to_defaults()
 
+    def determine_button_visibility(self, button_name):
+        """
+        Determine whether a button should be visible based on configuration and context.
+        Similar to tab visibility logic but for buttons.
+        
+        :param button_name: Name of the button to check
+        :return: bool indicating if button should be visible
+        """
+        try:
+            # Check cache first
+            if button_name in self._button_visibility_cache:
+                return self._button_visibility_cache[button_name]
+
+            # Get visibility setting from config if it exists
+            if self.setting_exists('Settings', button_name):
+                visibility = self.get_setting('Settings', button_name, 'never')
+            else:
+                # Use default from BUTTON_VISIBILITY_STATES if setting doesn't exist
+                visibility = self.BUTTON_VISIBILITY_STATES.get(button_name, {}).get('default', 'never')
+
+            # Convert visibility setting to boolean
+            is_visible = visibility == 'always'
+            
+            # Cache the result
+            self._button_visibility_cache[button_name] = is_visible
+            return is_visible
+
+        except Exception as e:
+            print(f"Error determining button visibility for {button_name}: {e}")
+            return False
+
+    def update_button_visibility(self, button_name, visibility):
+        """
+        Update button visibility setting.
+        
+        :param button_name: Name of the button
+        :param visibility: Visibility mode ('always' or 'never')
+        """
+        try:
+            if visibility not in ['always', 'never']:
+                raise ValueError("Invalid visibility mode. Must be 'always' or 'never'")
+
+            # Update the cache
+            self._button_visibility_cache[button_name] = (visibility == 'always')
+            
+            # Only update config if the setting already exists in the INI file
+            if self.setting_exists('Settings', button_name):
+                self.config.set('Settings', button_name, visibility)
+                self.save_config()
+
+        except Exception as e:
+            print(f"Error updating button visibility for {button_name}: {e}")
+
+    def get_button_visibility(self, button_name):
+        """
+        Get the current visibility state of a button.
+        
+        :param button_name: Name of the button to check
+        :return: bool indicating if button should be visible
+        """
+        return self.determine_button_visibility(button_name)
+    
     def _reset_config_to_defaults(self):
         """
         Reset configuration to hardcoded defaults for all non-hidden settings.
@@ -5928,6 +6007,8 @@ class ViewRoms:
         self.config_manager = config_manager
         self.rom_descriptions = {}  # Make sure this is initialized
         self.parent_tab = parent_tab
+        # Add this line with your other initializations
+        self.buttons = {}
 
         # Main container
         main_container = ctk.CTkFrame(self.parent_tab)
@@ -5964,13 +6045,14 @@ class ViewRoms:
         search_entry.pack(side='left', fill='x', expand=True, padx=5)
 
         # Button frame with custom fonts
-        button_frame = ctk.CTkFrame(search_frame)
-        button_frame.pack(side='right', padx=5)
-
+        # Button frame with custom fonts
+        self.button_frame = ctk.CTkFrame(search_frame)  # Use self.button_frame instead of button_frame
+        self.button_frame.pack(side='right', padx=5)
+        
         # Sort toggle with custom font
         self.sort_var = tk.StringVar(value="Name")
         self.sort_toggle = ctk.CTkSegmentedButton(
-            button_frame,
+            self.button_frame,
             values=["Name", "Collection"],
             variable=self.sort_var,
             command=self.handle_sort_change,
@@ -5980,7 +6062,7 @@ class ViewRoms:
 
         # Clear filters button with custom font
         clear_button = ctk.CTkButton(
-            button_frame,
+            self.button_frame,
             text="Clear All",
             command=self.clear_filters,
             width=70,
@@ -5989,31 +6071,13 @@ class ViewRoms:
         clear_button.pack(side='right', padx=5)
 
         remove_games_button = ctk.CTkButton(
-            button_frame,
+            self.button_frame,
             text="Remove Games",
             command=self.select_games_to_remove,
             width=100,
             font=self.button_font
         )
         remove_games_button.pack(side='right', padx=5)
-
-        # Create buttons and store them in a dictionary
-        self.buttons = {
-            'show_move_artwork_button': ctk.CTkButton(
-                button_frame,
-                text="Move Artwork",
-                command=lambda: self.show_instructions_popup('show_move_artwork_button'),
-                width=100,
-                font=self.button_font
-            ),
-            'show_move_roms_button': ctk.CTkButton(
-                button_frame,
-                text="Move ROMs",
-                command=lambda: self.show_instructions_popup('show_move_roms_button'),
-                width=100,
-                font=self.button_font
-            )
-        }
 
         # ROM list frame
         list_frame = ctk.CTkFrame(main_container)
@@ -6046,6 +6110,33 @@ class ViewRoms:
 
         # Pack buttons based on visibility setting
         self.update_button_visibility()
+
+        # Then when you're setting up your UI, call your button creation
+        self.create_buttons()
+
+    def create_buttons(self):
+        button_configs = {
+            'show_move_artwork_button': {
+                'text': "Move Artwork",
+                'command': lambda: self.show_instructions_popup('show_move_artwork_button')
+            },
+            'show_move_roms_button': {
+                'text': "Move ROMs",
+                'command': lambda: self.show_instructions_popup('show_move_roms_button')
+            }
+        }
+
+        for button_name, config in button_configs.items():
+            if self.config_manager.get_button_visibility(button_name):
+                self.buttons[button_name] = ctk.CTkButton(
+                    self.button_frame,  # Use the correctly defined self.button_frame
+                    text=config['text'],
+                    command=config['command'],
+                    width=100,
+                    font=self.button_font
+                )
+                self.buttons[button_name].pack(side='right', padx=5)
+
 
     def select_games_to_remove(self):
         """Open a window to select games to remove from the current collection view"""
