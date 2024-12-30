@@ -321,6 +321,10 @@ class FilterGamesApp:
         show_popup()'''
     
     def show_whats_new_popup(self):
+        # This might just call your existing "show_popup()" function
+        self.show_popup()
+
+    def show_whats_new_popup(self):
         """Show the 'What's New' popup with the latest updates."""
         # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
         WINDOW_SIZE = {
@@ -597,58 +601,11 @@ class FilterGamesApp:
             )
             new_features_label.pack(fill="x", pady=(0, 10))
 
-            # Features with split layout (images)
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Manage ROMs Tab",
-                "Now you can select roms to move via the GUI!.",
-                assets['manage_roms_tab'],
-                full_width=False
-            )
-
-            # Features with split layout (images)
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Controls Tab",
-                "Set controls with the press of a button on your xinput device or keyboard.",
-                assets['controls_tab'],
-                full_width=False
-            )
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Exclude Games",
-                "You can now toggle betwene Include and Exlude in the Filter Games section.",
-                assets['filter_games_tab'],
-                full_width=False
-            )
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "GUI Exit State",
-                "The application now remembers your last state after execution.",
-                assets['exit_state'],
-                full_width=False
-            )
-
-            # Full-width features (no images)
-            create_feature_frame(
-                main_frame,
-                bug_icon,
-                "Bug Fixes",
-                "Various bug fixes and stability improvements",
-                full_width=True
-            )
-
             create_feature_frame(
                 main_frame,
                 rocket_icon,
                 "Performance Improvements",
-                "Performance optimizations and enhancements",
+                "Defer (Lazy) Creation of GUI Elements for Advanced Configs Tab\nShould load faster on startup, but may increase load times on initial loading of each tab",
                 full_width=True
             )
 
@@ -713,15 +670,44 @@ class FilterGamesApp:
         return False      
     
     def add_appearance_mode_frame(self):
+        # 1) Create frame
         appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
         appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
-        ctk.CTkLabel(appearance_frame, text="Appearance Mode", font=("Arial", 14, "bold")).pack(side="left", padx=(20, 10), pady=10)
+        # 2) Get the config version
+        current_version = self.config_manager.config.get(
+            "DEFAULT", 
+            self.config_manager.CONFIG_VERSION_KEY, 
+            fallback=self.config_manager.CONFIG_FILE_VERSION
+        )
 
+        # 3) Create a button to show “What’s New”
+        version_button = ctk.CTkButton(
+            appearance_frame,
+            text=f"Version: {current_version}",
+            font=("Arial", 14, "bold"),
+            command=self.show_whats_new_popup,   # or self.show_popup if you prefer
+            fg_color="gray25",                   # example color, tweak to your liking
+            hover_color="gray40"                 # likewise
+        )
+        version_button.pack(side="left", padx=(10, 10), pady=10)
+
+        # 4) Appearance Mode label
+        appearance_label = ctk.CTkLabel(
+            appearance_frame, 
+            text="Appearance Mode", 
+            font=("Arial", 14, "bold")
+        )
+        appearance_label.pack(side="left", padx=(20, 10), pady=10)
+
+        # 5) The dropdown for appearance
         appearance_mode_optionmenu = ctk.CTkOptionMenu(
-            appearance_frame, values=["Dark", "Light", "System"], command=lambda mode: ctk.set_appearance_mode(mode)
+            appearance_frame, 
+            values=["Dark", "Light", "System"],
+            command=lambda mode: ctk.set_appearance_mode(mode)
         )
         appearance_mode_optionmenu.pack(side="right", padx=10, pady=10)
+
         
     def center_window(self, width, height):
         # Get the screen dimensions
@@ -748,7 +734,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.1"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
