@@ -5223,6 +5223,8 @@ class AdvancedConfigs:
         # Store a dictionary from script_name -> absolute_path
         self.all_scripts_map = {}
 
+        self._themes_tabview = None  # Will store the sub-tabview here
+
         # Convert config folders to Path objects for better performance
         self.config_folders_all = [
             Path(self.base_path, folder) for folder in [
@@ -5513,9 +5515,14 @@ class AdvancedConfigs:
         # Access the existing top-level tab
         themes_tab = self.tabview.tab("Themes")
 
-        # Put a CTkTabview inside
-        themes_tabview = ctk.CTkTabview(themes_tab)
-        themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
+        # Only create the sub-tabview if it doesn't already exist
+        if self._themes_tabview is not None:
+            # We already built it, so do nothing
+            return
+        
+        # Now create the sub-tabview once
+        self._themes_tabview = ctk.CTkTabview(themes_tab)
+        self._themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
 
         created_sub_tabs = set()
         for folder, sub_tab_name in self.potential_sub_tabs:
@@ -5526,7 +5533,7 @@ class AdvancedConfigs:
             script_list = [f.name for f in folder_path.iterdir()
                            if f.is_file() and f.suffix in ('.bat', '.cmd')]
             if script_list and sub_tab_name not in created_sub_tabs:
-                self._create_theme_sub_tab(themes_tabview, sub_tab_name, script_list)
+                self._create_theme_sub_tab(self._themes_tabview, sub_tab_name, script_list)
                 created_sub_tabs.add(sub_tab_name)
 
     def _create_theme_sub_tab(self, themes_tabview, sub_tab_name: str, scripts: list[str]):
