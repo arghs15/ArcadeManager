@@ -554,6 +554,9 @@ class FilterGamesApp:
             window_width = 1000
             window_height = 700
             
+            # Example usage of the version from ConfigManager
+            version_text = ConfigManager.CONFIG_FILE_VERSION
+
             # Center the window
             screen_width = popup.winfo_screenwidth()
             screen_height = popup.winfo_screenheight()
@@ -561,6 +564,15 @@ class FilterGamesApp:
             y = (screen_height // 2) - (window_height // 2)
             popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
             
+            # Now you can dynamically include it in your label
+            title_label = ctk.CTkLabel(
+                popup,
+                text=f"What's New in Version {version_text} 🎉",
+                text_color='#ffffff',
+                font=('Helvetica', 24, 'bold'),
+            )
+            title_label.pack(pady=(0, 30))
+
             # Main scrollable frame with darker background
             main_frame = ctk.CTkScrollableFrame(
                 popup,
@@ -575,15 +587,6 @@ class FilterGamesApp:
                 padx=SIZES['window_padding'],
                 pady=SIZES['window_padding']
             )
-            
-            # Title with more contrast
-            title_label = ctk.CTkLabel(
-                main_frame,
-                text="What's New in Version 2.1! 🎉",
-                text_color='#ffffff',
-                font=('Helvetica', 24, 'bold'),
-            )
-            title_label.pack(pady=(0, 30))
 
             # Load icons with fallbacks
             feature_icon = load_icon(assets['feature_icon'], "⭐")
@@ -606,6 +609,14 @@ class FilterGamesApp:
                 rocket_icon,
                 "Performance Improvements",
                 "Defer (Lazy) Creation of GUI Elements for Advanced Configs Tab\nShould load faster on startup, but may increase load times on initial loading of each tab",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
+                rocket_icon,
+                "Controls Tab",
+                "Added KB: infront of all keybaord keys, so it doesnt confuse with xinput keys.",
                 full_width=True
             )
 
