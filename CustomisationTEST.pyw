@@ -5,37 +5,29 @@ import csv
 import re
 import subprocess
 import tkinter as tk
-from tkinter import PhotoImage, messagebox
-from tkinter import Canvas
+from tkinter import PhotoImage, messagebox, filedialog, Canvas
 from PIL import Image, ImageTk
 import customtkinter as ctk
 import tempfile
-import time  # Make sure time is imported
+import time
 import ctypes
 import shutil
 import shlex
 import cv2
 from threading import Thread, Lock
 import queue
-import ctypes
-from tkinter import messagebox, filedialog
 import configparser
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Set
 import tkinter.font as tkFont
-from typing import List
 import json
 import asyncio
 import threading
 import keyboard
-import time
 from inputs import get_gamepad, devices
 import fnmatch
-import concurrent.futures
-from functools import lru_cache
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Set, Optional
+from functools import lru_cache
 from pathlib import Path
-
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
@@ -102,8 +94,6 @@ class FilterGamesApp:
         # Bottom frame for Appearance Mode options
         ## Moved here to stop other frames from pushing it out of view
         self.add_appearance_mode_frame()
-
-        
 
         # Main container to hold both the tabview and exe selector
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
@@ -185,13 +175,6 @@ class FilterGamesApp:
         
         # Bottom frame for Appearance Mode options
         #self.add_appearance_mode_frame()
-
-        # Check if the "What's New" popup should be shown
-        show_whats_new_flag = self.config_manager.get_setting('Settings', 'show_whats_new', 'auto')
-        print(f"Show What's New flag: {show_whats_new_flag}")  # Debug statement
-        if show_whats_new_flag == 'auto':
-            # Schedule the popup to be shown after a short delay
-            self.root.after(100, self.show_whats_new_popup)
 
     '''def show_whats_new_popup(self):
         """Show the 'What's New' popup with the latest updates."""
@@ -319,10 +302,6 @@ class FilterGamesApp:
             popup.wait_window()
 
         show_popup()'''
-    
-    def show_whats_new_popup(self):
-        # This might just call your existing "show_popup()" function
-        self.show_popup()
 
     def show_whats_new_popup(self):
         """Show the 'What's New' popup with the latest updates."""
@@ -632,23 +611,9 @@ class FilterGamesApp:
             bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
             bottom_frame.pack(fill="x", pady=(20, 0))
 
-            # Do not show again checkbox
-            do_not_show_var = tk.BooleanVar()
-            do_not_show_checkbox = ctk.CTkCheckBox(
-                bottom_frame,
-                text="Do not show again",
-                variable=do_not_show_var,
-                font=('Helvetica', 12),
-                text_color="#e0e0e0"
-            )
-            do_not_show_checkbox.pack(side="left", padx=(0, 10))
-
             # OK button
             def on_ok():
-                if do_not_show_var.get():
-                    self.config_manager.config.set('Settings', 'show_whats_new', 'False')
-                    self.config_manager.save_config()
-                popup.destroy()
+                    popup.destroy()
 
             ok_button = ctk.CTkButton(
                 bottom_frame,
@@ -689,43 +654,89 @@ class FilterGamesApp:
         return False      
     
     def add_appearance_mode_frame(self):
-        # 1) Create frame
+        # Create frame
         appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
         appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
-        # 2) Get the config version
+        # Get the config version
         current_version = self.config_manager.config.get(
             "DEFAULT", 
             self.config_manager.CONFIG_VERSION_KEY, 
             fallback=self.config_manager.CONFIG_FILE_VERSION
         )
 
-        # 3) Create a button to show “What’s New”
+        # Get clicked status
+        has_been_clicked = self.config_manager.get_whats_new_clicked()
+
+        # Set initial colors
+        button_color = "#1f538d" if has_been_clicked else "#4CAF50"  # Blue if clicked, Green if not
+        hover_color = "#14375e" if has_been_clicked else "#45a049"   # Darker blue if clicked, Darker green if not
+
+        # Create version button
         version_button = ctk.CTkButton(
             appearance_frame,
             text=f"Version: {current_version}",
             font=("Arial", 14, "bold"),
-            command=self.show_whats_new_popup,   # or self.show_popup if you prefer
-            fg_color="gray25",                   # example color, tweak to your liking
-            hover_color="gray40"                 # likewise
+            command=lambda: self.on_version_button_click(version_button),
+            fg_color=button_color,
+            hover_color=hover_color
         )
         version_button.pack(side="left", padx=(10, 10), pady=10)
 
-        # 4) Appearance Mode label
-        appearance_label = ctk.CTkLabel(
-            appearance_frame, 
-            text="Appearance Mode", 
-            font=("Arial", 14, "bold")
-        )
-        appearance_label.pack(side="left", padx=(20, 10), pady=10)
+        # Start flash animation if button hasn't been clicked
+        if not has_been_clicked:
+            self._start_flash_animation(version_button)
 
-        # 5) The dropdown for appearance
+        # The appearance mode dropdown
         appearance_mode_optionmenu = ctk.CTkOptionMenu(
             appearance_frame, 
             values=["Dark", "Light", "System"],
             command=lambda mode: ctk.set_appearance_mode(mode)
         )
         appearance_mode_optionmenu.pack(side="right", padx=10, pady=10)
+
+    def _start_flash_animation(self, button, flash_count=0):
+        """
+        Creates a flashing animation between green and blue.
+        """
+        GREEN = "#4CAF50"
+        DARK_GREEN = "#45a049"
+        BLUE = "#1f538d"
+        DARK_BLUE = "#14375e"
+        
+        MAX_FLASHES = 5  # Number of complete flash cycles
+        FLASH_INTERVAL = 500  # Milliseconds between color changes
+        
+        if flash_count >= (MAX_FLASHES * 2):  # *2 because each flash has two states
+            # Final state - set to green
+            button.configure(fg_color=GREEN, hover_color=DARK_GREEN)
+            return
+            
+        # Toggle between blue and green
+        if flash_count % 2 == 0:
+            button.configure(fg_color=BLUE, hover_color=DARK_BLUE)
+        else:
+            button.configure(fg_color=GREEN, hover_color=DARK_GREEN)
+        
+        # Schedule next color change
+        self.root.after(FLASH_INTERVAL, 
+                        lambda: self._start_flash_animation(button, flash_count + 1))
+
+    def on_version_button_click(self, button):
+        """
+        Handles the version button click event.
+        """
+        # Change the button color to blue
+        button.configure(
+            fg_color="#1f538d",  # Blue
+            hover_color="#14375e"  # Darker blue
+        )
+        
+        # Save the clicked status
+        self.config_manager.set_whats_new_clicked(True)
+        
+        # Show the what's new popup
+        self.show_whats_new_popup()
 
         
     def center_window(self, width, height):
@@ -763,6 +774,12 @@ class ConfigManager:
                 'description': 'Settings file version to use',
                 'type': str,
                 'hidden': True
+            },
+            'whats_new_clicked': {
+                'default': 'False',
+                'description': "Tracks whether the 'What's New' button has been clicked.",
+                'type': bool,
+                'hidden': False
             },
             'theme_location': {
                 'default': 'autochanger',
@@ -816,12 +833,6 @@ class ConfigManager:
                 'default': 'True',
                 'description': 'Show Move ROMs instructions',
                 'type': bool,
-                'hidden': True
-            },
-            'show_whats_new': {
-                'default': 'auto',
-                'description': 'Show What\'s New popup',
-                'type': str,
                 'hidden': True
             },
             'close_gui_after_running': {
@@ -1007,6 +1018,40 @@ class ConfigManager:
         except Exception as e:
             self._log(f"Error during version check: {e}")
             self._reset_config_to_defaults()
+
+    def get_whats_new_clicked(self) -> bool:
+        """Retrieve the clicked status of the 'What's New' button."""
+        try:
+            # Get the raw value from config
+            value = self.config.get("Settings", "whats_new_clicked", fallback="False")
+            print(f"Raw whats_new_clicked value from config: {value}")
+            # Convert to boolean
+            is_clicked = value.lower() in ['true', '1', 'yes']
+            print(f"Converted to boolean: {is_clicked}")
+            return is_clicked
+        except Exception as e:
+            print(f"Error getting whats_new_clicked: {e}")
+            return False
+
+    def set_whats_new_clicked(self, clicked: bool):
+        """Update the clicked status of the 'What's New' button."""
+        try:
+            # Make sure Settings section exists
+            if "Settings" not in self.config:
+                self.config.add_section("Settings")
+            
+            # Set the value
+            self.config.set("Settings", "whats_new_clicked", str(clicked).lower())
+            print(f"Setting whats_new_clicked to: {clicked}")
+            
+            # Save immediately
+            self.save_config()
+            
+            # Verify the save
+            saved_value = self.get_whats_new_clicked()
+            print(f"Verified saved value: {saved_value}")
+        except Exception as e:
+            print(f"Error setting whats_new_clicked: {e}")
 
     def determine_button_visibility(self, button_name):
         """
