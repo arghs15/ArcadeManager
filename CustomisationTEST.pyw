@@ -122,13 +122,13 @@ class FilterGamesApp:
             self.Themes_games = Themes(self.Themes_games_tab)'''
 
         # Themes Games tab
-        if self.config_manager.determine_tab_visibility('themes_games'):
+        '''if self.config_manager.determine_tab_visibility('themes_games'):
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)
-
+        '''
         # MultiPath Themes tab
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
-            self.multi_path_themes_tab = self.tabview.add("ALPHA Themes")
+            self.multi_path_themes_tab = self.tabview.add("Themes")
             self.multi_path_themes = MultiPathThemes(self.multi_path_themes_tab)
 
         # Advanced Configurations tab
@@ -775,6 +775,24 @@ class ConfigManager:
                 'type': str,
                 'hidden': True
             },
+            'multi_roms_path': {
+                'default': '',
+                'description': 'Comma-separated paths for multi ROMs',
+                'type': List[str],
+                'hidden': True
+            },
+            'multi_videos_path': {
+                'default': '',
+                'description': 'Comma-separated paths for multi videos',
+                'type': List[str],
+                'hidden': True
+            },
+            'multi_logos_path': {
+                'default': '',
+                'description': 'Comma-separated paths for multi logos',
+                'type': List[str],
+                'hidden': True
+            },
             'whats_new_clicked': {
                 'default': 'False',
                 'description': "Tracks whether the 'What's New' button has been clicked.",
@@ -864,13 +882,13 @@ class ConfigManager:
         },
         'Tabs': {
             'themes_games_tab': {
-                'default': 'auto',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Themes Games tab',
                 'type': str,
                 'hidden': True
             },
             'multi_path_themes_tab': {
-                'default': 'never',  # 'auto', 'always', or 'never'
+                'default': 'always',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Themes Games tab',
                 'type': str,
                 'hidden': True
@@ -954,7 +972,7 @@ class ConfigManager:
         self._theme_paths = None
 
         self.initialize_config()
-        self._build_type = self._determine_build_type()  # Only do once
+        #self._build_type = self._determine_build_type()  # Only do once
 
         self.version_check()
 
@@ -1362,26 +1380,64 @@ class ConfigManager:
 
     def get_theme_paths_multi(self):
         """
-        Return arrays of paths for ROMs, videos, and logos
-        (Used for your personal multi build).
+        Return arrays of paths for ROMs, videos, and logos.
+        1) Read user-defined (INI) paths and filter out any that don't actually exist.
+        2) If after filtering none are valid, fall back to the hardcoded defaults.
         """
+
+        # 1) User-defined (INI) paths
+        ini_roms = self.get_setting('Settings', 'multi_roms_path', [])
+        ini_videos = self.get_setting('Settings', 'multi_videos_path', [])
+        ini_logos = self.get_setting('Settings', 'multi_logos_path', [])
+
+        # 2) Hardcoded defaults
+        default_roms = [
+            "- Themes",
+            "collections/zzzShutdown/roms",
+            "collections/zzzSettings/roms"
+        ]
+        default_videos = [
+            "autochanger/themes/video",
+            "collections/zzzShutdown/medium_artwork/video",
+            "collections/zzzSettings/medium_artwork/video"
+        ]
+        default_logos = [
+            "autochanger/themes/logo",
+            "collections/zzzShutdown/medium_artwork/logo",
+            "collections/zzzSettings/medium_artwork/logo"
+        ]
+
+        # Helper: filter list for only those paths that exist on disk
+        def filter_existing_paths(paths: List[str]) -> List[str]:
+            existing = []
+            for p in paths:
+                p_stripped = p.strip()
+                if not p_stripped:
+                    continue
+                abs_path = os.path.join(self.base_path, p_stripped)
+                if os.path.exists(abs_path):
+                    existing.append(p_stripped)
+            return existing
+
+        # Filter the user-defined paths
+        valid_roms = filter_existing_paths(ini_roms)
+        valid_videos = filter_existing_paths(ini_videos)
+        valid_logos = filter_existing_paths(ini_logos)
+
+        # If user-defined paths ended up empty, revert to defaults
+        if not valid_roms:
+            valid_roms = filter_existing_paths(default_roms)
+        if not valid_videos:
+            valid_videos = filter_existing_paths(default_videos)
+        if not valid_logos:
+            valid_logos = filter_existing_paths(default_logos)
+
         return {
-            'roms': [
-                "- Themes ALPHA",
-                "collections/zzzShutdown/roms",
-                "collections/zzzBezels/roms"
-            ],
-            'videos': [
-                "collections/zzzAlpha/medium_artwork/video",
-                "collections/zzzShutdown/medium_artwork/video",
-                "collections/zzzBezels/medium_artwork/video"
-            ],
-            'logos': [
-                "collections/zzzAlpha/medium_artwork/logo",
-                "collections/zzzShutdown/medium_artwork/logo",
-                "collections/zzzBezels/medium_artwork/logo"
-            ]
+            'roms': valid_roms,
+            'videos': valid_videos,
+            'logos': valid_logos
         }
+
 
     def get_ignore_list(self):
         """
@@ -3898,7 +3954,7 @@ class ThemeViewer:
         except Exception as e:
             print(f"Error reading frame: {e}")
             return None
-
+'''
 class Themes:
     def __init__(self, parent_tab):
         print("Initializing Themes...")
@@ -4611,7 +4667,8 @@ class Themes:
             # Catch any unexpected critical errors
             print(f"Critical error while executing script: {e}")
             self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
-
+'''
+            
 class MultiPathThemes:
     def __init__(self, parent_tab):
         print("Initializing MultiPathThemes...")
@@ -4800,7 +4857,8 @@ class MultiPathThemes:
 
         for rom_folder in self.rom_folders:
             if not os.path.isdir(rom_folder):
-                messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
+                #messagebox.showerror("Error", f"ROM folder not found: {rom_folder}")
+                print("Error", f"ROM folder not found: {rom_folder}")
                 continue
 
             for filename in os.listdir(rom_folder):
@@ -5012,11 +5070,9 @@ class MultiPathThemes:
 
     def _setup_ui(self):
         """Initialize and configure UI components"""
-        # Main display frame
         self.display_frame = ctk.CTkFrame(self.parent_tab)
         self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
 
-        # Video display
         self.video_canvas = ctk.CTkCanvas(
             self.display_frame,
             width=self.default_size[0],
@@ -5026,23 +5082,19 @@ class MultiPathThemes:
             highlightthickness=0
         )
         self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
-
-        # Bind resize event
         self.video_canvas.bind('<Configure>', self.handle_resize)
 
-        # Theme name and status
         self.status_frame = ctk.CTkFrame(self.display_frame)
         self.status_frame.pack(fill="x", padx=10, pady=5)
-
         self.theme_label = ctk.CTkLabel(self.status_frame, text="")
         self.theme_label.pack(side="left", padx=5)
 
-        # Location selector frame - store as instance variable to control visibility
         self.location_frame = ctk.CTkFrame(self.display_frame)
         self.location_frame.pack(fill="x", padx=10, pady=5)
 
-        # Add location selector dropdown
-        self.location_var = ctk.StringVar(value=self.config_manager.config.get('Settings', 'theme_location', fallback='autochanger'))
+        self.location_var = ctk.StringVar(
+            value=self.config_manager.config.get('Settings', 'theme_location', fallback='autochanger')
+        )
         self.location_dropdown = ctk.CTkOptionMenu(
             self.location_frame,
             values=['autochanger', 'zzzSettings', 'custom'],
@@ -5050,10 +5102,8 @@ class MultiPathThemes:
             command=self.change_location
         )
         self.location_dropdown.pack(side="right", padx=5)
-
         ctk.CTkLabel(self.location_frame, text="Theme Location:").pack(side="right", padx=5)
 
-        # Custom paths configuration button
         self.custom_paths_button = ctk.CTkButton(
             self.location_frame,
             text="Configure Custom Paths",
@@ -5061,22 +5111,23 @@ class MultiPathThemes:
         )
         self.custom_paths_button.pack(side="right", padx=5)
 
-        # Navigation frame - always visible
         self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
-        self.button_frame.pack(fill="x", padx=5, pady=5)  # Always pack this frame
-
-        # Configure grid layout
+        self.button_frame.pack(fill="x", padx=5, pady=5)
         self.button_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
         self.status_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        # Navigation and control buttons
+        # Define your buttons
         buttons = [
             ("Previous", self.show_previous_theme, 0),
             ("Apply Theme", self.run_selected_script, 1, "green", "darkgreen"),
             ("Next", self.show_next_theme, 2),
-            ("Jump Category", self.jump_to_start, 3)  # New button for quick navigation
+            ("Jump Category", self.jump_to_start, 3)  # We'll show/hide this depending on # of roms
         ]
 
+        # We will store a reference to the Jump button
+        self.jump_category_button = None  # (# ADDED)
+
+        # Create and place each button on the grid
         for btn_data in buttons:
             if len(btn_data) == 3:
                 text, command, col = btn_data
@@ -5095,8 +5146,22 @@ class MultiPathThemes:
             )
             btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
 
-        # Check config and show/hide location frame
+            # Keep a reference to the Jump Category button specifically
+            if text == "Jump Category":  # (# ADDED)
+                self.jump_category_button = btn
+
+        # (# ADDED) Now check if there's more than one 'roms' folder from get_theme_paths_multi()
+        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
+        print("DEBUG: roms_list =", roms_list, "Length =", len(roms_list))
+
+        if len(roms_list) <= 1 and self.jump_category_button:
+            # If there is only one (or zero) 'roms' folder, hide (remove) the Jump Category button
+            self.jump_category_button.grid_remove()
+
+        # If more than one, the button stays visible by default
+
         self.update_location_frame_visibility()
+
 
     def update_location_frame_visibility(self):
         """Update the visibility of the location frame based on config settings"""
