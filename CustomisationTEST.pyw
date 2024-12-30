@@ -1668,7 +1668,8 @@ class Controls:
                                 print(f"Controller button pressed: {friendly_name}")
                                 with self.capture_lock:
                                     self.capture_active = False
-                                self.parent.after(0, self._safe_update_entry, button_name, friendly_name)
+                                self.parent.after(0, self._safe_update_entry, button_name, friendly_name, "controller")
+
                                 return
 
                         # Handle L2 and R2 analog trigger events
@@ -1731,7 +1732,7 @@ class Controls:
 
                     # If not an excluded or reserved key, proceed with capture
                     self.stop_event.set()
-                    self.parent.after(0, self._safe_update_entry, key_name_display, key_name_display)
+                    self.parent.after(0, self._safe_update_entry, key_name_display, key_name_display, "keyboard")
                     return
 
         except KeyboardInterrupt:
@@ -1987,25 +1988,37 @@ class Controls:
         self.refresh_all_entries()
 
     def refresh_all_entries(self):
-        """Refresh all entry displays based on current name display mode"""
+        """Refresh all entry displays based on current name display mode."""
         for key, entry in self.control_entries.items():
             internal_values = self.controls_config[key]
             display_values = []
 
             for value in internal_values:
-                if value.startswith('joyButton') and self.show_friendly_names:
-                    # Convert internal name to friendly name
-                    button_code = self.reverse_button_map.get(value)
-                    if button_code:
-                        friendly_name = self.friendly_names.get(button_code, value)
-                        display_values.append(friendly_name)
+                # If it's "joyButton###", we assume it's from a controller
+                if value.startswith("joyButton"):
+                    if self.show_friendly_names:
+                        # Convert from internal "joyButtonN" to short label A/B/X/Y, etc.
+                        button_code = self.reverse_button_map.get(value)  # e.g. "BTN_SOUTH"
+                        if button_code:
+                            # e.g. "A", "B", "X", etc.
+                            friendly_label = self.friendly_names.get(button_code, value)
+                            display_values.append(friendly_label)
+                        else:
+                            # fallback if not in reverse_button_map
+                            display_values.append(value)
                     else:
+                        # Not showing friendly names → display e.g. "joyButton0"
                         display_values.append(value)
-                else:
-                    display_values.append(value)
 
+                else:
+                    # Otherwise assume it's a keyboard input
+                    # Always show "KB:" in front, ignoring the toggle
+                    display_values.append(f"KB: {value}")
+
+            # Now update the GUI Entry
             entry.delete(0, "end")
-            entry.insert(0, ', '.join(display_values))  # Add space after comma for GUI
+            entry.insert(0, ', '.join(display_values))  # "A, B, KB: T" etc.
+
 
     def create_control_frame(self, parent, control_name):
         frame = ctk.CTkFrame(parent)
@@ -2056,31 +2069,57 @@ class Controls:
             self.controls_config[control_name] = []
             #self.show_status_message(f"Control '{control_name}' has been cleared")
 
-    def _safe_update_entry(self, input_name, friendly_name):
-        """Safely update the entry from the main thread"""
-        print(f"Safe update called with: {input_name} (friendly: {friendly_name})")
+    def _safe_update_entry(self, input_name, friendly_name, device_type=None):
+        """
+        Called via self.parent.after(...).
+        device_type can be "keyboard", "controller", or None.
+        """
+        print(f"_safe_update_entry called with input_name={input_name}, "
+            f"friendly_name={friendly_name}, device_type={device_type}, "
+            f"show_friendly_names={self.show_friendly_names}")
+
         if self.current_control and input_name:
             entry = self.control_entries[self.current_control]
             entry.configure(state="normal")
 
-            # Store internal name in controls_config
-            internal_name = input_name  # Assume input_name is already the internal name for keyboard inputs
+            # Store the internal name in controls_config (for saving)
+            internal_name = input_name
             self.controls_config[self.current_control].append(internal_name)
 
-            # Display appropriate name based on toggle
-            display_name = friendly_name if self.show_friendly_names else internal_name
+            # Determine display name:
+            # -- ALWAYS tag keyboard inputs with "KB:".
+            # -- For controller inputs, use 'friendly' or 'internal' depending on the toggle.
+            if device_type == "keyboard":
+                display_name = f"KB: {friendly_name}"
+            elif device_type == "controller":
+                if self.show_friendly_names:
+                    display_name = friendly_name   # e.g. "A", "B", "X", "Y"
+                else:
+                    display_name = internal_name   # e.g. "joyButton0", etc.
+            else:
+                # Fallback if device_type is somehow None or unknown
+                if self.show_friendly_names:
+                    display_name = friendly_name
+                else:
+                    display_name = internal_name
+
+            # Grab current text from the Entry and split by comma
             current_display = entry.get().split(', ')
             if current_display == ['']:
                 current_display = []
+
+            # Append the new display name
             current_display.append(display_name)
 
+            # Update the Entry widget
             entry.delete(0, "end")
-            entry.insert(0, ', '.join(current_display))  # Add space after comma for GUI
+            entry.insert(0, ', '.join(current_display))
 
-            # Revert the border color of the entry to indicate capture is complete
+            # Revert the Entry border color to indicate capture is complete
             entry.configure(border_color="gray", border_width=1)
 
             self.cleanup_capture()
+
 
     def clear_all_controls(self):
         """Clear all control bindings"""
@@ -2277,6 +2316,9 @@ class Controls:
                 except Exception as e:
                     print(f"Error processing line: {line}\nError: {str(e)}")
                     continue
+
+            # Now refresh the GUI with our prefix logic
+            self.refresh_all_entries()
 
             print("Settings reset to defaults from controls.conf")
             self.show_status_message("Controls reset to defaults from controls.conf")
