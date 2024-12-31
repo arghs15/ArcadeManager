@@ -586,6 +586,14 @@ class FilterGamesApp:
 
             create_feature_frame(
                 main_frame,
+                rocket_icon,
+                "Remove Games",
+                "Roms should now load almost instantly",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
                 feature_icon,
                 "Advanced Configs, and Manage Games",
                 "Can add folders, and sub folders to append list in Advanced Configs via ini.\nCan add collections and roms to exclude from manage games tab.",
@@ -780,7 +788,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.3"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.4"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
