@@ -122,11 +122,6 @@ class FilterGamesApp:
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)'''
 
-        # Themes Games tab
-        '''if self.config_manager.determine_tab_visibility('themes_games'):
-            self.Themes_games_tab = self.tabview.add("Themes")
-            self.Themes_games = Themes(self.Themes_games_tab)
-        '''
         # MultiPath Themes tab
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
             self.multi_path_themes_tab = self.tabview.add("Themes")
@@ -150,6 +145,17 @@ class FilterGamesApp:
         # Controls and View Games tabs - special handling
         print(f"Playlist Location: {self.playlist_location}")
 
+        # Controls Games tab
+        if self.config_manager.determine_tab_visibility('controls'):
+            self.controls_tab = self.tabview.add("Controls")
+            self.controls = Controls(self.controls_tab)
+        
+        # Manage Games tab
+        if self.config_manager.determine_tab_visibility('view_games'):
+            self.view_games_tab = self.tabview.add("Manage Games")
+            self.view_games = ViewRoms(self.view_games_tab, self.config_manager)
+
+        '''
         # Check configuration visibility for Controls tab
         controls_visibility = self.config_manager.get_setting('Tabs', 'controls_tab', 'auto')
         if controls_visibility == 'always' or (controls_visibility == 'auto' and self.playlist_location == 'U'):
@@ -167,7 +173,7 @@ class FilterGamesApp:
             print(f"Adding All Games Tab")
         else:
             print(f"View Games Tab is not visible")
-
+        '''
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -761,29 +767,29 @@ class FilterGamesApp:
         
         # Show the what's new popup
         self.show_whats_new_popup()
-
-        
+   
     def center_window(self, width, height):
-        # Get the screen dimensions
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
+        """Center the window on the primary screen, considering the taskbar."""
+        if os.name == 'nt':
+            # Get work area of the primary monitor (excluding taskbar)
+            SPI_GETWORKAREA = 48
+            work_area = ctypes.wintypes.RECT()
+            ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
 
-        # Calculate the position for centering the window
-        x = (screen_width // 2) - (width // 2)
-        y = (screen_height // 2) - (height // 2)
+            # Work area dimensions
+            screen_width = work_area.right - work_area.left
+            screen_height = work_area.bottom - work_area.top
+        else:
+            # Use Tkinter's methods for other OSes (no taskbar adjustment by default)
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
 
-        # Set the window geometry with the calculated position
-        self.root.geometry(f"{width}x{height}+{x}+{y}") 
+        # Calculate position to center the window
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
 
-    def run_script(self, script_name):
-        try:
-            script_path = os.path.join(os.getcwd(), script_name)
-            if os.path.isfile(script_path):
-                subprocess.run(script_path, shell=True)
-            else:
-                ctk.CTkMessageBox.showerror("Error", f"The script does not exist: {script_name}")
-        except Exception as e:
-            ctk.CTkMessageBox.showerror("Error", f"Failed to run {script_name}: {str(e)}")
+        # Apply geometry to center the window
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
 class ConfigManager:
     # Document all possible settings as class attributes
@@ -954,13 +960,13 @@ class ConfigManager:
                 'hidden': True
             },
             'controls_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'auto',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Controls tab',
                 'type': str,
                 'hidden': True
             },
             'view_games_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'auto',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of All Games tab',
                 'type': str,
                 'hidden': True
@@ -1014,7 +1020,7 @@ class ConfigManager:
         self._theme_paths = None
 
         self.initialize_config()
-        #self._build_type = self._determine_build_type()  # Only do once
+        self._build_type = self._determine_build_type()  # Only do once
 
         self.version_check()
 
@@ -2284,7 +2290,7 @@ class Controls:
 
         self.control_frames[control_name] = frame
         self.control_entries[control_name] = entry
-        print(f"Created control frame for: {control_name}")
+        #print(f"Created control frame for: {control_name}")
 
     def toggle_input_capture(self, control_name, entry):
         """Toggle capturing input for a control"""
@@ -2458,7 +2464,7 @@ class Controls:
                     # Skip if this control is in the excluded list, unless it's in controlsAdd
                     controls_add = self.config_manager.get_controls_add()
                     if key in self.excluded_controls and key not in controls_add:
-                        print(f"Skipping excluded control: {key}")
+                        #print(f"Skipping excluded control: {key}")
                         continue
                         
                     value = parts[1].strip()
