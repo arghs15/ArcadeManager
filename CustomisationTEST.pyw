@@ -6,6 +6,7 @@ import re
 import subprocess
 import tkinter as tk
 from tkinter import PhotoImage, messagebox, filedialog, Canvas
+from tkinter import ttk
 from PIL import Image, ImageTk
 import customtkinter as ctk
 import tempfile
@@ -6317,6 +6318,21 @@ class ViewRoms:
                 messagebox.showerror("Error", "Please select a specific collection.")
                 return
 
+            # Pre-filter ROMs and descriptions for the selected collection
+            # Do this once at the start instead of repeatedly
+            filtered_roms = [
+                (rom.split(" (")[0], self.rom_descriptions.get(rom.split(" (")[0], rom.split(" (")[0]))
+                for rom in self.rom_list
+                if f"({selected_collection})" in rom
+            ]
+            
+            # Sort the filtered ROMs list once at the start
+            filtered_roms.sort(key=lambda x: x[1].lower())  # Sort by description
+
+            # Create lookup dictionaries for faster searching
+            rom_to_desc = {rom: desc for rom, desc in filtered_roms}
+            desc_to_rom = {desc: rom for rom, desc in filtered_roms}
+
             # Create a new top-level window
             select_window = tk.Toplevel()
             select_window.title(f"Select Games to Remove - {selected_collection}")
@@ -6345,160 +6361,83 @@ class ViewRoms:
             search_entry = ctk.CTkEntry(search_frame, textvariable=search_var, font=self.button_font)
             search_entry.pack(side='left', fill='x', expand=True, padx=5)
 
-            # Create status frame
-            status_frame = ctk.CTkFrame(main_frame)
-            status_frame.pack(fill='x', padx=5, pady=(0, 5))
-            
-            status_label = ctk.CTkLabel(status_frame, text="Loading games...", font=self.label_font)
-            status_label.pack(side='left', padx=5)
-            
-            progress_bar = ctk.CTkProgressBar(status_frame)
-            progress_bar.pack(side='left', fill='x', expand=True, padx=5)
-            progress_bar.set(0)
-
-            # Create a frame for the scrolled window
+            # Create list frame with fixed height
             list_frame = ctk.CTkFrame(main_frame)
             list_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
-            # Create canvas and scrollbar for smooth scrolling
-            canvas = tk.Canvas(list_frame, bg='#2c2c2c', highlightthickness=0)
-            scrollbar = ctk.CTkScrollbar(list_frame, command=canvas.yview)
+            # Use a Treeview instead of canvas + checkboxes for better performance
+            tree = ttk.Treeview(list_frame, selectmode='none', show='tree')
+            tree.pack(side='left', fill='both', expand=True)
+
+            # Configure Treeview style for dark theme
+            style = ttk.Style()
+            style.configure("Treeview", 
+                        background="#2c2c2c", 
+                        foreground="white", 
+                        fieldbackground="#2c2c2c")
+            style.configure("Treeview.Heading", 
+                        background="#2c2c2c", 
+                        foreground="white")
+
+            # Add scrollbar to Treeview
+            scrollbar = ctk.CTkScrollbar(list_frame, command=tree.yview)
             scrollbar.pack(side='right', fill='y')
+            tree.configure(yscrollcommand=scrollbar.set)
 
-            # Configure canvas
-            canvas.pack(side='left', fill='both', expand=True)
-            canvas.configure(yscrollcommand=scrollbar.set)
+            # Dictionary to track checked items
+            checked_items = {}
 
-            # Create a frame inside canvas for checkboxes
-            checkbox_frame = ctk.CTkFrame(canvas)
-            canvas_window = canvas.create_window((0, 0), window=checkbox_frame, anchor='nw', width=canvas.winfo_width())
-            
-            # Make checkbox_frame expand to canvas width
-            def on_canvas_configure(event):
-                canvas.itemconfig(canvas_window, width=event.width)
-            canvas.bind('<Configure>', on_canvas_configure)
-            
-            # Add mouse wheel scrolling
-            def on_mousewheel(event):
-                # Handle different platforms
-                if event.num == 5 or event.delta < 0:  # Scroll down
-                    canvas.yview_scroll(1, "units")
-                elif event.num == 4 or event.delta > 0:  # Scroll up
-                    canvas.yview_scroll(-1, "units")
-                    
-            # Bind mouse wheel for different platforms
-            canvas.bind_all("<MouseWheel>", on_mousewheel)  # Windows
-            canvas.bind_all("<Button-4>", on_mousewheel)    # Linux scroll up
-            canvas.bind_all("<Button-5>", on_mousewheel)    # Linux scroll down
-            
-            # Unbind mouse wheel when window is destroyed
-            def on_closing():
-                canvas.unbind_all("<MouseWheel>")
-                canvas.unbind_all("<Button-4>")
-                canvas.unbind_all("<Button-5>")
-                select_window.destroy()
-                
-            select_window.protocol("WM_DELETE_WINDOW", on_closing)
-            
-            # Add loading cover frame
-            loading_cover = ctk.CTkFrame(list_frame)
-            loading_cover.place(relwidth=1, relheight=1)
-            loading_label = ctk.CTkLabel(loading_cover, text="Loading...", font=self.label_font)
-            loading_label.place(relx=0.5, rely=0.5, anchor='center')
+            def toggle_check(event):
+                item = tree.identify_row(event.y)
+                if item:
+                    checked_items[item] = not checked_items.get(item, False)
+                    # Update checkmark
+                    tree.item(item, text=("☒ " if checked_items[item] else "☐ ") + desc_to_display[item])
 
-            # Dictionary to store checkboxes and their variables
-            checkbox_vars = {}
+            tree.bind('<Button-1>', toggle_check)
 
-            # Get filtered ROM list for the selected collection
-            filtered_roms = []
-            for rom in self.rom_list:
-                if f"({selected_collection})" in rom:
-                    rom_name = rom.split(" (")[0]
-                    description = self.rom_descriptions.get(rom_name, rom_name)
-                    filtered_roms.append((rom_name, description))
+            # Store display text for each item
+            desc_to_display = {}
 
-            def create_checkboxes(search_text=''):
-                # Disable search and show loading cover
-                search_entry.configure(state='disabled')
-                loading_cover.place(relwidth=1, relheight=1)
-                loading_cover.lift()
-                
-                # Clear existing checkboxes
-                for widget in checkbox_frame.winfo_children():
-                    widget.destroy()
-
-                # Show status bar and reset progress
-                status_frame.pack(fill='x', padx=5, pady=(0, 5))
-                status_label.configure(text="Loading games...")
-                progress_bar.set(0)
-                checkbox_vars.clear()
-                
-                # Get filtered list based on search
+            def update_list(search_text=''):
+                tree.delete(*tree.get_children())
                 search_text = search_text.lower()
-                filtered_search_roms = [
-                    (rom_name, desc) for rom_name, desc in filtered_roms 
-                    if search_text in desc.lower() or search_text in rom_name.lower()
+                
+                # Use list comprehension for faster filtering
+                visible_items = [
+                    (rom, desc) for rom, desc in filtered_roms
+                    if search_text in desc.lower() or search_text in rom.lower()
                 ]
-                total_roms = len(filtered_search_roms)
-                
-                # Create temporary list to store checkboxes
-                temp_checkboxes = []
-                
-                # Create new checkboxes based on search
-                for idx, (rom_name, description) in enumerate(filtered_search_roms):
-                    var = tk.BooleanVar()
-                    checkbox_vars[rom_name] = var
-                    checkbox = ctk.CTkCheckBox(
-                        checkbox_frame,
-                        text=description,  # Use description for display
-                        variable=var,
-                        font=self.list_font
-                    )
-                    temp_checkboxes.append((checkbox, 'w', 5, 2))
-                    
-                    # Update progress every 10 items
-                    if idx % 10 == 0:
-                        progress = (idx + 1) / total_roms
-                        progress_bar.set(progress)
-                        status_label.configure(text=f"Loading games... ({idx + 1}/{total_roms})")
-                        select_window.update_idletasks()
-                
-                # Pack all checkboxes at once
-                for checkbox, anchor, padx, pady in temp_checkboxes:
-                    checkbox.pack(anchor=anchor, padx=padx, pady=pady)
-                
-                # Final progress update
-                progress_bar.set(1)
-                status_label.configure(text=f"Loaded {total_roms} games")
-                
-                # Update canvas scroll region
-                checkbox_frame.update_idletasks()
-                canvas.configure(scrollregion=canvas.bbox('all'))
-                
-                # Remove loading cover and enable search
-                select_window.after(200, lambda: loading_cover.place_forget())
-                search_entry.configure(state='normal')
-                
-                # Hide status bar after a delay
-                select_window.after(1000, lambda: status_frame.pack_forget())
 
+                # Batch insert items
+                for rom, desc in visible_items:
+                    item = tree.insert('', 'end', text="☐ " + desc)
+                    checked_items[item] = False
+                    desc_to_display[item] = desc
+
+            # Optimize search with a delay to prevent too frequent updates
+            search_after_id = None
             def on_search(*args):
-                create_checkboxes(search_var.get())
+                nonlocal search_after_id
+                if search_after_id:
+                    select_window.after_cancel(search_after_id)
+                search_after_id = select_window.after(150, lambda: update_list(search_var.get()))
 
-            # Bind search variable to search function
             search_var.trace('w', on_search)
 
-            # Add select all/none buttons
+            # Button frame
             button_frame = ctk.CTkFrame(main_frame)
             button_frame.pack(fill='x', pady=5)
 
             def select_all():
-                for var in checkbox_vars.values():
-                    var.set(True)
+                for item in tree.get_children():
+                    checked_items[item] = True
+                    tree.item(item, text="☒ " + desc_to_display[item])
 
             def select_none():
-                for var in checkbox_vars.values():
-                    var.set(False)
+                for item in tree.get_children():
+                    checked_items[item] = False
+                    tree.item(item, text="☐ " + desc_to_display[item])
 
             select_all_btn = ctk.CTkButton(
                 button_frame,
@@ -6517,10 +6456,17 @@ class ViewRoms:
             select_none_btn.pack(side='left', padx=5)
 
             def confirm_removal():
-                selected_roms = [rom_name for rom_name, var in checkbox_vars.items() if var.get()]
-                if not selected_roms:
+                selected_items = [item for item, checked in checked_items.items() if checked]
+                if not selected_items:
                     messagebox.showinfo("No Selection", "No games were selected.")
                     return
+
+                # Get ROM names from descriptions
+                selected_roms = []
+                for item in selected_items:
+                    desc = desc_to_display[item]
+                    if desc in desc_to_rom:
+                        selected_roms.append(desc_to_rom[desc])
 
                 # Close the selection window
                 select_window.destroy()
@@ -6552,8 +6498,8 @@ class ViewRoms:
             select_window.transient(self.parent_tab)
             select_window.grab_set()
             
-            # Initial load of checkboxes
-            create_checkboxes()
+            # Initial load of list
+            update_list()
 
         except Exception as e:
             messagebox.showerror("Error", f"Error in select games window: {str(e)}")
