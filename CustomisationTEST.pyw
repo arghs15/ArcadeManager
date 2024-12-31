@@ -47,7 +47,7 @@ class FilterGamesApp:
 
         return os.path.join(base_path, relative_path)
         
-    def __init__(self, root):
+    def __init__(self, root):  # Added fullscreen parameter
         self.root = root
         #self.root.title("Customisation")
 
@@ -60,8 +60,14 @@ class FilterGamesApp:
         else:
             self.root.title(script_name)
 
-        self.root.geometry("1920x1080")  # Set the initial size (you can adjust as needed)
-        self.root.resizable(True, True)  # Enable window resizing
+        # Set window size relative to the screen size (e.g., 80% of the width and height)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        window_width = max(800, int(screen_width * 0.8))  # Ensure a minimum width
+        window_height = max(600, int(screen_height * 0.8))  # Ensure a minimum height
+        self.center_window(window_width, window_height)  # Center the window
+
+        self.root.resizable(True, True)  # Allow window resizing
 
         # Initialize the configuration manager
         self.config_manager = ConfigManager()
@@ -94,7 +100,7 @@ class FilterGamesApp:
         
         # Bottom frame for Appearance Mode options
         ## Moved here to stop other frames from pushing it out of view
-        self.add_appearance_mode_frame()
+        #self.add_appearance_mode_frame()
 
         # Main container to hold both the tabview and exe selector
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
@@ -683,10 +689,14 @@ class FilterGamesApp:
         print(f"Warning: No themes folders found. Will remove Themes tab")
         return False      
     
-    def add_appearance_mode_frame(self):
+    def add_appearance_mode_frame(self, fullscreen=False):
+        # Check if the frame already exists
+        if hasattr(self, "appearance_frame"):
+            return  # Do nothing if the frame already exists
+
         # Create frame
-        appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
-        appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+        self.appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
+        self.appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
 
         # Get the config version
         current_version = self.config_manager.config.get(
@@ -704,7 +714,7 @@ class FilterGamesApp:
 
         # Create version button
         version_button = ctk.CTkButton(
-            appearance_frame,
+            self.appearance_frame,
             text=f"Whats New v{current_version}",
             font=("Arial", 14, "bold"),
             command=lambda: self.on_version_button_click(version_button),
@@ -717,13 +727,51 @@ class FilterGamesApp:
         if not has_been_clicked:
             self._start_flash_animation(version_button)
 
+        # Add fullscreen toggle
+        fullscreen_switch = ctk.CTkSwitch(
+            self.appearance_frame,
+            text="Start in Fullscreen",
+            command=lambda: self.set_fullscreen_preference(fullscreen_switch.get()),
+        )
+        fullscreen_switch.pack(side="left", padx=(10, 10), pady=10)
+
+        # Set initial value based on config
+        if self.config_manager.get_fullscreen_preference():
+            fullscreen_switch.select()
+        else:
+            fullscreen_switch.deselect()
+
+        # Add a close button
+        close_button = ctk.CTkButton(
+            self.appearance_frame,
+            text="Close",
+            font=("Arial", 14, "bold"),
+            fg_color="red",  # Set distinct color for the close button
+            hover_color="darkred",
+            command=self.close_app
+        )
+        close_button.pack(side="right", padx=10, pady=10)
+
         # The appearance mode dropdown
         appearance_mode_optionmenu = ctk.CTkOptionMenu(
-            appearance_frame, 
+            self.appearance_frame, 
             values=["Dark", "Light", "System"],
             command=lambda mode: ctk.set_appearance_mode(mode)
         )
-        appearance_mode_optionmenu.pack(side="right", padx=10, pady=10)
+        appearance_mode_optionmenu.pack(side="right", padx=(0, 10), pady=10)  # Adjust padding to align nicely
+
+    def set_fullscreen_preference(self, fullscreen: bool):
+        """Set and save fullscreen preference."""
+        self.config_manager.set_fullscreen_preference(fullscreen)
+        if fullscreen:
+            self.root.attributes("-fullscreen", True)
+        else:
+            self.root.attributes("-fullscreen", False)
+
+    def close_app(self):
+        """Closes the application."""
+        self.root.destroy()
+
 
     def _start_flash_animation(self, button, flash_count=0):
         """
@@ -776,7 +824,6 @@ class FilterGamesApp:
             work_area = ctypes.wintypes.RECT()
             ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
 
-            # Work area dimensions
             screen_width = work_area.right - work_area.left
             screen_height = work_area.bottom - work_area.top
         else:
@@ -787,8 +834,6 @@ class FilterGamesApp:
         # Calculate position to center the window
         x = (screen_width - width) // 2
         y = (screen_height - height) // 2
-
-        # Apply geometry to center the window
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
 class ConfigManager:
@@ -913,6 +958,13 @@ class ConfigManager:
                 'type': List[str],
                 'hidden': False
             },
+            'fullscreen': {
+                'default': 'False',
+                'description': 'Start application in fullscreen mode.',
+                'type': bool,
+                'hidden': False
+            },
+
         },
         'Controls': {
             'controls_file': {
@@ -1034,6 +1086,15 @@ class ConfigManager:
         self._tab_visibility_cache = {}
         for tab in ['controls', 'view_games', 'themes_games', 'advanced_configs', 'playlists', 'filter_games', 'multi_path_themes_tab']:
             self._tab_visibility_cache[tab] = self.determine_tab_visibility(tab)
+
+    def get_fullscreen_preference(self) -> bool:
+        """Retrieve the fullscreen preference."""
+        return self.config.getboolean('Settings', 'fullscreen', fallback=False)
+
+    def set_fullscreen_preference(self, fullscreen: bool):
+        """Update the fullscreen preference."""
+        self.config.set('Settings', 'fullscreen', str(fullscreen).lower())
+        self.save_config()
 
     def version_check(self):
         """
@@ -7592,4 +7653,17 @@ if __name__ == "__main__":
 
     root = ctk.CTk()
     app = FilterGamesApp(root)
+
+    # Load fullscreen preference from config
+    fullscreen_mode = app.config_manager.get_fullscreen_preference()
+    if fullscreen_mode:
+        root.attributes("-fullscreen", True)
+
+    # Add appearance mode frame with fullscreen state
+    app.add_appearance_mode_frame(fullscreen=fullscreen_mode)
+
     root.mainloop()
+
+
+
+
