@@ -920,12 +920,6 @@ class ConfigManager:
             }
         },
         'Tabs': {
-            'themes_games_tab': {
-                'default': 'never',  # 'auto', 'always', or 'never'
-                'description': 'Visibility of Themes Games tab',
-                'type': str,
-                'hidden': True
-            },
             'multi_path_themes_tab': {
                 'default': 'always',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Themes Games tab',
@@ -6336,7 +6330,7 @@ class ViewRoms:
             y = (screen_height // 2) - 350
             select_window.geometry(f"600x700+{x}+{y}")
 
-            # Create main container
+            # Main container
             main_frame = ctk.CTkFrame(select_window)
             main_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
@@ -6416,8 +6410,12 @@ class ViewRoms:
             checkbox_vars = {}
 
             # Get filtered ROM list for the selected collection
-            filtered_roms = [rom for rom in self.rom_list
-                            if f"({selected_collection})" in rom]
+            filtered_roms = []
+            for rom in self.rom_list:
+                if f"({selected_collection})" in rom:
+                    rom_name = rom.split(" (")[0]
+                    description = self.rom_descriptions.get(rom_name, rom_name)
+                    filtered_roms.append((rom_name, description))
 
             def create_checkboxes(search_text=''):
                 # Disable search and show loading cover
@@ -6437,19 +6435,22 @@ class ViewRoms:
                 
                 # Get filtered list based on search
                 search_text = search_text.lower()
-                filtered_search_roms = [rom for rom in filtered_roms if search_text in rom.lower()]
+                filtered_search_roms = [
+                    (rom_name, desc) for rom_name, desc in filtered_roms 
+                    if search_text in desc.lower() or search_text in rom_name.lower()
+                ]
                 total_roms = len(filtered_search_roms)
                 
                 # Create temporary list to store checkboxes
                 temp_checkboxes = []
                 
                 # Create new checkboxes based on search
-                for idx, rom in enumerate(filtered_search_roms):
+                for idx, (rom_name, description) in enumerate(filtered_search_roms):
                     var = tk.BooleanVar()
-                    checkbox_vars[rom] = var
+                    checkbox_vars[rom_name] = var
                     checkbox = ctk.CTkCheckBox(
                         checkbox_frame,
-                        text=rom,
+                        text=description,  # Use description for display
                         variable=var,
                         font=self.list_font
                     )
@@ -6516,7 +6517,7 @@ class ViewRoms:
             select_none_btn.pack(side='left', padx=5)
 
             def confirm_removal():
-                selected_roms = [self.rom_file_names[rom] for rom, var in checkbox_vars.items() if var.get()]
+                selected_roms = [rom_name for rom_name, var in checkbox_vars.items() if var.get()]
                 if not selected_roms:
                     messagebox.showinfo("No Selection", "No games were selected.")
                     return
