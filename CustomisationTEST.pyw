@@ -588,7 +588,7 @@ class FilterGamesApp:
                 main_frame,
                 rocket_icon,
                 "Remove Games",
-                "Roms should now load almost instantly",
+                "Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
                 full_width=True
             )
 
@@ -788,7 +788,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.4"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.5"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -6326,20 +6326,18 @@ class ViewRoms:
                 messagebox.showerror("Error", "Please select a specific collection.")
                 return
 
-            # Pre-filter ROMs and descriptions for the selected collection
-            # Do this once at the start instead of repeatedly
-            filtered_roms = [
-                (rom.split(" (")[0], self.rom_descriptions.get(rom.split(" (")[0], rom.split(" (")[0]))
-                for rom in self.rom_list
-                if f"({selected_collection})" in rom
-            ]
+            # Pre-filter ROMs and get their base names (without collection)
+            filtered_roms = []
+            for full_rom in self.rom_list:
+                if f"({selected_collection})" in full_rom:
+                    # Extract ROM name without the collection part
+                    # Find the last parenthetical section (collection) and remove it
+                    base_rom = full_rom.rsplit(' (', 1)[0]
+                    desc = self.rom_descriptions.get(base_rom.split(" (")[0], base_rom.split(" (")[0])
+                    filtered_roms.append((base_rom, desc, full_rom))
             
-            # Sort the filtered ROMs list once at the start
-            filtered_roms.sort(key=lambda x: x[1].lower())  # Sort by description
-
-            # Create lookup dictionaries for faster searching
-            rom_to_desc = {rom: desc for rom, desc in filtered_roms}
-            desc_to_rom = {desc: rom for rom, desc in filtered_roms}
+            # Sort the filtered ROMs list by description
+            filtered_roms.sort(key=lambda x: x[1].lower())
 
             # Create a new top-level window
             select_window = tk.Toplevel()
@@ -6354,12 +6352,12 @@ class ViewRoms:
             y = (screen_height // 2) - 350
             select_window.geometry(f"600x700+{x}+{y}")
 
-            # Main container
-            main_frame = ctk.CTkFrame(select_window)
+            # Main container - set dark background color
+            main_frame = ctk.CTkFrame(select_window, fg_color='#2c2c2c')
             main_frame.pack(fill='both', expand=True, padx=10, pady=10)
 
             # Add search functionality
-            search_frame = ctk.CTkFrame(main_frame)
+            search_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
             search_frame.pack(fill='x', padx=5, pady=5)
 
             search_label = ctk.CTkLabel(search_frame, text="Search:", font=self.label_font)
@@ -6369,59 +6367,75 @@ class ViewRoms:
             search_entry = ctk.CTkEntry(search_frame, textvariable=search_var, font=self.button_font)
             search_entry.pack(side='left', fill='x', expand=True, padx=5)
 
-            # Create list frame with fixed height
-            list_frame = ctk.CTkFrame(main_frame)
+            # Create list frame with fixed height and dark background
+            list_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
             list_frame.pack(fill='both', expand=True, padx=5, pady=5)
 
             # Use a Treeview instead of canvas + checkboxes for better performance
             tree = ttk.Treeview(list_frame, selectmode='none', show='tree')
             tree.pack(side='left', fill='both', expand=True)
 
-            # Configure Treeview style for dark theme
+            # Configure Treeview style for dark theme and larger font
             style = ttk.Style()
+            
+            # Configure the background colors
+            style.map('Treeview', background=[('selected', '#2c2c2c')])
+            
             style.configure("Treeview", 
                         background="#2c2c2c", 
                         foreground="white", 
-                        fieldbackground="#2c2c2c")
+                        fieldbackground="#2c2c2c",
+                        font=('TkDefaultFont', 12))
+            
+            style.layout("Treeview", [('Treeview.treearea', {'sticky': 'nswe'})])
+            
             style.configure("Treeview.Heading", 
                         background="#2c2c2c", 
-                        foreground="white")
+                        foreground="white",
+                        font=('TkDefaultFont', 12))
+            
+            # Configure item height and tags for better spacing with larger font
+            tree.tag_configure('custom', font=('TkDefaultFont', 12))
+            tree.tag_configure('checked', background='#2d5a27')
+            tree.tag_configure('unchecked', background='#2c2c2c')
 
             # Add scrollbar to Treeview
             scrollbar = ctk.CTkScrollbar(list_frame, command=tree.yview)
             scrollbar.pack(side='right', fill='y')
             tree.configure(yscrollcommand=scrollbar.set)
 
-            # Dictionary to track checked items
+            # Dictionary to track checked items and their full ROM names
             checked_items = {}
+            item_to_rom = {}
+            desc_to_display = {}
 
             def toggle_check(event):
                 item = tree.identify_row(event.y)
                 if item:
                     checked_items[item] = not checked_items.get(item, False)
-                    # Update checkmark
-                    tree.item(item, text=("☒ " if checked_items[item] else "☐ ") + desc_to_display[item])
+                    if checked_items[item]:
+                        tree.item(item, text="☒ " + desc_to_display[item], tags=('custom', 'checked'))
+                    else:
+                        tree.item(item, text="☐ " + desc_to_display[item], tags=('custom', 'unchecked'))
 
             tree.bind('<Button-1>', toggle_check)
-
-            # Store display text for each item
-            desc_to_display = {}
 
             def update_list(search_text=''):
                 tree.delete(*tree.get_children())
                 search_text = search_text.lower()
                 
-                # Use list comprehension for faster filtering
+                # Filter items based on search text
                 visible_items = [
-                    (rom, desc) for rom, desc in filtered_roms
-                    if search_text in desc.lower() or search_text in rom.lower()
+                    (base_rom, desc, full_rom) for base_rom, desc, full_rom in filtered_roms
+                    if search_text in desc.lower() or search_text in base_rom.lower()
                 ]
 
                 # Batch insert items
-                for rom, desc in visible_items:
-                    item = tree.insert('', 'end', text="☐ " + desc)
+                for base_rom, desc, full_rom in visible_items:
+                    item = tree.insert('', 'end', text="☐ " + desc, tags=('custom', 'unchecked'))
                     checked_items[item] = False
                     desc_to_display[item] = desc
+                    item_to_rom[item] = base_rom  # Store the base ROM name (without collection)
 
             # Optimize search with a delay to prevent too frequent updates
             search_after_id = None
@@ -6433,19 +6447,19 @@ class ViewRoms:
 
             search_var.trace('w', on_search)
 
-            # Button frame
-            button_frame = ctk.CTkFrame(main_frame)
+            # Button frame with dark background
+            button_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
             button_frame.pack(fill='x', pady=5)
 
             def select_all():
                 for item in tree.get_children():
                     checked_items[item] = True
-                    tree.item(item, text="☒ " + desc_to_display[item])
+                    tree.item(item, text="☒ " + desc_to_display[item], tags=('custom', 'checked'))
 
             def select_none():
                 for item in tree.get_children():
                     checked_items[item] = False
-                    tree.item(item, text="☐ " + desc_to_display[item])
+                    tree.item(item, text="☐ " + desc_to_display[item], tags=('custom', 'unchecked'))
 
             select_all_btn = ctk.CTkButton(
                 button_frame,
@@ -6469,12 +6483,8 @@ class ViewRoms:
                     messagebox.showinfo("No Selection", "No games were selected.")
                     return
 
-                # Get ROM names from descriptions
-                selected_roms = []
-                for item in selected_items:
-                    desc = desc_to_display[item]
-                    if desc in desc_to_rom:
-                        selected_roms.append(desc_to_rom[desc])
+                # Get the base ROM names (without collection)
+                selected_roms = [item_to_rom[item] for item in selected_items]
 
                 # Close the selection window
                 select_window.destroy()
