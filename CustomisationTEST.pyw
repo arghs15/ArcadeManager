@@ -586,12 +586,18 @@ class FilterGamesApp:
             create_feature_frame(
                 main_frame,
                 feature_icon,
+                "Advanced Configs, and Manage Games",
+                "Can add folders, and sub folders to append list in Advanced Configs via ini.\nCan add collections and roms to exclude from manage games tab.",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
                 "Themes Tab",
                 "Can now have multiple roms, logo, and video folders added to INI file.\nIf found, a Jump Category button will show and allow you to jump between them.",
                 full_width=True
             )
-
-
             create_feature_frame(
                 main_frame,
                 feature_icon,
@@ -773,7 +779,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.2"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.3"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -867,7 +873,31 @@ class ConfigManager:
                 'description': 'Close GUI after running executable',
                 'type': bool,
                 'hidden': False
-            }
+            },
+            'additional_theme_folders': {
+                'default': [],  # Changed default from '' to []
+                'description': 'Comma-separated list of additional theme folder paths',
+                'type': List[str],
+                'hidden': False
+            },
+            'additional_sub_tabs': {
+                'default': [],  # Changed default from '' to []
+                'description': 'Comma-separated list of additional sub-tabs in format "FolderName|TabName"',
+                'type': List[str],
+                'hidden': False
+            },
+            'additional_collection_excludes': {
+                'default': [],
+                'description': 'Additional collection patterns to exclude from ROM scanning',
+                'type': List[str],
+                'hidden': False
+            },
+            'additional_rom_excludes': {
+                'default': [],
+                'description': 'Additional ROM patterns to exclude from ROM scanning',
+                'type': List[str],
+                'hidden': False
+            },
         },
         'Controls': {
             'controls_file': {
@@ -1311,10 +1341,18 @@ class ConfigManager:
         if section in self.config and key in self.config[section]:
             value = self.config[section][key]
             setting_type = self.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('type', str)
+            
+            # Handle List[str] type specifically
+            if setting_type == List[str]:
+                # Split by comma and handle whitespace
+                if value:
+                    # Split by comma, strip whitespace from each item, and filter out empty strings
+                    return [item.strip() for item in value.split(',') if item.strip()]
+                return []
+                
             if setting_type == bool:
                 return value.lower() == 'true'
-            if setting_type == List[str]:
-                return value.split(',') if value.strip() else []
+            
             return setting_type(value)
 
         # Return default directly if not present in config
@@ -5450,35 +5488,65 @@ class AdvancedConfigs:
         self.base_path = Path.cwd()
         self.config_manager = ConfigManager()
 
-        # Track which tabs exist (and whether they’ve been fully built)
-        # Format: { "TabName": bool_inited }
+        # Track which tabs exist (and whether they've been fully built)
         self._tab_inited = {}
-        # We'll also store our script categories globally
         self._categories = {}
-
-        # Store a dictionary from script_name -> absolute_path
         self.all_scripts_map = {}
+        self._themes_tabview = None
 
-        self._themes_tabview = None  # Will store the sub-tabview here
-
-        # Convert config folders to Path objects for better performance
-        self.config_folders_all = [
-            Path(self.base_path, folder) for folder in [
-                "- Advanced Configs", 
-                "- Themes", 
-                "- Themes 2nd Screen", 
-                "- Bezels Glass and Scanlines",
-                "- Mods",
-                "- Themes Arcade", 
-                "- Themes ALPHA",
-                "- Themes Console", 
-                "- Themes Handheld", 
-                "- Themes Home",
-                "- Themes Character"
-            ]
+        # Base folders that are always included
+        self.base_config_folders = [
+            "- Advanced Configs", 
+            "- Themes", 
+            "- Themes 2nd Screen", 
+            "- Bezels Glass and Scanlines",
+            "- Mods",
+            "- Themes Arcade", 
+            "- Themes Console", 
+            "- Themes Handheld", 
+            "- Themes Home",
         ]
+
+        # Get additional folders from config - ensure it's a list
+        additional_folders = self.config_manager.get_setting('Settings', 'additional_theme_folders', [])
+        if isinstance(additional_folders, str):
+            additional_folders = [additional_folders] if additional_folders else []
         
-        # Filter existing folders using Path objects (faster than os.path)
+        # Combine base and additional folders
+        all_folders = self.base_config_folders + additional_folders
+        
+        # Convert all folders to Path objects
+        self.config_folders_all = [Path(self.base_path, folder) for folder in all_folders]
+
+        # Base sub-tabs that are always included
+        self.base_sub_tabs = [
+            ("- Themes", "Themes"),
+            ("- Themes Arcade", "Themes"),
+            ("- Themes Console", "Themes Console"),
+            ("- Themes Handheld", "Themes Handheld"),
+            ("- Themes Home", "Themes Home"),
+            ("- Themes 2nd Screen", "2nd Screen")
+        ]
+
+        # Get additional sub-tabs from config - ensure it's a list
+        additional_sub_tabs_raw = self.config_manager.get_setting('Settings', 'additional_sub_tabs', [])
+        if isinstance(additional_sub_tabs_raw, str):
+            additional_sub_tabs_raw = [additional_sub_tabs_raw] if additional_sub_tabs_raw else []
+        
+        additional_sub_tabs = []
+        
+        # Process the additional sub-tabs
+        for sub_tab in additional_sub_tabs_raw:
+            try:
+                folder, tab_name = sub_tab.split('|')
+                additional_sub_tabs.append((folder.strip(), tab_name.strip()))
+            except ValueError:
+                print(f"Warning: Invalid sub-tab format: {sub_tab}. Expected format: 'FolderName|TabName'")
+        
+        # Combine base and additional sub-tabs
+        self.potential_sub_tabs = self.base_sub_tabs + additional_sub_tabs
+        
+        # Filter existing folders
         self.config_folders = [folder for folder in self.config_folders_all if folder.is_dir()]
         
         # Cache commonly accessed paths
@@ -5524,17 +5592,6 @@ class AdvancedConfigs:
             "- Themes Arcade": "Themes",   
             "- Bezels Glass and Scanlines": "Bezels & Effects"
         }
-
-        self.potential_sub_tabs = [
-            ("- Themes", "Themes"),
-            ("- Themes Arcade", "Themes"),
-            ("- Themes Console", "Themes Console"),
-            ("- Themes Handheld", "Themes Handheld"),
-            ("- Themes Home", "Themes Home"),
-            ("- Themes ALPHA", "Themes ALPHA"),
-            ("- Themes Character", "Themes Character"),
-            ("- Themes 2nd Screen", "2nd Screen")
-        ]
 
     def _init_gui_elements(self):
         """Initialize GUI elements with optimized settings"""
@@ -6676,25 +6733,39 @@ class ViewRoms:
         collections_dir = os.path.join(root_dir, 'collections')
         rom_list = []
         rom_collections = {}
-        rom_file_names = {}  # Store actual file names
+        rom_file_names = {}
         duplicate_roms = {}
 
         # Default exclude lists
         default_collection_excludes = [
-            "*Collection*", "*zzzRecord*", "*zzzSettings*", "*zzzShutdown*",
-            "*PCGameLauncher*", "*FBNeo*", "*zzzAlpha*", "*SETTINGS BEZELS*",
-            "*MAME*", "*Settings*", "*zzzBezels*"
+            "*zzzSettings*", "*zzzShutdown*", "*PCGameLauncher*"
         ]
 
         default_rom_excludes = ["*cmd*"]
 
+        # Get additional excludes from config
+        additional_collection_excludes = self.config_manager.get_setting(
+            'Settings', 'additional_collection_excludes', []
+        )
+        if isinstance(additional_collection_excludes, str):
+            additional_collection_excludes = [additional_collection_excludes] if additional_collection_excludes else []
+
+        additional_rom_excludes = self.config_manager.get_setting(
+            'Settings', 'additional_rom_excludes', []
+        )
+        if isinstance(additional_rom_excludes, str):
+            additional_rom_excludes = [additional_rom_excludes] if additional_rom_excludes else []
+
+        # Initialize and extend exclude lists
         if excluded_collections is None:
             excluded_collections = []
         excluded_collections.extend(default_collection_excludes)
+        excluded_collections.extend(additional_collection_excludes)
 
         if excluded_roms is None:
             excluded_roms = []
         excluded_roms.extend(default_rom_excludes)
+        excluded_roms.extend(additional_rom_excludes)
 
         def matches_exclude_pattern(name, patterns):
             return any(
