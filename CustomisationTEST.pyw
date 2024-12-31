@@ -6451,15 +6451,22 @@ class ViewRoms:
             # Create a new top-level window
             select_window = tk.Toplevel()
             select_window.title(f"Select Games to Remove - {selected_collection}")
-            select_window.geometry("600x700")
             select_window.configure(bg='#2c2c2c')
 
-            # Center the window
+            # Dynamically size and center the window based on the screen resolution
             screen_width = select_window.winfo_screenwidth()
             screen_height = select_window.winfo_screenheight()
-            x = (screen_width // 2) - 300
-            y = (screen_height // 2) - 350
-            select_window.geometry(f"600x700+{x}+{y}")
+
+            # Calculate window size as a percentage of the screen size
+            window_width = int(screen_width * 0.4)  # 60% of screen width
+            window_height = int(screen_height * 0.6)  # 70% of screen height
+
+            # Calculate the position to center the window
+            x = (screen_width - window_width) // 2
+            y = (screen_height - window_height) // 2
+
+            # Set the window size and position
+            select_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
             # Main container - set dark background color
             main_frame = ctk.CTkFrame(select_window, fg_color='#2c2c2c')
