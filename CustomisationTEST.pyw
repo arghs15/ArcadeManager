@@ -753,12 +753,22 @@ class FilterGamesApp:
         close_button.pack(side="right", padx=10, pady=10)
 
         # The appearance mode dropdown
+        current_mode = self.config_manager.get_appearance_mode()
         appearance_mode_optionmenu = ctk.CTkOptionMenu(
             self.appearance_frame, 
             values=["Dark", "Light", "System"],
-            command=lambda mode: ctk.set_appearance_mode(mode)
+            command=lambda mode: self.set_appearance_mode(mode),
         )
         appearance_mode_optionmenu.pack(side="right", padx=(0, 10), pady=10)  # Adjust padding to align nicely
+
+        # Set the dropdown to reflect the current mode
+        appearance_mode_optionmenu.set(current_mode)
+
+    def set_appearance_mode(self, mode: str):
+        """Set and save the appearance mode."""
+        ctk.set_appearance_mode(mode)  # Apply the mode immediately
+        self.config_manager.set_appearance_mode(mode)  # Save to config
+
 
     def set_fullscreen_preference(self, fullscreen: bool):
         """Set and save fullscreen preference."""
@@ -964,7 +974,12 @@ class ConfigManager:
                 'type': bool,
                 'hidden': False
             },
-
+            'appearance_mode': {
+                'default': 'Dark',  # Default to Dark mode
+                'description': 'Appearance mode of the application (Dark, Light, System)',
+                'type': str,
+                'hidden': False
+            },
         },
         'Controls': {
             'controls_file': {
@@ -1094,6 +1109,17 @@ class ConfigManager:
     def set_fullscreen_preference(self, fullscreen: bool):
         """Update the fullscreen preference."""
         self.config.set('Settings', 'fullscreen', str(fullscreen).lower())
+        self.save_config()
+
+    def get_appearance_mode(self) -> str:
+        """Retrieve the saved appearance mode."""
+        return self.get_setting('Settings', 'appearance_mode', 'Dark')
+
+    def set_appearance_mode(self, mode: str):
+        """Update and save the appearance mode."""
+        if mode not in ['Dark', 'Light', 'System']:
+            raise ValueError("Invalid appearance mode. Must be 'Dark', 'Light', or 'System'.")
+        self.config.set('Settings', 'appearance_mode', mode)
         self.save_config()
 
     def version_check(self):
@@ -7648,7 +7674,9 @@ class ViewRoms:
 # Main application driver
 if __name__ == "__main__":
     # Initialize GUI with customtkinter
-    ctk.set_appearance_mode("dark")
+    config_manager = ConfigManager()
+    appearance_mode = config_manager.get_appearance_mode()
+    ctk.set_appearance_mode(appearance_mode)
     ctk.set_default_color_theme("blue")
 
     root = ctk.CTk()
@@ -7663,6 +7691,7 @@ if __name__ == "__main__":
     app.add_appearance_mode_frame(fullscreen=fullscreen_mode)
 
     root.mainloop()
+
 
 
 
