@@ -598,6 +598,22 @@ class FilterGamesApp:
 
             create_feature_frame(
                 main_frame,
+                feature_icon,
+                "Apply Saved Appearance Mode on Startup",
+                "App now remembers last appearance mode (Dark, Light, System) on startup.",
+                full_width=True
+            )
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
+                "New toggle Fullscreen on Startup",
+                "Toggle to open app on fullscreen or normal window. Saved in INI file.\nAdded Close button for fullscreen mode.",
+                full_width=True
+            )
+            
+            create_feature_frame(
+                main_frame,
                 rocket_icon,
                 "Remove Games",
                 "Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
@@ -849,7 +865,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.5"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.6"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
