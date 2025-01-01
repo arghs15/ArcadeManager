@@ -5272,8 +5272,6 @@ class MultiPathThemes:
 
         self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
         self.button_frame.pack(fill="x", padx=5, pady=5)
-        self.button_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
-        self.status_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
         # Define your buttons
         buttons = [
@@ -5283,10 +5281,10 @@ class MultiPathThemes:
             ("Jump Category", self.jump_to_start, 3)  # We'll show/hide this depending on # of roms
         ]
 
-        # We will store a reference to the Jump button
-        self.jump_category_button = None  # (# ADDED)
+        # Store a reference to the Jump Category button
+        self.jump_category_button = None
 
-        # Create and place each button on the grid
+        # Create and place each button
         for btn_data in buttons:
             if len(btn_data) == 3:
                 text, command, col = btn_data
@@ -5305,21 +5303,29 @@ class MultiPathThemes:
             )
             btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
 
-            # Keep a reference to the Jump Category button specifically
-            if text == "Jump Category":  # (# ADDED)
+            if text == "Jump Category":
                 self.jump_category_button = btn
 
-        # (# ADDED) Now check if there's more than one 'roms' folder from get_theme_paths_multi()
+        # Check the roms list to determine Jump Category button visibility
         roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
         print("DEBUG: roms_list =", roms_list, "Length =", len(roms_list))
 
         if len(roms_list) <= 1 and self.jump_category_button:
-            # If there is only one (or zero) 'roms' folder, hide (remove) the Jump Category button
+            # Hide the Jump Category button and reconfigure grid weights
             self.jump_category_button.grid_remove()
-
-        # If more than one, the button stays visible by default
+            self._adjust_button_weights(3)  # Adjust weights for 3 columns
+        else:
+            self._adjust_button_weights(4)  # Adjust weights for 4 columns by default
 
         self.update_location_frame_visibility()
+
+    def _adjust_button_weights(self, columns):
+        """Adjust the button frame column weights dynamically."""
+        for col in range(4):  # Reset all columns
+            self.button_frame.grid_columnconfigure(col, weight=0)
+        for col in range(columns):  # Adjust the active columns
+            self.button_frame.grid_columnconfigure(col, weight=1)
+
 
 
     def update_location_frame_visibility(self):
