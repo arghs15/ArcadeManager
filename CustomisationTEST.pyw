@@ -613,21 +613,21 @@ class FilterGamesApp:
                 full_width=True
             )
             
-            create_feature_frame(
+            '''create_feature_frame(
                 main_frame,
                 rocket_icon,
                 "Remove Games",
                 "Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
                 full_width=True
-            )
+            )'''
 
-            create_feature_frame(
+            '''create_feature_frame(
                 main_frame,
                 feature_icon,
                 "Advanced Configs, and Manage Games",
                 "Can add folders, and sub folders to append list in Advanced Configs via ini.\nCan add collections and roms to exclude from manage games tab.",
                 full_width=True
-            )
+            )'''
 
             create_feature_frame(
                 main_frame,
@@ -636,21 +636,22 @@ class FilterGamesApp:
                 "Can now have multiple roms, logo, and video folders added to INI file.\nIf found, a Jump Category button will show and allow you to jump between them.",
                 full_width=True
             )
-            create_feature_frame(
+
+            '''create_feature_frame(
                 main_frame,
                 feature_icon,
                 "Controls Tab",
                 "Added controller icon to xinput controls",
                 full_width=True
-            )
+            )'''
 
-            create_feature_frame(
+            '''create_feature_frame(
                 main_frame,
                 rocket_icon,
                 "Manage ROMS Tab",
                 "Removed the Move Roms button that uses a text file\n",
                 full_width=True
-            )
+            )'''
 
             create_feature_frame(
                 main_frame,
@@ -1206,10 +1207,10 @@ class ConfigManager:
         try:
             # Get the raw value from config
             value = self.config.get("Settings", "whats_new_clicked", fallback="False")
-            print(f"Raw whats_new_clicked value from config: {value}")
+            #print(f"Raw whats_new_clicked value from config: {value}")
             # Convert to boolean
             is_clicked = value.lower() in ['true', '1', 'yes']
-            print(f"Converted to boolean: {is_clicked}")
+            #print(f"Converted to boolean: {is_clicked}")
             return is_clicked
         except Exception as e:
             print(f"Error getting whats_new_clicked: {e}")
@@ -1242,28 +1243,28 @@ class ConfigManager:
         try:
             # Check cache first
             if button_name in self._button_visibility_cache:
-                print(f"Using cached value for {button_name}: {self._button_visibility_cache[button_name]}")
+                #print(f"Using cached value for {button_name}: {self._button_visibility_cache[button_name]}")
                 return self._button_visibility_cache[button_name]
 
-            print(f"\nDebug for {button_name}:")
-            print(f"Button exists in config: {button_name in self.config['Settings']}")
+            #print(f"\nDebug for {button_name}:")
+            #print(f"Button exists in config: {button_name in self.config['Settings']}")
             if 'Settings' in self.config and button_name in self.config['Settings']:
                 visibility = self.config['Settings'][button_name]
-                print(f"INI value: {visibility}")
+                #print(f"INI value: {visibility}")
             else:
                 visibility = self.BUTTON_VISIBILITY_STATES.get(button_name, {}).get('default', 'never')
-                print(f"Using hardcoded default: {visibility}")
+                #print(f"Using hardcoded default: {visibility}")
 
             # Convert visibility setting to boolean
             is_visible = visibility == 'always'
-            print(f"Final visibility value: {is_visible}")
+            #print(f"Final visibility value: {is_visible}")
             
             # Cache the result
             self._button_visibility_cache[button_name] = is_visible
             return is_visible
 
         except Exception as e:
-            print(f"Error determining button visibility for {button_name}: {e}")
+            #print(f"Error determining button visibility for {button_name}: {e}")
             return False
 
     def update_button_visibility(self, button_name, visibility):
@@ -1529,7 +1530,7 @@ class ConfigManager:
 
             # If paths are valid, return the build type
             if self._build_type_cache[build_type]:
-                self._log(f"✓ Found valid paths for build type: {build_type}")
+                #self._log(f"✓ Found valid paths for build type: {build_type}")
                 return build_type
 
         self._log("✗ No valid build type found, defaulting to 'S'")
@@ -4098,7 +4099,7 @@ class ThemeViewer:
                     self.video_cap = cv2.VideoCapture(self.video_path)
                     if self.video_cap.isOpened():
                         self.is_playing = True
-                        print(f"Video started successfully: {self.video_path}")
+                        #print(f"Video started successfully: {self.video_path}")
                         return True
                     else:
                         print("Failed to open video file")
@@ -4854,7 +4855,7 @@ class Themes:
             
 class MultiPathThemes:
     def __init__(self, parent_tab):
-        print("Initializing MultiPathThemes...")
+        #print("Initializing MultiPathThemes...")
         self.parent_tab = parent_tab
         self.base_path = os.getcwd()
 
@@ -4966,7 +4967,7 @@ class MultiPathThemes:
 
     def show_initial_theme(self):
         """Show the first theme and start video playback"""
-        print("Showing initial theme...")
+        #print("Showing initial theme...")
         if not self.themes_list:
             return
 
@@ -4980,14 +4981,14 @@ class MultiPathThemes:
         # Force immediate thumbnail extraction and display
         thumbnail = self.current_viewer.extract_thumbnail()
         if thumbnail is not None:
-            print("Thumbnail extracted, displaying...")
+            #print("Thumbnail extracted, displaying...")
             self._display_frame(thumbnail)
 
             # Start video immediately if available
             if video_path:
-                print(f"Starting initial video: {video_path}")
+                #print(f"Starting initial video: {video_path}")
                 if self.current_viewer.start_video():
-                    print("Initial video started, beginning playback...")
+                    #print("Initial video started, beginning playback...")
                     self.play_video()
         else:
             print("No thumbnail available")
@@ -5332,7 +5333,7 @@ class MultiPathThemes:
 
         # Check the roms list to determine Jump Category button visibility
         roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
-        print("DEBUG: roms_list =", roms_list, "Length =", len(roms_list))
+        #print("DEBUG: roms_list =", roms_list, "Length =", len(roms_list))
 
         if len(roms_list) <= 1 and self.jump_category_button:
             # Hide the Jump Category button and reconfigure grid weights
@@ -5355,14 +5356,14 @@ class MultiPathThemes:
     def update_location_frame_visibility(self):
         """Update the visibility of the location frame based on config settings"""
         show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=False)
-        print(f"show_location_controls value: {show_location_controls}")  # Debug
+        #print(f"show_location_controls value: {show_location_controls}")  # Debug
 
         if show_location_controls:
             self.location_frame.pack(fill="x", padx=10, pady=5)
-            print("Location frame is visible")  # Debug
+            #print("Location frame is visible")  # Debug
         else:
             self.location_frame.pack_forget()
-            print("Location frame is hidden")  # Debug
+            #print("Location frame is hidden")  # Debug
 
     def show_custom_paths_dialog(self):
         """Show dialog for configuring custom paths"""
@@ -6446,12 +6447,12 @@ class ViewRoms:
 
         for button_name, config in button_configs.items():
             # Debug prints
-            print(f"\nChecking button {button_name}")
+            #print(f"\nChecking button {button_name}")
             visibility = self.config_manager.get_button_visibility(button_name)
-            print(f"Visibility value returned: {visibility}")
+            #print(f"Visibility value returned: {visibility}")
 
             if visibility:  # Will be True only when visibility is 'always'
-                print(f"Creating button {button_name}")
+                #print(f"Creating button {button_name}")
                 self.buttons[button_name] = ctk.CTkButton(
                     self.button_frame,
                     text=config['text'],
