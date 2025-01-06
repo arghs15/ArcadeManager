@@ -1,5 +1,6 @@
 from ctypes.wintypes import SIZE
 import os
+import random
 import sys
 import csv
 import re
@@ -1058,18 +1059,30 @@ class ConfigManager:
     }
 
     BUTTON_VISIBILITY_STATES = {
-        'show_move_artwork_button': {
-            'default': 'always',  # 'always', 'never'
+        'show_move_artwork_button': { # removes all artwork for missing roms
+            'default': 'never',  # 'always', 'never'
             'description': 'Controls visibility of Move Artwork button',
             'type': str,
-            'hidden': True
+            'hidden': False  # Changed from True
         },
-        'show_move_roms_button': {
+        'show_move_roms_button': { # Allows a user to select roms to remove from a text file
             'default': 'never',  # 'always', 'never'
             'description': 'Controls visibility of Move ROMs button',
             'type': str,
-            'hidden': True
-        }
+            'hidden': False  # Changed from True
+        },
+        'show_remove_random_roms_button': { # Allows user to choose percentage of roms to remove. Used for me to slim down a build for testing.
+            'default': 'never',  # 'always', 'never'
+            'description': 'Controls visibility of Move ROMs button',
+            'type': str,
+            'hidden': False  # Changed from True
+        },
+        'remove_games_button': { # Checklist of roms user can manually choose to remove
+            'default': 'never',  # 'always', 'never'
+            'description': 'Controls visibility of Remove Games button',
+            'type': str,
+            'hidden': False  # Changed from True
+        },
     }
 
     BUILD_TYPE_PATHS = {
@@ -1225,25 +1238,25 @@ class ConfigManager:
     def determine_button_visibility(self, button_name):
         """
         Determine whether a button should be visible based on configuration and context.
-        Similar to tab visibility logic but for buttons.
-        
-        :param button_name: Name of the button to check
-        :return: bool indicating if button should be visible
         """
         try:
             # Check cache first
             if button_name in self._button_visibility_cache:
+                print(f"Using cached value for {button_name}: {self._button_visibility_cache[button_name]}")
                 return self._button_visibility_cache[button_name]
 
-            # Get visibility setting from config if it exists
-            if self.setting_exists('Settings', button_name):
-                visibility = self.get_setting('Settings', button_name, 'never')
+            print(f"\nDebug for {button_name}:")
+            print(f"Button exists in config: {button_name in self.config['Settings']}")
+            if 'Settings' in self.config and button_name in self.config['Settings']:
+                visibility = self.config['Settings'][button_name]
+                print(f"INI value: {visibility}")
             else:
-                # Use default from BUTTON_VISIBILITY_STATES if setting doesn't exist
                 visibility = self.BUTTON_VISIBILITY_STATES.get(button_name, {}).get('default', 'never')
+                print(f"Using hardcoded default: {visibility}")
 
             # Convert visibility setting to boolean
             is_visible = visibility == 'always'
+            print(f"Final visibility value: {is_visible}")
             
             # Cache the result
             self._button_visibility_cache[button_name] = is_visible
@@ -1381,12 +1394,23 @@ class ConfigManager:
 
     def _initialize_default_config(self):
         """Initialize the INI file with only visible (non-hidden) default settings."""
+        # Add base sections
+        for section in ['Settings', 'Controls', 'Tabs']:
+            if section not in self.config:
+                self.config[section] = {}
+
+        # Initialize settings from AVAILABLE_SETTINGS
         for section, settings in self.AVAILABLE_SETTINGS.items():
             if section not in self.config:
                 self.config[section] = {}
             for key, setting_info in settings.items():
                 if not setting_info.get('hidden', False):
-                    self.config[section][key] = setting_info['default']
+                    self.config[section][key] = str(setting_info['default'])
+
+        # Initialize button visibility settings under [Settings]
+        for button_name, button_info in self.BUTTON_VISIBILITY_STATES.items():
+            if not button_info.get('hidden', False):
+                self.config['Settings'][button_name] = button_info['default']
 
     def determine_tab_visibility(self, tab_name):
         """
@@ -6299,6 +6323,7 @@ class ViewRoms:
         self.label_font = ("Arial", 12)   # Added for labels
         self.button_font = ("Arial", 12)  # Added for buttons
         self.config_manager = config_manager
+        self.rom_list = []  # Ensure this is initialized
         self.rom_descriptions = {}  # Make sure this is initialized
         self.parent_tab = parent_tab
         # Add this line with your other initializations
@@ -6364,15 +6389,6 @@ class ViewRoms:
         )
         clear_button.pack(side='right', padx=5)
 
-        remove_games_button = ctk.CTkButton(
-            self.button_frame,
-            text="Remove Games",
-            command=self.select_games_to_remove,
-            width=100,
-            font=self.button_font
-        )
-        remove_games_button.pack(side='right', padx=5)
-
         # ROM list frame
         list_frame = ctk.CTkFrame(main_container)
         list_frame.pack(fill='both', expand=True, padx=5, pady=5)
@@ -6415,15 +6431,29 @@ class ViewRoms:
                 'command': lambda: self.show_instructions_popup('show_move_artwork_button')
             },
             'show_move_roms_button': {
-                'text': "Move ROMs",
+                'text': "Move ROMs From TXT",
                 'command': lambda: self.show_instructions_popup('show_move_roms_button')
+            },
+            'show_remove_random_roms_button': {
+                'text': "Remove Random ROMs",
+                'command': self.remove_random_roms
+            },
+            'remove_games_button': {
+                'text': "Remove Games",
+                'command': self.select_games_to_remove
             }
         }
 
         for button_name, config in button_configs.items():
-            if self.config_manager.get_button_visibility(button_name):
+            # Debug prints
+            print(f"\nChecking button {button_name}")
+            visibility = self.config_manager.get_button_visibility(button_name)
+            print(f"Visibility value returned: {visibility}")
+
+            if visibility:  # Will be True only when visibility is 'always'
+                print(f"Creating button {button_name}")
                 self.buttons[button_name] = ctk.CTkButton(
-                    self.button_frame,  # Use the correctly defined self.button_frame
+                    self.button_frame,
                     text=config['text'],
                     command=config['command'],
                     width=100,
@@ -6431,6 +6461,97 @@ class ViewRoms:
                 )
                 self.buttons[button_name].pack(side='right', padx=5)
 
+    def remove_random_roms(self):
+        """Remove a percentage of ROMs at random and move their artwork."""
+        try:
+            # Get the selected collection
+            selected_collection = self.collection_var.get()
+            if selected_collection == "All Collections":
+                messagebox.showerror("Error", "Please select a specific collection.")
+                return
+
+            # Pre-filter ROMs in the selected collection
+            filtered_roms = [
+                rom.rsplit(' (', 1)[0] for rom in self.rom_list
+                if f"({selected_collection})" in rom
+            ]
+
+            if not filtered_roms:
+                messagebox.showinfo("No ROMs", f"No ROMs found in the '{selected_collection}' collection.")
+                return
+
+            # Popup to select the percentage of ROMs to remove
+            def open_percentage_popup():
+                popup = tk.Toplevel()
+                popup.title("Select Percentage to Remove")
+                popup.geometry("300x200")
+                popup.configure(bg='#2c2c2c')
+
+                # Center the popup on the screen
+                screen_width = popup.winfo_screenwidth()
+                screen_height = popup.winfo_screenheight()
+                x = (screen_width // 2) - 150
+                y = (screen_height // 2) - 100
+                popup.geometry(f"+{x}+{y}")
+
+                label = ctk.CTkLabel(
+                    popup,
+                    text="Select Percentage of ROMs to Remove:",
+                    font=("Arial", 14),
+                    text_color="white",
+                )
+                label.pack(pady=10)
+
+                percentage_var = tk.IntVar(value=80)  # Default to 80%
+                percentages = [20, 40, 60, 80, 100]
+
+                for percentage in percentages:
+                    ctk.CTkRadioButton(
+                        popup,
+                        text=f"{percentage}%",
+                        variable=percentage_var,
+                        value=percentage,
+                        font=("Arial", 12),
+                        text_color="white",
+                    ).pack(anchor="w", padx=20, pady=5)
+
+                # Confirm button
+                def confirm_selection():
+                    selected_percentage = percentage_var.get()
+                    popup.destroy()
+                    proceed_with_removal(selected_percentage)
+
+                confirm_button = ctk.CTkButton(
+                    popup,
+                    text="Confirm",
+                    command=confirm_selection,
+                    fg_color="#4CAF50",
+                    hover_color="#45a049",
+                )
+                confirm_button.pack(pady=20)
+
+                popup.transient(self.parent_tab)
+                popup.grab_set()
+                popup.mainloop()
+
+            # Removal logic after percentage selection
+            def proceed_with_removal(percentage):
+                roms_to_remove_count = int(len(filtered_roms) * (percentage / 100))
+                if roms_to_remove_count == 0:
+                    messagebox.showinfo("Too Few ROMs", "Not enough ROMs to remove.")
+                    return
+
+                # Randomly select ROMs to remove
+                roms_to_remove = random.sample(filtered_roms, roms_to_remove_count)
+
+                # Use the existing move_roms logic to handle file and artwork movement
+                self.move_roms(roms_to_remove)
+
+            # Open the percentage selection popup
+            open_percentage_popup()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {str(e)}")
 
     def select_games_to_remove(self):
         """Open a window to select games to remove from the current collection view"""
