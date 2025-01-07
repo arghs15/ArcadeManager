@@ -1,4 +1,3 @@
-from ctypes.wintypes import SIZE
 import os
 import random
 import sys
@@ -30,6 +29,18 @@ import fnmatch
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
+import queue
+import threading
+from dataclasses import dataclass
+from typing import Dict, List, Set, Optional
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from dataclasses import dataclass
+from typing import Dict, List, Set, Optional
+from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
@@ -129,99 +140,113 @@ class FilterGamesApp:
             self.Themes_games_tab = self.tabview.add("Themes")
             self.Themes_games = Themes(self.Themes_games_tab)'''
 
+        self.tab_load_times = []
+
         # MultiPath Themes tab
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
+            start_time = time.time()
             self.multi_path_themes_tab = self.tabview.add("Themes")
             self.multi_path_themes = MultiPathThemes(self.multi_path_themes_tab)
+            end_time = time.time()
+            duration = end_time - start_time
+            self.tab_load_times.append(("Themes", duration))
+            print(f"[TIMING] MultiPathThemes loaded in {end_time - start_time:.3f} seconds")
 
         # Advanced Configurations tab
         if self.config_manager.determine_tab_visibility('advanced_configs'):
+            start_time = time.time()
             self.advanced_configs_tab = self.tabview.add("Advanced Configs")
             self.advanced_configs = AdvancedConfigs(self.advanced_configs_tab)
-
+            end_time = time.time()
+            duration = end_time - start_time
+            self.tab_load_times.append(("Advanced Configs", duration))
+            print(f"[TIMING] AdvancedConfigs loaded in {end_time - start_time:.3f} seconds")
+            
         # Playlists tab
         if self.config_manager.determine_tab_visibility('playlists'):
+            start_time = time.time()
             self.playlists_tab = self.tabview.add("Playlists")
             self.playlists = Playlists(self.root, self.playlists_tab)
+            end_time = time.time()
+            duration = end_time - start_time
+            self.tab_load_times.append(("Playlists", duration))
+            print(f"[TIMING] Playlists loaded in {end_time - start_time:.3f} seconds")
 
         # Filter Games tab
         if self.config_manager.determine_tab_visibility('filter_games'):
+            start_time = time.time()
             self.filter_games_tab = self.tabview.add("Filter Arcades")
             self.filter_games = FilterGames(self.filter_games_tab)
+            end_time = time.time()
+            duration = end_time - start_time
+            self.tab_load_times.append(("Filter Arcades", duration))
+            print(f"[TIMING] FilterGames loaded in {end_time - start_time:.3f} seconds")
 
-        # Controls and View Games tabs - special handling
-        print(f"Playlist Location: {self.playlist_location}")
-
-        # Controls Games tab
+        # Controls tab
         if self.config_manager.determine_tab_visibility('controls'):
+            start_time = time.time()
             self.controls_tab = self.tabview.add("Controls")
             self.controls = Controls(self.controls_tab)
-        
+            end_time = time.time()
+            duration = end_time - start_time
+            self.tab_load_times.append(("Controls", duration))
+            print(f"[TIMING] Controls loaded in {end_time - start_time:.3f} seconds")
+
         # Manage Games tab
         if self.config_manager.determine_tab_visibility('view_games'):
+            start_time = time.time()
             self.view_games_tab = self.tabview.add("Manage Games")
             self.view_games = ViewRoms(self.view_games_tab, self.config_manager)
+            end_time = time.time()
+            duration = end_time - start_time
+            self.tab_load_times.append(("Manage Games", duration))
+            print(f"[TIMING] ViewRoms loaded in {end_time - start_time:.3f} seconds")
 
-        '''
-        # Check configuration visibility for Controls tab
-        controls_visibility = self.config_manager.get_setting('Tabs', 'controls_tab', 'auto')
-        if controls_visibility == 'always' or (controls_visibility == 'auto' and self.playlist_location == 'U'):
-            self.controls_tab = self.tabview.add("Controls")
-            self.controls = Controls(self.controls_tab)
-            print(f"Adding Controls Tab")
-        else:
-            print(f"Controls Tab is not visible")
-
-        # Check configuration visibility for View Games tab
-        view_games_visibility = self.config_manager.get_setting('Tabs', 'view_games_tab', 'auto')
-        if view_games_visibility == 'always' or (view_games_visibility == 'auto' and self.playlist_location == 'U'):
-            self.view_games_tab = self.tabview.add("Manage Games")
-            self.view_games = ViewRoms(self.view_games_tab, self.config_manager)
-            print(f"Adding All Games Tab")
-        else:
-            print(f"View Games Tab is not visible")
-        '''
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         # Add exe file selector on the right side
         self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
-        
-        # Bottom frame for Appearance Mode options
-        #self.add_appearance_mode_frame()
 
-    '''def show_whats_new_popup(self):
+    def show_whats_new_popup(self):
         """Show the 'What's New' popup with the latest updates."""
         def show_popup():
             popup = tk.Toplevel(self.root)
             popup.title("What's New")
-            popup.geometry("700x600")
             popup.configure(bg='#2c2c2c')
+
+            window_width = 1000
+            window_height = 700
+
+            # Example usage of the version from ConfigManager
+            version_text = ConfigManager.CONFIG_FILE_VERSION
 
             # Center the window
             screen_width = popup.winfo_screenwidth()
             screen_height = popup.winfo_screenheight()
-            window_width = 700
-            window_height = 600
             x = (screen_width // 2) - (window_width // 2)
             y = (screen_height // 2) - (window_height // 2)
             popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+            # Title Label
+            title_label = ctk.CTkLabel(
+                popup,
+                text=f"What's New in Version {version_text} 🎉",
+                text_color='#ffffff',
+                font=('Helvetica', 24, 'bold'),
+            )
+            title_label.pack(pady=(0, 30))
 
             # Create main frame for content with padding
             main_frame = ctk.CTkFrame(popup, fg_color='#2c2c2c')
             main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
-            # Title label (centered)
-            title_label = ctk.CTkLabel(
-                main_frame,
-                text="What's New in Version 2.0! 🎉",
-                text_color='#ffffff',
-                font=('Helvetica', 24, 'bold'),
-            )
-            title_label.pack(pady=(0, 20))
+            # Create a scrollable frame for the content
+            scrollable_frame = ctk.CTkScrollableFrame(main_frame, fg_color='transparent')
+            scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
             # Content frame for left-aligned items
-            content_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
+            content_frame = ctk.CTkFrame(scrollable_frame, fg_color='transparent')
             content_frame.pack(fill="both", expand=True, padx=10)
 
             # New Features section
@@ -236,9 +261,12 @@ class FilterGamesApp:
             new_features_label.pack(fill="x", pady=(0, 10))
 
             features = [
-                "⭐ Controls Tab\nSet controls with the press of a button on your xinput device or keyboard.",
-                "⭐ Manage ROMs Tab\nMove artwork and ROMs easily with a few clicks of a button!",
-                "⭐ GUI Exit State\nThe application now remembers your last state after execution."
+                #"⭐ Controls Tab\nSet controls with the press of a button on your xinput device or keyboard.",
+                "⭐ Apply Saved Appearance Mode on Startup\nApp now remembers last appearance mode (Dark, Light, System) on startup.\n",
+                "⭐ New toggle Fullscreen on Startup.\nToggle to open app on fullscreen or normal window. Saved in INI file.\nAdded Close button for fullscreen mode.\n",
+                "⭐ Troubleshooting.\nWhats New button will display times for each tab to build.\n",
+                #"⭐ Manage ROMs Tab\nMove artwork and ROMs easily with a few clicks of a button!",
+                #"⭐ GUI Exit State\nThe application now remembers your last state after execution."
             ]
 
             for feature in features:
@@ -261,7 +289,7 @@ class FilterGamesApp:
                 anchor="w",
                 justify="left"
             )
-            bug_fixes_label.pack(fill="x", pady=(20, 10))
+            bug_fixes_label.pack(fill="x", pady=(20, 10))  # Consistent padding
 
             fixes = [
                 "👾 Various bug fixes and stability improvements",
@@ -279,12 +307,39 @@ class FilterGamesApp:
                 )
                 fix_label.pack(fill="x", pady=(0, 5))
 
+            # =================================
+            #  Display Tab Load Times
+            # =================================
+            times_label = ctk.CTkLabel(
+                content_frame,
+                text="Tab Load Times",
+                text_color='#4CAF50',
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            times_label.pack(fill="x", pady=(20, 10))  # Consistent padding
+
+            # Create a frame for the load-time lines
+            times_frame = ctk.CTkFrame(content_frame, corner_radius=10)
+            times_frame.pack(fill="x", pady=(0, 20), padx=5)
+
+            for tab_name, duration in self.tab_load_times:
+                item_label = ctk.CTkLabel(
+                    times_frame,
+                    text=f"{tab_name} loaded in {duration:.3f} seconds",
+                    text_color="#ffffff",
+                    font=("Helvetica", 12),
+                    anchor="w"
+                )
+                item_label.pack(fill="x", pady=5, padx=10)
+
             # Bottom frame for checkbox and button
             bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
             bottom_frame.pack(fill="x", pady=(20, 0))
 
             # Do not show again checkbox
-            do_not_show_var = tk.BooleanVar()
+            '''do_not_show_var = tk.BooleanVar()
             do_not_show_checkbox = ctk.CTkCheckBox(
                 bottom_frame,
                 text="Do not show again",
@@ -292,13 +347,10 @@ class FilterGamesApp:
                 font=('Helvetica', 12),
                 text_color="#e0e0e0"
             )
-            do_not_show_checkbox.pack(side="left", padx=(0, 10))
+            do_not_show_checkbox.pack(side="left", padx=(0, 10))'''
 
             # OK button
             def on_ok():
-                if do_not_show_var.get():
-                    self.config_manager.config.set('Settings', 'show_whats_new', 'False')
-                    self.config_manager.save_config()
                 popup.destroy()
 
             ok_button = ctk.CTkButton(
@@ -309,15 +361,15 @@ class FilterGamesApp:
                 hover_color='#45a049',
                 width=100
             )
-            ok_button.pack(side="right")
+            ok_button.pack(side="right", padx=(0, 10))
 
             popup.transient(self.root)
             popup.grab_set()
             popup.wait_window()
 
-        show_popup()'''
+        show_popup()
 
-    def show_whats_new_popup(self):
+    def show_whats_new_popup_alt(self):
         """Show the 'What's New' popup with the latest updates."""
         # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
         WINDOW_SIZE = {
@@ -661,6 +713,37 @@ class FilterGamesApp:
                 full_width=True
             )
 
+            # =================================
+            #  Display Tab Load Times
+            # =================================
+            times_label = ctk.CTkLabel(
+                main_frame,
+                text="Tab Load Times",
+                text_color='#4CAF50',
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            times_label.pack(fill="x", pady=(0, 10))
+
+            # Create a frame for the load-time lines
+            times_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
+            times_frame.pack(fill="x", pady=(0, 20), padx=5)
+
+            for tab_name, duration in self.tab_load_times:
+                item_label = ctk.CTkLabel(
+                    times_frame,
+                    text=f"{tab_name} loaded in {duration:.3f} seconds",
+                    text_color="#ffffff",
+                    font=("Helvetica", 12),
+                    anchor="w"
+                )
+                item_label.pack(fill="x", pady=5, padx=10)
+
+            # Bottom frame with OK button
+            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
+            bottom_frame.pack(fill="x", pady=(20, 0))
+            
             # Bottom frame with adjusted spacing
             bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
             bottom_frame.pack(fill="x", pady=(20, 0))
@@ -686,9 +769,24 @@ class FilterGamesApp:
         show_popup()
 
     def on_closing(self):
-        if hasattr(self, 'controls'):
-            self.controls.cleanup()
-        self.root.destroy()
+        try:
+            # Clean up controls if they exist
+            if hasattr(self, 'controls'):
+                self.controls.cleanup()
+            
+            # Clean up advanced configs if it exists
+            if hasattr(self, 'advanced_configs'):
+                self.advanced_configs.cleanup()
+                
+            # Destroy the root window
+            self.root.destroy()
+        except Exception as e:
+            print(f"Error during application closing: {e}")
+            # Ensure window is destroyed even if there's an error
+            try:
+                self.root.destroy()
+            except:
+                pass
 
     def check_zzz_settings_folder(self):
         """Check if at least one of the required themes folders exists."""
@@ -867,7 +965,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.6"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.7"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -5625,11 +5723,89 @@ class MultiPathThemes:
         if not first_theme_found:
             print(f"No themes found in folder: {current_rom_folder}")
 
+@dataclass
+class ScriptMetadata:
+    name: str
+    path: Path
+    size: int
+    modified: float
+    last_accessed: float
+    
+@dataclass
+class VirtualScrollState:
+    start_index: int = 0
+    visible_items: int = 20
+    total_items: int = 0
+
+"""
+3. Add this new MetadataCache class:
+"""
+class MetadataCache:
+    def __init__(self, cache_duration: timedelta = timedelta(minutes=5)):
+        self._cache: Dict[str, ScriptMetadata] = {}
+        self._cache_duration = cache_duration
+        self._last_refresh = datetime.now()
+        self._lock = threading.Lock()
+
+    def get(self, script_name: str) -> Optional[ScriptMetadata]:
+        with self._lock:
+            return self._cache.get(script_name)
+
+    def set(self, script_name: str, metadata: ScriptMetadata):
+        with self._lock:
+            self._cache[script_name] = metadata
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+            self._last_refresh = datetime.now()
+
+    def is_stale(self) -> bool:
+        return datetime.now() - self._last_refresh > self._cache_duration
+
+"""
+4. Add this BackgroundWorker class:
+"""
+class BackgroundWorker:
+    def __init__(self, max_workers: int = 4):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.task_queue = queue.Queue()
+        self.running = True
+        self.worker_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self.worker_thread.start()
+
+    def _process_queue(self):
+        while self.running:
+            try:
+                task, callback = self.task_queue.get(timeout=1)
+                future = self.executor.submit(task)
+                future.add_done_callback(callback)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Worker error: {e}")
+
+    def submit_task(self, task, callback):
+        self.task_queue.put((task, callback))
+
+    def shutdown(self):
+        self.running = False
+        self.executor.shutdown(wait=True)
+
 class AdvancedConfigs:
     def __init__(self, parent_tab):
+        # First, set the parent_tab
         self.parent_tab = parent_tab
         self.base_path = Path.cwd()
         self.config_manager = ConfigManager()
+        
+        # Add new instance variables
+        self.metadata_cache = MetadataCache()
+        self.background_worker = BackgroundWorker()
+        self.virtual_scroll_state = VirtualScrollState()
+        
+        # Add loading overlay
+        self.loading_overlay = self._create_loading_overlay()
 
         # Track which tabs exist (and whether they've been fully built)
         self._tab_inited = {}
@@ -5685,7 +5861,7 @@ class AdvancedConfigs:
                 additional_sub_tabs.append((folder.strip(), tab_name.strip()))
             except ValueError:
                 print(f"Warning: Invalid sub-tab format: {sub_tab}. Expected format: 'FolderName|TabName'")
-        
+
         # Combine base and additional sub-tabs
         self.potential_sub_tabs = self.base_sub_tabs + additional_sub_tabs
         
@@ -5696,6 +5872,20 @@ class AdvancedConfigs:
         self.cache_path = Path(self.base_path, "autochanger", "script_categories_cache.json")
         self.favorites_path = Path(self.base_path, "autochanger", "favorites.json")
         
+        # 1) Possibly read cached data right away in constructor
+        self._cached_categories = {}
+        if self.cache_path.exists():
+            # Just read the file and parse it
+            try:
+                cache_data = json.loads(self.cache_path.read_text())
+                self._cached_categories = cache_data.get('categories', {})
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Cache read error: {e}")
+                # Optional: If parse fails, you can force a scan or just keep it empty
+        else:
+            # If the file doesn't exist, do a fresh scan
+            self.parent_tab.after(10, self._async_populate_tabs)
+
         # Pre-compile tab configurations
         self._init_tab_configs()
         
@@ -5711,9 +5901,104 @@ class AdvancedConfigs:
         
         # Initialize GUI elements
         self._init_gui_elements()
-        
-        # Populate tabs asynchronously
-        self.parent_tab.after(10, self._async_populate_tabs)
+
+        if self.cache_path.exists():
+            try:
+                cache_data = json.loads(self.cache_path.read_text())
+                # remove or comment out any `max_mod_time` checks
+                # just parse the categories
+                self._cached_categories = cache_data.get('categories', {})
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Cache read error: {e}")
+
+        # STEP 3: Build Tabs if we have cached_categories
+        if self._cached_categories:
+            self._categories = self._cached_categories
+            self._create_tabs(self._cached_categories)
+        else:
+            # Cache is invalid or missing; do a fresh async scan
+            self.parent_tab.after(10, self._async_populate_tabs)
+
+    def _create_loading_overlay(self):
+        overlay = ctk.CTkFrame(self.parent_tab)
+        spinner = ctk.CTkProgressBar(overlay)
+        spinner.pack(pady=20)
+        spinner.configure(mode="indeterminate")
+        label = ctk.CTkLabel(overlay, text="Loading...")
+        label.pack(pady=10)
+        return overlay
+
+    def show_loading(self, show: bool = True):
+        if show:
+            self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
+            self.loading_overlay.lift()
+            for widget in self.loading_overlay.winfo_children():
+                if isinstance(widget, ctk.CTkProgressBar):
+                    widget.start()
+        else:
+            for widget in self.loading_overlay.winfo_children():
+                if isinstance(widget, ctk.CTkProgressBar):
+                    widget.stop()
+            self.loading_overlay.place_forget()
+
+    def refresh_scripts(self):
+        """Refreshes all script categories and rebuilds tabs."""
+        try:
+            # Show a loading overlay/spinner
+            self.show_loading(True)
+
+            # Store current tab name so we can return to it after refreshing
+            current_tab = self.tabview.get()
+
+            # Force-delete old script_categories_cache.json
+            if self.cache_path.exists():
+                try:
+                    self.cache_path.unlink()  # remove old JSON file entirely
+                except OSError as e:
+                    print(f"Error deleting old cache file: {e}")
+
+            # Clear in-memory caches
+            self._script_cache = {}
+            self._path_cache = {}
+            self._cached_categories.clear()
+            self._categories.clear()
+
+            # Clear existing content of the current tab (just so old widgets don’t remain)
+            if current_tab == "Themes":
+                self._clear_themes_tab_content()
+            else:
+                self._clear_current_tab_content(current_tab)
+
+            # Define an async function that re-scans folders & rebuilds tabs
+            async def repopulate():
+                try:
+                    # 1) Actually categorize scripts (this overwrites the JSON, too)
+                    script_categories = await self._categorize_scripts_async()
+                    self._categories = script_categories
+
+                    # 2) Rebuild the main tabs in the GUI (in the main thread)
+                    self.parent_tab.after(0, lambda: self._create_tabs(script_categories, current_tab))
+                finally:
+                    # Hide loading overlay
+                    self.show_loading(False)
+
+                    # Optionally re-init the current tab content
+                    self.parent_tab.after(0, lambda: self._rebuild_current_tab(current_tab))
+
+            # Run that async repopulate
+            asyncio.run(repopulate())
+
+        except Exception as e:
+            print(f"Error refreshing scripts: {e}")
+            self.show_loading(False)
+
+
+    def _rebuild_current_tab(self, tab_name):
+        """Rebuild the content of the current tab"""
+        if tab_name in self._tab_inited:
+            self._lazy_init_tab(tab_name)
+
+
 
     def _init_tab_configs(self):
         """Initialize tab configurations with optimized data structures"""
@@ -5723,7 +6008,7 @@ class AdvancedConfigs:
             "Bezels & Effects": frozenset(["Bezel", "SCANLINE", "GLASS EFFECTS"]),
             "Overlays": frozenset(["OVERLAY"]),
             "InigoBeats": frozenset(["MUSIC"]),
-            "Attract": frozenset(["Attract", "Scroll"]),           
+            "Attract": frozenset(["Attract", "Scroll"]),
             "Monitor": frozenset(["Monitor"]),
             "Splash": frozenset(["Splash"]),
             "Front End": frozenset(["FRONT END"]),
@@ -5760,17 +6045,28 @@ class AdvancedConfigs:
         # Add progress elements to frame
         gui_elements['progress_bar'] = ctk.CTkProgressBar(gui_elements['progress_frame'])
         gui_elements['progress_label'] = ctk.CTkLabel(gui_elements['progress_frame'], text="")
-        
+
+        # 1) Create a new refresh button to trigger a re-scan
+        gui_elements['refresh_button'] = ctk.CTkButton(
+            self.parent_tab,
+            text="Refresh Scripts",
+            command=self.refresh_scripts  # calls our manual re-scan
+        )
+
         # Store references
         self.__dict__.update(gui_elements)
-        
+
         # Configure progress bar
         self.progress_bar.set(0)
-        
-        # Pack tabview
+
+        # 2) Pack the tabview first
         self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
 
-    @lru_cache(maxsize=250)#was 128. 250 is the max size of the cache
+        # 3) Pack the refresh button below the tabview
+        self.refresh_button.pack(side="bottom", anchor="e", padx=10, pady=(10, 10))
+
+
+    @lru_cache(maxsize=250)  # was 128; 250 is the new max size
     def _get_script_path(self, script_name: str) -> Optional[Path]:
         """Cached function to find script path"""
         for folder in self.config_folders:
@@ -5795,75 +6091,131 @@ class AdvancedConfigs:
             pass  # Handle saving error gracefully
 
     async def _scan_folder(self, folder: Path) -> Dict[int, str]:
-        """Scan a single folder for scripts asynchronously"""
+        """Modified to use standard os instead of aiofiles"""
         try:
             if not folder.is_dir():
                 return {}
-            
+
             scripts = {}
             script_count = 0
-            
+
             async def process_file(entry):
                 nonlocal script_count
-                if entry.name.endswith(('.bat', '.cmd')):
-                    script_count += 1
-                    return script_count, entry.name
+                try:
+                    if entry.name.endswith(('.bat', '.cmd')):
+                        # Cache metadata
+                        stat = entry.stat()
+                        metadata = ScriptMetadata(
+                            name=entry.name,
+                            path=entry.path,
+                            size=stat.st_size,
+                            modified=stat.st_mtime,
+                            last_accessed=stat.st_atime
+                        )
+                        self.metadata_cache.set(entry.name, metadata)
+                        
+                        script_count += 1
+                        return script_count, entry.name
+                except OSError as e:
+                    print(f"Error processing file {entry.name}: {e}")
                 return None
-            
-            # Process files concurrently
-            tasks = []
-            for entry in folder.iterdir():
-                if entry.is_file():
-                    tasks.append(process_file(entry))
+
+            # Use os.scandir instead of aiofiles
+            entries = list(os.scandir(folder))  # Convert iterator to list for asyncio.gather
+            tasks = [process_file(entry) for entry in entries if entry.is_file()]
             
             results = await asyncio.gather(*tasks)
             return {idx: name for result in results if result for idx, name in [result]}
-            
-        except Exception:
+
+        except Exception as e:
+            print(f"Error scanning folder {folder}: {e}")
             return {}
 
-    async def _categorize_scripts_async(self) -> Dict[str, Dict[int, str]]:
-        """Categorize scripts asynchronously with caching"""
-        # Check cache first
-        try:
-            if self.cache_path.exists():
-                cache_data = json.loads(self.cache_path.read_text())
-                last_scan_time = cache_data.get('scan_time', 0)
-                
-                # Check if rescan needed
-                max_mod_time = max(
-                    (folder.stat().st_mtime for folder in self.config_folders if folder.exists()),
-                    default=0
-                )
-                
-                if max_mod_time <= last_scan_time:
-                    return cache_data.get('categories', {})
-        except (json.JSONDecodeError, OSError):
-            pass
+    async def _categorize_scripts_async(self) -> Dict[str, Any]:
+        """
+        Categorize scripts asynchronously with caching.
+        Approach B: Use existing JSON cache if it exists & is parsed,
+        otherwise do a fresh scan of folders and build a sub-dict for Themes.
+        """
 
-        # Scan folders concurrently
+        # ---------------------------------------------------------
+        # 1) If we already have valid self._cached_categories in memory, skip scanning
+        # ---------------------------------------------------------
+        if self._cached_categories:
+            return self._cached_categories
+
+        # ---------------------------------------------------------
+        # 2) Try reading from script_categories_cache.json directly
+        #    (Ignoring or removing any max_mod_time checks)
+        # ---------------------------------------------------------
+        if self.cache_path.exists():
+            try:
+                cache_data = json.loads(self.cache_path.read_text())
+                cached = cache_data.get("categories", {})
+                # If we found anything, store it in self._cached_categories and return
+                if cached:
+                    self._cached_categories = cached
+                    return cached
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Cache read error: {e}")
+
+        # ---------------------------------------------------------
+        # 3) If no valid cached data, proceed with a full folder scan
+        # ---------------------------------------------------------
         tasks = [self._scan_folder(folder) for folder in self.config_folders]
         folder_results = await asyncio.gather(*tasks)
 
-        # Process results
+        # Create a top-level dictionary for all categories except Themes
         script_categories = {tab: {} for tab in self.tab_keywords}
-        
+
+        # For each folder’s results (dict: {index -> script_name}), categorize them
         for folder_scripts in folder_results:
             for script_name in folder_scripts.values():
+                # Put them into "Favorites", "Other", "Monitor", etc. based on your logic
+                # (Your `_categorize_script` calls self.tab_keywords to see which tab to assign)
                 self._categorize_script(script_name, script_categories)
 
-        # Cache results
+        # ---------------------------------------------------------
+        # 4) Build a separate sub-dict for “Themes” sub-tabs
+        #    so we can skip scanning later if using the cache
+        # ---------------------------------------------------------
+        themes_data = {}
+        for folder, sub_tab_name in self.potential_sub_tabs:
+            folder_path = Path(self.base_path, folder)
+            if not folder_path.is_dir():
+                continue
+
+            # We can reuse _scan_folder to get {index -> script_name}
+            sub_tab_scripts_dict = await self._scan_folder(folder_path)
+            if sub_tab_scripts_dict:
+                # e.g. themes_data["Arcade"] = {1: "ArcadeTheme1.bat", 2: ...}
+                themes_data[sub_tab_name] = sub_tab_scripts_dict
+
+        # Place all theme sub-tabs under a single “Themes” key
+        script_categories["Themes"] = themes_data
+
+        # ---------------------------------------------------------
+        # 5) Write the newly built structure to JSON cache
+        # ---------------------------------------------------------
         try:
             cache_data = {
                 'scan_time': max(folder.stat().st_mtime for folder in self.config_folders if folder.exists()),
                 'categories': script_categories
             }
+            # Write out a brand-new JSON file
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
             self.cache_path.write_text(json.dumps(cache_data))
-        except OSError:
-            pass
 
+            # Save in memory as well
+            self._cached_categories = script_categories
+        except OSError as e:
+            print(f"Error writing cache: {e}")
+
+
+        # 6) Store into self._cached_categories and return
+        self._cached_categories = script_categories
         return script_categories
+
 
     def _categorize_script(self, script_name: str, categories: Dict[str, Dict[int, str]]):
         """Categorize a single script"""
@@ -5878,29 +6230,56 @@ class AdvancedConfigs:
         categories["Other"][idx] = script_name
 
     def _async_populate_tabs(self):
-        """Kick off the async scanning, then partially create tabs."""
+        """Kick off the async scanning, then create tabs (only if needed)."""
         async def populate():
-            script_categories = await self._categorize_scripts_async()
-            self._categories = script_categories  # store for lazy init
+            try:
+                self.show_loading(True)
 
-            # Create top-level tabs, but do NOT build them fully
-            self.parent_tab.after(0, lambda: self._create_tabs(script_categories))
+                # Get script categories
+                script_categories = await self._categorize_scripts_async()
+                self._categories = script_categories  # store for lazy init
 
-        asyncio.run(populate())
+                # Use after() to schedule tab creation in the main thread
+                self.parent_tab.after(0, lambda: self._create_tabs(script_categories))
+            finally:
+                self.show_loading(False)
 
-    def _create_tabs(self, script_categories):
-        """
-        Create only the top-level tabs. We'll store each in _tab_inited.
-        The actual content creation is deferred until the user clicks the tab.
-        """
+        try:
+            # If you only want this to run if the cache file doesn’t exist:
+            if not self.cache_path.exists():
+                asyncio.run(populate())
+            else:
+                print("Cache exists; skipping _async_populate_tabs.")
+                # If you prefer auto-checking modifications, you can call populate() anyway
+        except Exception as e:
+            print(f"Error populating tabs: {e}")
+            self.show_loading(False)
+
+
+    def _clear_current_tab_content(self, tab_name):
+        """Clear the existing content of the current tab"""
+        tab_frame = self.tabview.tab(tab_name)
+        for widget in tab_frame.winfo_children():
+            widget.destroy()
+
+    def _clear_themes_tab_content(self):
+        """Clear the existing content of the Themes tab and its sub-tabs"""
+        themes_tab = self.tabview.tab("Themes")
+        for widget in themes_tab.winfo_children():
+            widget.destroy()
+        self._themes_tabview = None
+
+    def _create_tabs(self, script_categories, restore_tab=None):
+        """Create tabs and optionally restore the previously selected tab"""
 
         # 1) Favorites Tab
         if "Favorites" not in self._tab_inited:
-            self.tabview.add("Favorites")         # physically add the tab
-            self._tab_inited["Favorites"] = False # mark as "not inited"
-        # If you want Favorites built right away:
-        self.update_favorites_tab()               # we do it now
-        self._tab_inited["Favorites"] = True      # we've inited Favorites
+            self.tabview.add("Favorites")
+            self._tab_inited["Favorites"] = False
+
+        # Build Favorites immediately
+        self.update_favorites_tab()
+        self._tab_inited["Favorites"] = True
 
         # 2) Themes Tab
         if any(Path(self.base_path, folder).is_dir() for folder, _ in self.potential_sub_tabs):
@@ -5910,7 +6289,6 @@ class AdvancedConfigs:
 
         # 3) Other script categories
         for tab_name, scripts in script_categories.items():
-            # skip empty scripts, or 'Favorites'/'Themes' which we handled
             if not scripts or tab_name in ("Favorites", "Themes"):
                 continue
 
@@ -5919,11 +6297,32 @@ class AdvancedConfigs:
                 self._tab_inited[tab_name] = False
 
         # 4) Bind to detect tab changes
-        # In older CustomTkinter, command= is how you detect tab switching
         self.tabview.configure(command=self._on_tab_changed)
 
-        # 5) Decide which tab to show first
-        self.set_initial_tab()
+        # 5) Restore previous tab or set initial tab
+        if restore_tab and restore_tab in self._tab_inited:
+            self.tabview.set(restore_tab)
+            if not self._tab_inited[restore_tab]:
+                self._lazy_init_tab(restore_tab)
+        else:
+            self.set_initial_tab()
+
+
+
+    def _clear_tabs(self):
+        """Destroy any existing tabs in the Tabview for rebuild"""
+        # Store existing tabs that aren't Favorites
+        existing_tabs = [tab for tab in self.tabview._tab_dict.keys() 
+                        if tab != "Favorites"]
+        
+        # Remove non-Favorites tabs
+        for tab_name in existing_tabs:
+            self.tabview.delete(tab_name)
+            if tab_name in self._tab_inited:
+                del self._tab_inited[tab_name]
+
+        # Reset the Themes sub-tabview
+        self._themes_tabview = None
 
     def _on_tab_changed(self):
         # Get the name of the currently selected tab from CTkTabview
@@ -5946,31 +6345,51 @@ class AdvancedConfigs:
             script_dict = self._categories.get(tab_name, {})
             self._create_regular_tab(tab_name, script_dict)
 
+
     def _create_themes_tab(self, scripts: dict[int, str]):
         """Build the 'Themes' tab content, including sub-tabs, if any."""
-        # Access the existing top-level tab
         themes_tab = self.tabview.tab("Themes")
 
         # Only create the sub-tabview if it doesn't already exist
         if self._themes_tabview is not None:
-            # We already built it, so do nothing
             return
-        
-        # Now create the sub-tabview once
+
         self._themes_tabview = ctk.CTkTabview(themes_tab)
         self._themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
 
-        created_sub_tabs = set()
-        for folder, sub_tab_name in self.potential_sub_tabs:
-            folder_path = Path(self.base_path, folder)
-            if not folder_path.is_dir():
-                continue
+        # ---------------------------------------------------
+        # APPROACH B:
+        # 1) If "Themes" exists in the cache, use it.
+        # 2) Otherwise, do the existing folder scan.
+        # ---------------------------------------------------
+        cached_themes = self._cached_categories.get("Themes")  # might be None or a dict
+        if cached_themes and isinstance(cached_themes, dict):
+            # "cached_themes" is expected to look like: 
+            #   { "Arcade": {1: "ArcadeTheme1.bat", 2: "ArcadeTheme2.bat"}, 
+            #     "Console": {1: "ConsoleTheme1.bat"} }
 
-            script_list = [f.name for f in folder_path.iterdir()
-                           if f.is_file() and f.suffix in ('.bat', '.cmd')]
-            if script_list and sub_tab_name not in created_sub_tabs:
-                self._create_theme_sub_tab(self._themes_tabview, sub_tab_name, script_list)
-                created_sub_tabs.add(sub_tab_name)
+            for sub_tab_name, sub_tab_scripts_dict in cached_themes.items():
+                script_list = list(sub_tab_scripts_dict.values())
+                if script_list:
+                    self._create_theme_sub_tab(self._themes_tabview, sub_tab_name, script_list)
+
+        else:
+            # FALLBACK: If no cached "Themes" data, do the folder-scan logic
+            created_sub_tabs = set()
+            for folder, sub_tab_name in self.potential_sub_tabs:
+                folder_path = Path(self.base_path, folder)
+                if not folder_path.is_dir():
+                    continue
+
+                script_list = [
+                    f.name for f in folder_path.iterdir()
+                    if f.is_file() and f.suffix in ('.bat', '.cmd')
+                ]
+                if script_list and sub_tab_name not in created_sub_tabs:
+                    self._create_theme_sub_tab(self._themes_tabview, sub_tab_name, script_list)
+                    created_sub_tabs.add(sub_tab_name)
+
+
 
     def _create_theme_sub_tab(self, themes_tabview, sub_tab_name: str, scripts: list[str]):
         """Create a single theme sub-tab with radio buttons, etc."""
@@ -6002,41 +6421,180 @@ class AdvancedConfigs:
         scrollable_frame = ctk.CTkScrollableFrame(tab_frame, width=400, height=400)
         scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
+        # Ensure scripts keys are integers
+        scripts = {int(k): v for k, v in scripts.items()}
+
         self._create_script_buttons(scrollable_frame, tab_name, scripts)
 
     def _create_script_buttons(self, parent_frame, tab_name: str, scripts: Dict[int, str]):
-        """Create radio and favorite buttons for scripts"""
-        for i, script_name in scripts.items():
-            script_label = Path(script_name).stem
+        """Modified to implement virtual scrolling"""
+        # Clear existing widgets
+        for widget in parent_frame.winfo_children():
+            widget.destroy()
 
-            frame = ctk.CTkFrame(parent_frame)
-            frame.pack(fill="x", padx=5, pady=2)
+        # Calculate visible range
+        start = self.virtual_scroll_state.start_index
+        end = start + self.virtual_scroll_state.visible_items
+        #print(f"Start: {start}, End: {end}, Scripts: {scripts}")  # Debugging line
+        visible_scripts = {k: v for k, v in scripts.items()
+                        if isinstance(k, int) and start <= k <= end}
 
-            radio_button = ctk.CTkRadioButton(
-                frame,
-                text=script_label,
-                variable=self.tab_radio_vars[tab_name],
-                value=i,
-                command=lambda t=tab_name, v=i: self.on_radio_select(t, v)
+        # Create widgets only for visible items
+        for i, script_name in visible_scripts.items():
+            self._create_single_script_buttons(parent_frame, tab_name, i, script_name)
+
+        # Add scroll binding if not already added
+        if not hasattr(parent_frame, '_scroll_bound'):
+            parent_frame.bind_all("<MouseWheel>",
+                                lambda e: self._handle_scroll(e, parent_frame, scripts))
+            parent_frame._scroll_bound = True
+
+    def _create_single_script_buttons(self, parent_frame, tab_name: str, index: int, script_name: str):
+        frame = ctk.CTkFrame(parent_frame)
+        frame.pack(fill="x", padx=5, pady=2)
+
+        script_label = Path(script_name).stem
+        script_exists = bool(self._get_script_path(script_name))
+
+        radio_button = ctk.CTkRadioButton(
+            frame,
+            text=script_label,
+            variable=self.tab_radio_vars[tab_name],
+            value=index,
+            command=lambda t=tab_name, v=index: self.on_radio_select(t, v),
+            state="normal" if script_exists else "disabled",
+            text_color="gray50" if not script_exists else None
+        )
+        radio_button.pack(side="left", padx=5)
+
+        if not script_exists:
+            warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+            warning_frame.pack(side="left", padx=2)
+            warning_label = ctk.CTkLabel(
+                warning_frame,
+                text="⚠️ Script not found",
+                text_color="orange"
             )
-            radio_button.pack(side="left", padx=5)
+            warning_label.pack(side="left")
 
+        #
+        # Show "Remove" only in the Favorites tab; otherwise show a star button
+        #
+        if tab_name == "Favorites":
+            # The user is already in the Favorites tab, so "Remove" means remove from favorites
+            remove_button = ctk.CTkButton(
+                frame,
+                text="Remove",
+                width=60,
+                command=lambda s=script_name, b=radio_button: self.remove_favorite(s, b)
+            )
+            remove_button.pack(side="right", padx=5)
+
+        else:
+            # For normal tabs, show a star to let user toggle favorites
+            is_favorite = (script_name in self.favorites)
+            star_text = "★" if is_favorite else "☆"
+            
             favorite_button = ctk.CTkButton(
                 frame,
-                text="★" if script_name in self.favorites else "☆",
-                width=30,
-                command=lambda t=tab_name, s=script_name, b=None: 
-                    self.toggle_favorite(t, s, b)
+                text=star_text,
+                width=40,
+                command=lambda s=script_name, btn=None: self.toggle_favorite(tab_name, s, None)
             )
             favorite_button.pack(side="right", padx=5)
 
+            # Optionally keep a reference to the button so you can update its text from "☆" to "★" if user toggles it
             self.favorite_buttons[tab_name][script_name] = favorite_button
-            favorite_button.configure(
-                command=lambda t=tab_name, s=script_name, b=favorite_button:
-                    self.toggle_favorite(t, s, b)
-            )
 
-            self.radio_buttons[tab_name].append(radio_button)
+
+
+    def _handle_scroll(self, event, frame, scripts):
+        """Handle scrolling for virtual list"""
+        if not scripts:
+            return
+
+        # Calculate new start index
+        delta = -1 if event.delta > 0 else 1
+        new_start = max(0, min(
+            self.virtual_scroll_state.start_index + delta,
+            len(scripts) - self.virtual_scroll_state.visible_items
+        ))
+
+        # Update if changed
+        if new_start != self.virtual_scroll_state.start_index:
+            self.virtual_scroll_state.start_index = new_start
+            self._create_script_buttons(frame, frame.tab_name, scripts)
+
+
+    def cleanup(self):
+        """Enhanced cleanup method"""
+        try:
+            # Stop background worker
+            if hasattr(self, 'background_worker'):
+                self.background_worker.shutdown()
+
+            # Clear metadata cache
+            if hasattr(self, 'metadata_cache'):
+                self.metadata_cache.clear()
+            
+            # Remove scroll bindings
+            if hasattr(self, 'tabview'):
+                for frame in self.tabview.winfo_children():
+                    if hasattr(frame, '_scroll_bound'):
+                        frame.unbind_all("<MouseWheel>")
+
+            # Clear other resources
+            if hasattr(self, '_cached_categories'):
+                self._cached_categories.clear()
+            if hasattr(self, '_categories'):
+                self._categories.clear()
+            if hasattr(self, '_tab_inited'):
+                self._tab_inited.clear()
+
+            # Clear GUI elements
+            if hasattr(self, 'loading_overlay'):
+                self.loading_overlay.destroy()
+
+            # Clear any remaining widgets
+            for widget in self.parent_tab.winfo_children():
+                widget.destroy()
+
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+
+    def run_script_threaded(self, script_path: Path):
+        """Modified to use background worker"""
+        def script_task():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                process = subprocess.Popen(
+                    ["cmd.exe", "/c", str(script_path)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=script_path.parent,
+                    startupinfo=startupinfo
+                )
+                stdout, stderr = process.communicate()
+                return stdout, stderr, process.returncode
+            except Exception as e:
+                return None, str(e), -1
+
+        def script_complete(future):
+            try:
+                stdout, stderr, returncode = future.result()
+                if returncode != 0:
+                    self.show_status(f"Script error: {stderr}", color="red")
+                else:
+                    self.show_status("Script completed successfully")
+            finally:
+                self.set_gui_state(True)
+
+        self.set_gui_state(False)
+        self.background_worker.submit_task(script_task, script_complete)
 
     def update_favorites_tab(self):
         """Update favorites tab with optimized GUI updates"""
@@ -6144,6 +6702,7 @@ class AdvancedConfigs:
                     for line in process.stderr:
                         print(line, end='')
             finally:
+                # re-enable GUI
                 self.parent_tab.after(0, lambda: self.set_gui_state(True))
 
         thread = threading.Thread(target=script_worker, daemon=True)
@@ -6315,8 +6874,7 @@ class AdvancedConfigs:
                 self._lazy_init_tab(first_tab)
         except (StopIteration, ValueError):
             pass
-
-
+        
 class ViewRoms:
     def __init__(self, parent_tab, config_manager):
         # Define font settings at the top of the class
