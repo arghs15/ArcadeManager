@@ -208,7 +208,7 @@ class FilterGamesApp:
         # Add exe file selector on the right side
         self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
 
-    def show_whats_new_popup(self):
+    def show_whats_new_popup_BASIC(self):
         """Show the 'What's New' popup with the latest updates."""
         def show_popup():
             popup = tk.Toplevel(self.root)
@@ -369,7 +369,7 @@ class FilterGamesApp:
 
         show_popup()
 
-    def show_whats_new_popup_alt(self):
+    def show_whats_new_popup(self):
         """Show the 'What's New' popup with the latest updates."""
         # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
         WINDOW_SIZE = {
@@ -400,10 +400,10 @@ class FilterGamesApp:
             'feature_icon': get_asset_path('icons/feature_icon.png'),
             'bug_icon': get_asset_path('icons/bug_icon.png'),
             'rocket_icon': get_asset_path('icons/rocket_icon.png'),
-            'controls_tab': get_asset_path('screenshots/controls_tab.png'),
-            'exit_state': get_asset_path('screenshots/exit_state.png'),
-            'manage_roms_tab': get_asset_path('screenshots/manage_roms_tab.png'),
-            'filter_games_tab': get_asset_path('screenshots/filter_games_tab.png')
+            'CoinOPS': get_asset_path('icons/CoinOPS.png'),
+            'image0': get_asset_path('screenshots/image0.png'),
+            #'image1': get_asset_path('screenshots/image1.png'),
+            #'image2': get_asset_path('screenshots/image2.png'),
         }
 
         def load_icon(icon_path, fallback="⭐"):
@@ -450,7 +450,7 @@ class FilterGamesApp:
             )
             outer_frame.pack(fill="x", pady=(0, 20), padx=5)
             outer_frame.pack_propagate(False)
-            
+
             if full_width:
                 # Single content frame for full width
                 content = ctk.CTkFrame(
@@ -459,11 +459,11 @@ class FilterGamesApp:
                     corner_radius=8
                 )
                 content.pack(fill="both", expand=True, padx=10, pady=10)
-                
+
                 # Header frame
                 header_frame = ctk.CTkFrame(content, fg_color='transparent')
                 header_frame.pack(fill="x", pady=(10, 5), padx=10)
-                
+
                 if isinstance(icon, str):
                     icon_label = ctk.CTkLabel(
                         header_frame,
@@ -478,7 +478,7 @@ class FilterGamesApp:
                         bg='#252525'
                     )
                 icon_label.pack(side="left", padx=(5, 10))
-                
+
                 title_label = ctk.CTkLabel(
                     header_frame,
                     text=title,
@@ -487,7 +487,7 @@ class FilterGamesApp:
                     anchor="w"
                 )
                 title_label.pack(side="left", fill="x", expand=True)
-                
+
                 # Description
                 desc_label = ctk.CTkLabel(
                     content,
@@ -499,12 +499,12 @@ class FilterGamesApp:
                     wraplength=800  # Increased for full width
                 )
                 desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
-                
+
             else:
-                # Split layout code (unchanged from previous version)
+                # Split layout code
                 outer_frame.grid_columnconfigure(0, weight=45)
                 outer_frame.grid_columnconfigure(1, weight=55)
-                
+
                 # Left content
                 left_content = ctk.CTkFrame(
                     outer_frame,
@@ -512,10 +512,10 @@ class FilterGamesApp:
                     corner_radius=8
                 )
                 left_content.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-                
+
                 header_frame = ctk.CTkFrame(left_content, fg_color='transparent')
                 header_frame.pack(fill="x", pady=(10, 5), padx=10)
-                
+
                 if isinstance(icon, str):
                     icon_label = ctk.CTkLabel(
                         header_frame,
@@ -530,7 +530,7 @@ class FilterGamesApp:
                         bg='#252525'
                     )
                 icon_label.pack(side="left", padx=(5, 10))
-                
+
                 title_label = ctk.CTkLabel(
                     header_frame,
                     text=title,
@@ -539,7 +539,7 @@ class FilterGamesApp:
                     anchor="w"
                 )
                 title_label.pack(side="left", fill="x", expand=True)
-                
+
                 desc_label = ctk.CTkLabel(
                     left_content,
                     text=description,
@@ -550,7 +550,7 @@ class FilterGamesApp:
                     wraplength=400
                 )
                 desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
-                
+
                 # Right side - Screenshot
                 if image_path:
                     try:
@@ -560,24 +560,10 @@ class FilterGamesApp:
                             corner_radius=8
                         )
                         right_content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-                        
+
                         original_screenshot = tk.PhotoImage(file=image_path)
-                        
-                        max_width = 450
-                        max_height = 160
-                        
-                        width_ratio = max_width / original_screenshot.width()
-                        height_ratio = max_height / original_screenshot.height()
-                        scale_factor = min(width_ratio, height_ratio)
-                        
-                        new_width = int(original_screenshot.width() * scale_factor)
-                        new_height = int(original_screenshot.height() * scale_factor)
-                        
-                        subsample_x = max(1, int(original_screenshot.width() / new_width))
-                        subsample_y = max(1, int(original_screenshot.height() / new_height))
-                        
-                        resized_screenshot = original_screenshot.subsample(subsample_x, subsample_y)
-                        
+                        resized_screenshot = resize_screenshot(original_screenshot)
+
                         screenshot_label = tk.Label(
                             right_content,
                             image=resized_screenshot,
@@ -585,20 +571,20 @@ class FilterGamesApp:
                         )
                         screenshot_label.image = resized_screenshot
                         screenshot_label.pack(expand=True, padx=5, pady=5)
-                        
+
                     except (tk.TclError, FileNotFoundError) as e:
                         print(f"Failed to load screenshot {image_path}: {e}")
-            
+
             return outer_frame
 
         def show_popup():
             popup = tk.Toplevel(self.root)
             popup.title("What's New")
             popup.configure(bg='#2c2c2c')
-            
+
             window_width = 1000
             window_height = 700
-            
+
             # Example usage of the version from ConfigManager
             version_text = ConfigManager.CONFIG_FILE_VERSION
 
@@ -608,7 +594,7 @@ class FilterGamesApp:
             x = (screen_width // 2) - (window_width // 2)
             y = (screen_height // 2) - (window_height // 2)
             popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-            
+
             # Now you can dynamically include it in your label
             title_label = ctk.CTkLabel(
                 popup,
@@ -641,6 +627,25 @@ class FilterGamesApp:
             # New Features section
             new_features_label = ctk.CTkLabel(
                 main_frame,
+                text="Shout Out",
+                text_color='#4CAF50',
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            new_features_label.pack(fill="x", pady=(0, 10))
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
+                "Thanks to the CoinOPS Team",
+                "BP.",
+                image_path=assets['CoinOPS']  # Pass the correct image path here
+            )
+
+            # New Features section
+            new_features_label = ctk.CTkLabel(
+                main_frame,
                 text="New Features",
                 text_color='#4CAF50',
                 font=('Helvetica', 18, 'bold'),
@@ -654,7 +659,8 @@ class FilterGamesApp:
                 feature_icon,
                 "Apply Saved Appearance Mode on Startup",
                 "App now remembers last appearance mode (Dark, Light, System) on startup.",
-                full_width=True
+                image_path=assets['image0'],  # Pass the correct image path here
+                full_width=False
             )
 
             create_feature_frame(
@@ -664,45 +670,37 @@ class FilterGamesApp:
                 "Toggle to open app on fullscreen or normal window. Saved in INI file.\nAdded Close button for fullscreen mode.",
                 full_width=True
             )
-            
-            '''create_feature_frame(
+
+            create_feature_frame(
                 main_frame,
                 rocket_icon,
                 "Remove Games",
                 "Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
                 full_width=True
-            )'''
-
-            '''create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Advanced Configs, and Manage Games",
-                "Can add folders, and sub folders to append list in Advanced Configs via ini.\nCan add collections and roms to exclude from manage games tab.",
-                full_width=True
-            )'''
+            )
 
             create_feature_frame(
                 main_frame,
                 feature_icon,
-                "Themes Tab",
-                "Can now have multiple roms, logo, and video folders added to INI file.\nIf found, a Jump Category button will show and allow you to jump between them.",
+                "Advanced Configs, and Manage Games",
+                "Can add folders, and sub folders to append list in Advanced Configs via ini.\nCan add collections and roms to exclude from manage games tab.",
                 full_width=True
             )
 
             '''create_feature_frame(
                 main_frame,
                 feature_icon,
+                "Themes Tab",
+                "Can now have multiple roms, logo, and video folders added to INI file.\nIf found, a Jump Category button will show and allow you to jump between them.",
+                image_path=assets['image0']  # Pass the correct image path here
+            )
+
+            create_feature_frame(
+                main_frame,
+                feature_icon,
                 "Controls Tab",
                 "Added controller icon to xinput controls",
-                full_width=True
-            )'''
-
-            '''create_feature_frame(
-                main_frame,
-                rocket_icon,
-                "Manage ROMS Tab",
-                "Removed the Move Roms button that uses a text file\n",
-                full_width=True
+                image_path=assets['image1']  # Pass the correct image path here
             )'''
 
             create_feature_frame(
@@ -713,9 +711,27 @@ class FilterGamesApp:
                 full_width=True
             )
 
-            # =================================
-            #  Display Tab Load Times
-            # =================================
+            # New Features section
+            new_features_label = ctk.CTkLabel(
+                main_frame,
+                text="Performance & Bug Fixes",
+                text_color='#4CAF50',
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            new_features_label.pack(fill="x", pady=(0, 10))
+
+            create_feature_frame(
+                main_frame,
+                bug_icon,
+                "Various bug fixes and stability improvements",
+                "Performance optimizations and enhancements",
+                #"Remove Games",
+                #"Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
+                full_width=True
+            )
+
             times_label = ctk.CTkLabel(
                 main_frame,
                 text="Tab Load Times",
@@ -743,8 +759,383 @@ class FilterGamesApp:
             # Bottom frame with OK button
             bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
             bottom_frame.pack(fill="x", pady=(20, 0))
-            
+
             # Bottom frame with adjusted spacing
+            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
+            bottom_frame.pack(fill="x", pady=(20, 0))
+
+            # OK button
+            def on_ok():
+                    popup.destroy()
+
+            ok_button = ctk.CTkButton(
+                bottom_frame,
+                text="Got it!",
+                command=on_ok,
+                fg_color='#4CAF50',
+                hover_color='#45a049',
+                width=100
+            )
+            ok_button.pack(side="right", padx=(0, SIZES['button_spacing']))
+
+            popup.transient(self.root)
+            popup.grab_set()
+            popup.wait_window()
+
+        show_popup()
+
+    def show_whats_new_popup_JSON(self):
+        """Show the 'What's New' popup with the latest updates."""
+        # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
+        WINDOW_SIZE = {
+            'width': 800,
+            'height': 800,
+        }
+
+        SIZES = {
+            'icon': 20,  # Size in pixels for feature/bug icons
+            'screenshot': 400,  # Max width for screenshots in pixels
+            'window_padding': 20,  # Padding around the main window
+            'content_padding': 15,  # Padding for content elements
+            'button_spacing': 30,  # Spacing from scrollbar for bottom elements
+        }
+        # =================================================
+
+        # Helper function to get correct asset path
+        def get_asset_path(relative_path):
+            # First try the regular assets path
+            regular_path = os.path.join('assets', relative_path)
+            # Then try the PyInstaller temp directory path
+            bundled_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'assets', relative_path)
+            # Return the first path that exists
+            return regular_path if os.path.exists(regular_path) else bundled_path
+
+        # Define all asset paths using the helper function
+        assets = {
+            'feature_icon': get_asset_path('icons/feature_icon.png'),
+            'bug_icon': get_asset_path('icons/bug_icon.png'),
+            'rocket_icon': get_asset_path('icons/rocket_icon.png'),
+            'CoinOPS': get_asset_path('icons/CoinOPS.png'),
+            'image0': get_asset_path('screenshots/image0.png'),
+            #'image1': get_asset_path('screenshots/image1.png'),
+            #'image2': get_asset_path('screenshots/image2.png'),
+        }
+
+        print("Feature icon path:", assets['feature_icon'])
+        print("Exists?", os.path.exists(assets['feature_icon']))
+        print("Bug icon path:", assets['bug_icon'])
+        print("Exists?", os.path.exists(assets['bug_icon']))
+        print("Rocket icon path:", assets['rocket_icon'])
+        print("Exists?", os.path.exists(assets['rocket_icon']))
+
+        def load_icon(icon_path, fallback="⭐"):
+            """Load PNG icon with fallback to text symbol."""
+            try:
+                original = tk.PhotoImage(file=icon_path)
+                aspect_ratio = original.width() / original.height()
+                new_width = SIZES['icon']
+                new_height = int(SIZES['icon'] / aspect_ratio)
+                subsample_x = original.width() // new_width
+                subsample_y = original.height() // new_height
+                if subsample_x > 0 and subsample_y > 0:
+                    return original.subsample(subsample_x, subsample_y)
+                return original
+            except (tk.TclError, FileNotFoundError) as e:
+                print(f"Could not load icon from {icon_path}, using fallback: {e}")
+                return fallback
+
+        def resize_screenshot(screenshot):
+            """Resize screenshot to fit the desired width while maintaining aspect ratio."""
+            original_width = screenshot.width()
+            original_height = screenshot.height()
+
+            if original_width > SIZES['screenshot']:
+                aspect_ratio = original_width / original_height
+                new_width = SIZES['screenshot']
+                new_height = int(SIZES['screenshot'] / aspect_ratio)
+
+                subsample_x = original_width // new_width
+                subsample_y = original_height // new_height
+
+                if subsample_x > 0 and subsample_y > 0:
+                    return screenshot.subsample(subsample_x, subsample_y)
+            return screenshot
+
+        def create_feature_frame(parent, icon, title, description, image_path=None, full_width=False):
+            """Create a framed feature that can be either full-width or split layout."""
+            # Main outer frame with a darker background and rounded corners
+            outer_frame = ctk.CTkFrame(
+                parent,
+                fg_color='#1e1e1e',
+                corner_radius=10,
+                height=140 if full_width else 200  # Reduced height for full-width items
+            )
+            outer_frame.pack(fill="x", pady=(0, 20), padx=5)
+            outer_frame.pack_propagate(False)
+
+            if full_width:
+                # Single content frame for full width
+                content = ctk.CTkFrame(
+                    outer_frame,
+                    fg_color='#252525',
+                    corner_radius=8
+                )
+                content.pack(fill="both", expand=True, padx=10, pady=10)
+
+                # Header frame
+                header_frame = ctk.CTkFrame(content, fg_color='transparent')
+                header_frame.pack(fill="x", pady=(10, 5), padx=10)
+
+                if isinstance(icon, str):
+                    icon_label = ctk.CTkLabel(
+                        header_frame,
+                        text=icon,
+                        font=("Helvetica", 14),
+                        width=SIZES['icon']
+                    )
+                else:
+                    icon_label = tk.Label(
+                        header_frame,
+                        image=icon,
+                        bg='#252525'
+                    )
+                    # ───────────────────────────────────────────────
+                    # ADD THIS LINE to preserve the PhotoImage ref:
+                    icon_label.image = icon
+                    # ───────────────────────────────────────────────
+
+                icon_label.pack(side="left", padx=(5, 10))
+
+                title_label = ctk.CTkLabel(
+                    header_frame,
+                    text=title,
+                    text_color="#ffffff",
+                    font=("Helvetica", 16, "bold"),
+                    anchor="w"
+                )
+                title_label.pack(side="left", fill="x", expand=True)
+
+                # Description
+                desc_label = ctk.CTkLabel(
+                    content,
+                    text=description,
+                    text_color="#e0e0e0",
+                    font=("Helvetica", 12),
+                    justify="left",
+                    anchor="w",
+                    wraplength=800  # Increased for full width
+                )
+                desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
+
+            else:
+                # Split layout code
+                outer_frame.grid_columnconfigure(0, weight=45)
+                outer_frame.grid_columnconfigure(1, weight=55)
+
+                # Left content
+                left_content = ctk.CTkFrame(
+                    outer_frame,
+                    fg_color='#252525',
+                    corner_radius=8
+                )
+                left_content.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+
+                header_frame = ctk.CTkFrame(left_content, fg_color='transparent')
+                header_frame.pack(fill="x", pady=(10, 5), padx=10)
+
+                if isinstance(icon, str):
+                    # Creating a text-based label
+                    icon_label = ctk.CTkLabel(
+                        header_frame,
+                        text=icon,
+                        font=("Helvetica", 14),
+                        width=SIZES['icon']
+                    )
+                else:
+                    # Creating an image-based label
+                    icon_label = tk.Label(
+                        header_frame,
+                        image=icon,
+                        bg='#252525'
+                    )
+                    # ───────────────────────────────────────────────
+                    # ADD THIS LINE to preserve the PhotoImage ref:
+                    icon_label.image = icon
+                    # ───────────────────────────────────────────────
+
+                icon_label.pack(side="left", padx=(5, 10))
+
+                title_label = ctk.CTkLabel(
+                    header_frame,
+                    text=title,
+                    text_color="#ffffff",
+                    font=("Helvetica", 16, "bold"),
+                    anchor="w"
+                )
+                title_label.pack(side="left", fill="x", expand=True)
+
+                desc_label = ctk.CTkLabel(
+                    left_content,
+                    text=description,
+                    text_color="#e0e0e0",
+                    font=("Helvetica", 12),
+                    justify="left",
+                    anchor="w",
+                    wraplength=400
+                )
+                desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
+
+                # Right side - Screenshot
+                if image_path:
+                    try:
+                        right_content = ctk.CTkFrame(
+                            outer_frame,
+                            fg_color='#252525',
+                            corner_radius=8
+                        )
+                        right_content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+
+                        original_screenshot = tk.PhotoImage(file=image_path)
+                        resized_screenshot = resize_screenshot(original_screenshot)
+
+                        screenshot_label = tk.Label(
+                            right_content,
+                            image=resized_screenshot,
+                            bg='#252525'
+                        )
+                        screenshot_label.image = resized_screenshot
+                        screenshot_label.pack(expand=True, padx=5, pady=5)
+
+                    except (tk.TclError, FileNotFoundError) as e:
+                        print(f"Failed to load screenshot {image_path}: {e}")
+
+            return outer_frame
+
+        def show_popup():
+            popup = tk.Toplevel(self.root)
+            popup.title("What's New")
+            popup.configure(bg='#2c2c2c')
+
+            window_width = 1000
+            window_height = 700
+
+            # Example usage of the version from ConfigManager
+            version_text = ConfigManager.CONFIG_FILE_VERSION
+
+            # Center the window
+            screen_width = popup.winfo_screenwidth()
+            screen_height = popup.winfo_screenheight()
+            x = (screen_width // 2) - (window_width // 2)
+            y = (screen_height // 2) - (window_height // 2)
+            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+            # Now you can dynamically include it in your label
+            title_label = ctk.CTkLabel(
+                popup,
+                text=f"What's New in Version {version_text} 🎉",
+                text_color='#ffffff',
+                font=('Helvetica', 24, 'bold'),
+            )
+            title_label.pack(pady=(0, 30))
+
+            # Main scrollable frame with darker background
+            main_frame = ctk.CTkScrollableFrame(
+                popup,
+                fg_color='#2c2c2c',
+                scrollbar_button_color='#4CAF50',
+                scrollbar_button_hover_color='#45a049',
+                width=window_width - 40
+            )
+            main_frame.pack(
+                fill="both",
+                expand=True,
+                padx=SIZES['window_padding'],
+                pady=SIZES['window_padding']
+            )
+
+            # Load icons with fallbacks
+            feature_icon = load_icon(assets['feature_icon'], "⭐")
+            bug_icon = load_icon(assets['bug_icon'], "👾")
+            rocket_icon = load_icon(assets['rocket_icon'], "🚀")
+
+            # Load your JSON data
+            json_file_path = os.path.join(os.path.dirname(__file__), "whats_new.json")
+            try:
+                with open(json_file_path, "r", encoding="utf-8") as f:
+                    whats_new_data = json.load(f)
+            except Exception as e:
+                print(f"Error loading JSON file: {e}")
+                whats_new_data = []
+
+            # After you load the JSON:
+            for section in whats_new_data:
+                # 1. Create the section label
+                section_label_text = section.get("section_header", "Untitled Section")
+                section_label_color = section.get("section_color", "#4CAF50")
+
+                new_features_label = ctk.CTkLabel(
+                    main_frame,
+                    text=section_label_text,
+                    text_color=section_label_color,
+                    font=('Helvetica', 18, 'bold'),
+                    anchor="w",
+                    justify="left"
+                )
+                new_features_label.pack(fill="x", pady=(0, 10))
+
+                # 2. Loop over each item (feature/bug) in this section
+                for item in section.get("items", []):
+                    # Extract data
+                    icon_key     = item.get("icon_key", "feature_icon")
+                    title        = item.get("title", "No title")
+                    description  = item.get("description", "No description")
+                    full_width   = item.get("full_width", False)
+                    image_key    = item.get("image_key")  # optional
+
+                    # figure out icon from assets
+                    icon = load_icon(assets[icon_key], "⭐") if icon_key in assets else "⭐"
+
+                    # figure out image path, if any
+                    if image_key and image_key in assets:
+                        image_path = assets[image_key]
+                    else:
+                        image_path = None
+
+                    # Now create the feature frame using your existing function
+                    create_feature_frame(
+                        parent      = main_frame,
+                        icon        = icon,
+                        title       = title,
+                        description = description,
+                        image_path  = image_path,
+                        full_width  = full_width
+                    )
+
+            times_label = ctk.CTkLabel(
+                main_frame,
+                text="Tab Load Times",
+                text_color='#4CAF50',
+                font=('Helvetica', 18, 'bold'),
+                anchor="w",
+                justify="left"
+            )
+            times_label.pack(fill="x", pady=(0, 10))
+
+            # Create a frame for the load-time lines
+            times_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
+            times_frame.pack(fill="x", pady=(0, 20), padx=5)
+
+            for tab_name, duration in self.tab_load_times:
+                item_label = ctk.CTkLabel(
+                    times_frame,
+                    text=f"{tab_name} loaded in {duration:.3f} seconds",
+                    text_color="#ffffff",
+                    font=("Helvetica", 12),
+                    anchor="w"
+                )
+                item_label.pack(fill="x", pady=5, padx=10)
+
+            # Bottom frame with OK button
             bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
             bottom_frame.pack(fill="x", pady=(20, 0))
 
@@ -773,11 +1164,11 @@ class FilterGamesApp:
             # Clean up controls if they exist
             if hasattr(self, 'controls'):
                 self.controls.cleanup()
-            
+
             # Clean up advanced configs if it exists
             if hasattr(self, 'advanced_configs'):
                 self.advanced_configs.cleanup()
-                
+
             # Destroy the root window
             self.root.destroy()
         except Exception as e:
