@@ -1,0 +1,52 @@
+[
+  {
+    "section_header": "Shout Out",
+    "section_color": "#4CAF50",
+    "items": [
+      {
+        "icon_key": "feature_icon",
+        "title": "Thanks to the CoinOPS Team",
+        "description": "BP.",
+        "image_key": "CoinOPS",
+        "full_width": false
+      }
+    ]
+  },
+  {
+    "section_header": "New Features",
+    "section_color": "#4CAF50",
+    "items": [
+      {
+        "icon_key": "feature_icon",
+        "title": "Apply Saved Appearance Mode on Startup",
+        "description": "App now remembers last appearance mode (Dark, Light, System) on startup.",
+		"image_key": "image0",
+        "full_width": false
+      },
+      {
+        "icon_key": "bug_icon",
+        "title": "New toggle Fullscreen on Startup",
+        "description": "Toggle to open app on fullscreen or normal window. Saved in INI file.\nAdded Close button for fullscreen mode.",
+        "full_width": true
+      },
+      {
+        "icon_key": "rocket_icon",
+        "title": "Remove Games",
+        "description": "Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
+        "full_width": true
+      }
+    ]
+  },
+  {
+    "section_header": "Performance & Bug Fixes",
+    "section_color": "#4CAF50",
+    "items": [
+      {
+        "icon_key": "bug_icon",
+        "title": "Various bug fixes and stability improvements",
+        "description": "Performance optimizations and enhancements",
+        "full_width": true
+      }
+    ]
+  }
+]
