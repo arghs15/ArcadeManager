@@ -440,42 +440,49 @@ class FilterGamesApp:
             return screenshot
 
         def create_feature_frame(parent, icon, title, description, image_path=None, full_width=False):
-            """Create a framed feature that can be either full-width or split layout."""
-            # Main outer frame with a darker background and rounded corners
+            """Create a framed feature that can be either full-width or split layout, with a consistent outer border."""
+            # Outer frame for the darker border
             outer_frame = ctk.CTkFrame(
                 parent,
-                fg_color='#1e1e1e',
-                corner_radius=10,
-                height=140 if full_width else 200  # Reduced height for full-width items
+                fg_color="#1e1e1e",  # Darker border color
+                corner_radius=10,  # Rounded corners for the outer border
             )
-            outer_frame.pack(fill="x", pady=(0, 20), padx=5)
-            outer_frame.pack_propagate(False)
+            outer_frame.pack(fill="x", pady=(10, 20), padx=20)  # Padding around the entire frame
+
+            # Inner frame for the lighter content area
+            inner_frame = ctk.CTkFrame(
+                outer_frame,
+                fg_color="#252525",  # Lighter gray color for the inner frame
+                corner_radius=8,  # Slightly smaller rounding for the inner frame
+            )
+            inner_frame.pack(fill="both", expand=True, padx=10, pady=10)  # Padding inside the border
 
             if full_width:
-                # Single content frame for full width
+                # Full-width layout
+                # Single content area for full-width items
                 content = ctk.CTkFrame(
-                    outer_frame,
-                    fg_color='#252525',
-                    corner_radius=8
+                    inner_frame,
+                    fg_color="#252525",  # Lighter gray for content
+                    corner_radius=8,
                 )
                 content.pack(fill="both", expand=True, padx=10, pady=10)
 
-                # Header frame
-                header_frame = ctk.CTkFrame(content, fg_color='transparent')
-                header_frame.pack(fill="x", pady=(10, 5), padx=10)
+                # Header frame for icon and title
+                header_frame = ctk.CTkFrame(content, fg_color="transparent")
+                header_frame.pack(fill="x", pady=(10, 5))
 
                 if isinstance(icon, str):
                     icon_label = ctk.CTkLabel(
                         header_frame,
                         text=icon,
                         font=("Helvetica", 14),
-                        width=SIZES['icon']
+                        width=20,
                     )
                 else:
                     icon_label = tk.Label(
                         header_frame,
                         image=icon,
-                        bg='#252525'
+                        bg="#252525",
                     )
                 icon_label.pack(side="left", padx=(5, 10))
 
@@ -484,7 +491,7 @@ class FilterGamesApp:
                     text=title,
                     text_color="#ffffff",
                     font=("Helvetica", 16, "bold"),
-                    anchor="w"
+                    anchor="w",
                 )
                 title_label.pack(side="left", fill="x", expand=True)
 
@@ -496,38 +503,37 @@ class FilterGamesApp:
                     font=("Helvetica", 12),
                     justify="left",
                     anchor="w",
-                    wraplength=800  # Increased for full width
+                    wraplength=800,  # Adjusted for full width
                 )
-                desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
-
+                desc_label.pack(fill="both", expand=True, pady=(10, 10), padx=15)
             else:
-                # Split layout code
-                outer_frame.grid_columnconfigure(0, weight=45)
-                outer_frame.grid_columnconfigure(1, weight=55)
+                # Split layout
+                inner_frame.grid_columnconfigure(0, weight=1)  # Left column
+                inner_frame.grid_columnconfigure(1, weight=1)  # Right column
 
-                # Left content
+                # Left content (text area)
                 left_content = ctk.CTkFrame(
-                    outer_frame,
-                    fg_color='#252525',
-                    corner_radius=8
+                    inner_frame,
+                    fg_color="#252525",  # Same color as the inner frame
+                    corner_radius=0,  # No additional border
                 )
                 left_content.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-                header_frame = ctk.CTkFrame(left_content, fg_color='transparent')
-                header_frame.pack(fill="x", pady=(10, 5), padx=10)
+                header_frame = ctk.CTkFrame(left_content, fg_color="transparent")
+                header_frame.pack(fill="x", pady=(5, 5))
 
                 if isinstance(icon, str):
                     icon_label = ctk.CTkLabel(
                         header_frame,
                         text=icon,
                         font=("Helvetica", 14),
-                        width=SIZES['icon']
+                        width=20,
                     )
                 else:
                     icon_label = tk.Label(
                         header_frame,
                         image=icon,
-                        bg='#252525'
+                        bg="#252525",
                     )
                 icon_label.pack(side="left", padx=(5, 10))
 
@@ -536,7 +542,7 @@ class FilterGamesApp:
                     text=title,
                     text_color="#ffffff",
                     font=("Helvetica", 16, "bold"),
-                    anchor="w"
+                    anchor="w",
                 )
                 title_label.pack(side="left", fill="x", expand=True)
 
@@ -547,17 +553,17 @@ class FilterGamesApp:
                     font=("Helvetica", 12),
                     justify="left",
                     anchor="w",
-                    wraplength=400
+                    wraplength=400,
                 )
-                desc_label.pack(fill="both", expand=True, pady=(5, 10), padx=15)
+                desc_label.pack(fill="both", expand=True, pady=(10, 10), padx=15)
 
-                # Right side - Screenshot
+                # Right content (image area)
                 if image_path:
                     try:
                         right_content = ctk.CTkFrame(
-                            outer_frame,
-                            fg_color='#252525',
-                            corner_radius=8
+                            inner_frame,
+                            fg_color="#252525",  # Same color as the inner frame
+                            corner_radius=0,  # No additional border
                         )
                         right_content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
 
@@ -567,7 +573,7 @@ class FilterGamesApp:
                         screenshot_label = tk.Label(
                             right_content,
                             image=resized_screenshot,
-                            bg='#252525'
+                            bg="#252525",  # Match the inner frame background
                         )
                         screenshot_label.image = resized_screenshot
                         screenshot_label.pack(expand=True, padx=5, pady=5)
@@ -576,6 +582,8 @@ class FilterGamesApp:
                         print(f"Failed to load screenshot {image_path}: {e}")
 
             return outer_frame
+
+
 
         def show_popup():
             popup = tk.Toplevel(self.root)
