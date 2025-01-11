@@ -6200,7 +6200,7 @@ class AdvancedConfigs:
         self.favorites_display_name = "Starred"  # Change this to modify the display name
         self.base_path = Path.cwd()
         self.config_manager = ConfigManager()
-        
+        tooltip_label = None
         # Add new instance variables
         self.metadata_cache = MetadataCache()
         self.background_worker = BackgroundWorker()
@@ -6829,7 +6829,7 @@ class AdvancedConfigs:
         self._create_script_buttons(scrollable_frame, tab_name, scripts)
 
     def _create_script_buttons(self, parent_frame, tab_name: str, scripts: Dict[int, str]):
-        """Modified to implement virtual scrolling"""
+        """Create script buttons with virtual scrolling"""
         # Clear existing widgets
         for widget in parent_frame.winfo_children():
             widget.destroy()
@@ -6837,11 +6837,14 @@ class AdvancedConfigs:
         # Calculate visible range
         start = self.virtual_scroll_state.start_index
         end = start + self.virtual_scroll_state.visible_items
-        #print(f"Start: {start}, End: {end}, Scripts: {scripts}")  # Debugging line
-        visible_scripts = {k: v for k, v in scripts.items()
-                        if isinstance(k, int) and start <= k <= end}
 
-        # Create widgets only for visible items
+        # Get visible scripts
+        visible_scripts = {
+            k: v for k, v in scripts.items()
+            if isinstance(k, int) and start <= k <= end
+        }
+
+        # Create buttons for each visible script
         for i, script_name in visible_scripts.items():
             self._create_single_script_buttons(parent_frame, tab_name, i, script_name)
 
@@ -6879,36 +6882,30 @@ class AdvancedConfigs:
             )
             warning_label.pack(side="left")
 
-        #
-        # Show "Remove" only in the Favorites tab; otherwise show a star button
-        #
-        if tab_name == "Favorites":
-            # The user is already in the Favorites tab, so "Remove" means remove from favorites
+        if tab_name == self.favorites_display_name:
             remove_button = ctk.CTkButton(
                 frame,
-                text="Remove",
-                width=60,
-                command=lambda s=script_name, b=radio_button: self.remove_favorite(s, b)
+                text="Remove from Starred",
+                width=120,
+                command=lambda s=script_name: self.remove_favorite(s, radio_button)
             )
             remove_button.pack(side="right", padx=5)
-
         else:
-            # For normal tabs, show a star to let user toggle favorites
-            is_favorite = (script_name in self.favorites)
-            star_text = "★" if is_favorite else "☆"
+            is_favorite = script_name in self.favorites
+            star_text = "★ Starred" if is_favorite else "☆ Add to Starred"
             
             favorite_button = ctk.CTkButton(
                 frame,
                 text=star_text,
-                width=40,
-                command=lambda s=script_name, btn=None: self.toggle_favorite(tab_name, s, None)
+                width=100,
+                command=lambda s=script_name: self.toggle_favorite(tab_name, s)
             )
             favorite_button.pack(side="right", padx=5)
 
-            # Optionally keep a reference to the button so you can update its text from "☆" to "★" if user toggles it
+            # Store button reference
+            if tab_name not in self.favorite_buttons:
+                self.favorite_buttons[tab_name] = {}
             self.favorite_buttons[tab_name][script_name] = favorite_button
-
-
 
     def _handle_scroll(self, event, frame, scripts):
         """Handle scrolling for virtual list"""
@@ -7142,31 +7139,42 @@ class AdvancedConfigs:
         
         self.parent_tab.after(duration, lambda: fade_out())
 
-    def toggle_favorite(self, tab_name: str, script_name: str, button: Optional[ctk.CTkButton]):
-        """Toggle favorite status with optimized updates"""
-        if script_name in self.favorites:
-            self.favorites.remove(script_name)
-            new_state = "☆"
-        else:
+    def toggle_favorite(self, tab_name: str, script_name: str):
+        """Toggle favorite status and update all relevant buttons"""
+        is_now_favorite = script_name not in self.favorites
+        
+        if is_now_favorite:
             self.favorites.append(script_name)
-            new_state = "★"
-        
-        if button:
-            button.configure(text=new_state)
-        
+            new_state = "★ Starred"
+            #status_msg = f"Added '{Path(script_name).stem}' to Starred tab"
+        else:
+            self.favorites.remove(script_name)
+            new_state = "☆ Add to Starred"
+            #status_msg = f"Removed '{Path(script_name).stem}' from Starred tab"
+
+        # Update all instances of this script's star button
+        for tab_buttons in self.favorite_buttons.values():
+            if script_name in tab_buttons:
+                tab_buttons[script_name].configure(text=new_state)
+
         self._save_favorites()
         self.update_favorites_tab()
+        #self.show_status(status_msg, duration=2000, color="#2ecc71")
 
     def remove_favorite(self, script_name: str, button: ctk.CTkRadioButton):
-        """Remove favorite with optimized updates"""
+        """Remove from favorites and update buttons"""
         if script_name in self.favorites:
             self.favorites.remove(script_name)
-            self._save_favorites()
-            self.update_favorites_tab()
             
+            # Update all star buttons for this script
             for tab_buttons in self.favorite_buttons.values():
                 if script_name in tab_buttons:
-                    tab_buttons[script_name].configure(text="☆")
+                    tab_buttons[script_name].configure(text="☆ Add to Starred")
+            
+            self._save_favorites()
+            self.update_favorites_tab()
+            #self.show_status(f"Removed '{Path(script_name).stem}' from Starred tab", 
+                            #duration=2000, color="#2ecc71")
 
     def on_radio_select(self, tab_name: str, value: int):
         """Handle radio selection with optimized script execution"""
