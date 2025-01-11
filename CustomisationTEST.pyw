@@ -6196,6 +6196,8 @@ class AdvancedConfigs:
     def __init__(self, parent_tab):
         # First, set the parent_tab
         self.parent_tab = parent_tab
+        # Add this line - used for display name of Favorites tab
+        self.favorites_display_name = "Starred"  # Change this to modify the display name
         self.base_path = Path.cwd()
         self.config_manager = ConfigManager()
         
@@ -6674,7 +6676,7 @@ class AdvancedConfigs:
 
         # 1) Favorites Tab
         if "Favorites" not in self._tab_inited:
-            self.tabview.add("Favorites")
+            self.tabview.add(self.favorites_display_name)  # Changed from "Favorites"
             self._tab_inited["Favorites"] = False
 
         # Build Favorites immediately
@@ -6998,7 +7000,7 @@ class AdvancedConfigs:
 
     def update_favorites_tab(self):
         """Update favorites tab with optimized GUI updates"""
-        tab = self.tabview.tab("Favorites")
+        tab = self.tabview.tab(self.favorites_display_name)  # Changed from "Favorites"
         for widget in tab.winfo_children():
             widget.destroy()
 
@@ -7254,7 +7256,7 @@ class AdvancedConfigs:
         
         # 1) If you want Favorites first
         if self.favorites and "Favorites" in self._tab_inited:
-            self.tabview.set("Favorites")
+            self.tabview.set(self.favorites_display_name)  # Changed from "Favorites"
             if not self._tab_inited["Favorites"]:
                 self._lazy_init_tab("Favorites")
             return
