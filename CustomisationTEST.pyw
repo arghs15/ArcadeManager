@@ -9,20 +9,17 @@ from tkinter import PhotoImage, messagebox, filedialog, Canvas
 from tkinter import ttk
 from PIL import Image, ImageTk
 import customtkinter as ctk
-import tempfile
 import time
 import ctypes
 import shutil
-import shlex
 import cv2
 from threading import Thread, Lock
+import threading
 import queue
 import configparser
-from typing import Dict, List, Any, Optional, Set
 import tkinter.font as tkFont
 import json
 import asyncio
-import threading
 import keyboard
 from inputs import get_gamepad, devices
 import fnmatch
@@ -30,17 +27,20 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 import queue
-import threading
 from dataclasses import dataclass
-from typing import Dict, List, Set, Optional
+from typing import Dict, List, Set, Optional, Any
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
-from dataclasses import dataclass
-from typing import Dict, List, Set, Optional
-from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
+
+modules = [
+    "os", "sys", "csv", "re", "subprocess", "tkinter", "PIL", "customtkinter",
+    "tempfile", "ctypes", "shutil", "cv2", "threading", "queue", "datetime",
+    "asyncio", "keyboard", "inputs"
+]
+
+for module in modules:
+    start = time.time()
+    __import__(module)
+    print(f"Imported {module} in {time.time() - start:.4f} seconds")
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
@@ -72,12 +72,20 @@ class FilterGamesApp:
         else:
             self.root.title(script_name)
 
-        # Set window size relative to the screen size (e.g., 80% of the width and height)
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        window_width = max(800, int(screen_width * 0.8))  # Ensure a minimum width
-        window_height = max(600, int(screen_height * 0.8))  # Ensure a minimum height
-        self.center_window(window_width, window_height)  # Center the window
+        # Store initial window state
+        self._window_state = {
+            'width_percentage': 0.65,  # 80% of screen width
+            'height_percentage': 0.7,  # 80% of screen height
+            'min_width': 1200,         # Minimum width
+            'min_height': 800,        # Minimum height
+            'is_fullscreen': False
+        }
+        
+        # Calculate initial size based on screen dimensions
+        self._calculate_and_set_window_size()
+        
+        # Bind to window resize events to track size
+        self.root.bind('<Configure>', self._on_window_configure)
 
         self.root.resizable(True, True)  # Allow window resizing
 
@@ -108,7 +116,7 @@ class FilterGamesApp:
             pass
 
         # Center the window on the screen
-        self.center_window(1200, 800)
+        #self.center_window(1200, 800)
         
         # Bottom frame for Appearance Mode options
         ## Moved here to stop other frames from pushing it out of view
@@ -207,6 +215,58 @@ class FilterGamesApp:
         
         # Add exe file selector on the right side
         self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
+
+    def _calculate_and_set_window_size(self):
+        """Calculate window size based on screen size and constraints"""
+        if os.name == 'nt':
+            # Get work area (accounting for taskbar)
+            SPI_GETWORKAREA = 48
+            work_area = ctypes.wintypes.RECT()
+            ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
+            screen_width = work_area.right - work_area.left
+            screen_height = work_area.bottom - work_area.top
+        else:
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+
+        # Calculate size based on percentages with minimums
+        width = max(
+            self._window_state['min_width'],
+            int(screen_width * self._window_state['width_percentage'])
+        )
+        height = max(
+            self._window_state['min_height'],
+            int(screen_height * self._window_state['height_percentage'])
+        )
+        
+        # Ensure the window isn't larger than the screen
+        width = min(width, screen_width)
+        height = min(height, screen_height)
+        
+        # Calculate centered position
+        x = (screen_width - width) // 2
+        y = (screen_height - height) // 2
+        
+        # Store current dimensions
+        self._window_state['width'] = width
+        self._window_state['height'] = height
+        
+        # Set geometry
+        if not self._window_state['is_fullscreen']:
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _on_window_configure(self, event):
+        """Track window size changes when not in fullscreen"""
+        if not self._window_state['is_fullscreen'] and event.widget == self.root:
+            # Store actual pixel dimensions
+            self._window_state['width'] = event.width
+            self._window_state['height'] = event.height
+            
+            # Update percentages based on screen size
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            self._window_state['width_percentage'] = event.width / screen_width
+            self._window_state['height_percentage'] = event.height / screen_height
 
     def show_whats_new_popup_BASIC(self):
         """Show the 'What's New' popup with the latest updates."""
@@ -1285,19 +1345,24 @@ class FilterGamesApp:
         ctk.set_appearance_mode(mode)  # Apply the mode immediately
         self.config_manager.set_appearance_mode(mode)  # Save to config
 
-
     def set_fullscreen_preference(self, fullscreen: bool):
         """Set and save fullscreen preference."""
         self.config_manager.set_fullscreen_preference(fullscreen)
+        
         if fullscreen:
+            # Store current window dimensions before going fullscreen
+            self._previous_geometry = self.root.geometry()
             self.root.attributes("-fullscreen", True)
         else:
             self.root.attributes("-fullscreen", False)
+            # Restore previous dimensions if they exist
+            if hasattr(self, '_previous_geometry'):
+                # Brief delay to let window manager catch up
+                self.root.after(100, lambda: self.root.geometry(self._previous_geometry))
 
     def close_app(self):
         """Closes the application."""
         self.root.destroy()
-
 
     def _start_flash_animation(self, button, flash_count=0):
         """
@@ -1342,24 +1407,42 @@ class FilterGamesApp:
         # Show the what's new popup
         self.show_whats_new_popup()
    
-    def center_window(self, width, height):
-        """Center the window on the primary screen, considering the taskbar."""
+    def center_window(self, width=None, height=None):
+        """Center the window with proper geometry management"""
+        if self._window_state['is_fullscreen']:
+            return  # Don't adjust geometry in fullscreen mode
+        
+        # If no dimensions provided, use stored percentages to calculate
+        if width is None or height is None:
+            self._calculate_and_set_window_size()
+            return
+            
+        # If specific dimensions are provided, use them
         if os.name == 'nt':
-            # Get work area of the primary monitor (excluding taskbar)
             SPI_GETWORKAREA = 48
             work_area = ctypes.wintypes.RECT()
             ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
-
             screen_width = work_area.right - work_area.left
             screen_height = work_area.bottom - work_area.top
         else:
-            # Use Tkinter's methods for other OSes (no taskbar adjustment by default)
             screen_width = self.root.winfo_screenwidth()
             screen_height = self.root.winfo_screenheight()
 
-        # Calculate position to center the window
+        # Ensure dimensions don't exceed screen size
+        width = min(width, screen_width)
+        height = min(height, screen_height)
+        
+        # Calculate centered position
         x = (screen_width - width) // 2
         y = (screen_height - height) // 2
+        
+        # Update stored dimensions
+        self._window_state['width'] = width
+        self._window_state['height'] = height
+        self._window_state['width_percentage'] = width / screen_width
+        self._window_state['height_percentage'] = height / screen_height
+        
+        # Set geometry
         self.root.geometry(f"{width}x{height}+{x}+{y}")
 
 class ConfigManager:
@@ -1577,7 +1660,7 @@ class ConfigManager:
             'hidden': False  # Changed from True
         },
         'remove_games_button': { # Checklist of roms user can manually choose to remove
-            'default': 'always',  # 'always', 'never'
+            'default': 'never',  # 'always', 'never'
             'description': 'Controls visibility of Remove Games button',
             'type': str,
             'hidden': False  # Changed from True
