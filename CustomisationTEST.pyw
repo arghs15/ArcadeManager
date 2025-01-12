@@ -1365,7 +1365,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.7"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.8"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -1531,13 +1531,13 @@ class ConfigManager:
                 'hidden': True
             },
             'playlists_tab': {
-                'default': 'auto',  # 'auto', 'always', or 'never'
+                'default': 'always',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Playlists tab',
                 'type': str,
                 'hidden': True
             },
             'filter_games_tab': {
-                'default': 'auto',  # 'auto', 'always', or 'never'
+                'default': 'always',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Filter Games tab',
                 'type': str,
                 'hidden': True
@@ -1559,7 +1559,7 @@ class ConfigManager:
 
     BUTTON_VISIBILITY_STATES = {
         'show_move_artwork_button': { # removes all artwork for missing roms
-            'default': 'never',  # 'always', 'never'
+            'default': 'always',  # 'always', 'never'
             'description': 'Controls visibility of Move Artwork button',
             'type': str,
             'hidden': False  # Changed from True
