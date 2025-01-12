@@ -51,98 +51,91 @@ class SplashScreen:
     def __init__(self, parent):
         self.root = tk.Toplevel(parent)  # Instead of tk.Tk()
         self.root.overrideredirect(True)  # Remove window decorations
-        
+
+        # Set dark grey background for root
+        self.root.configure(bg='#2b2b2b')
+
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
-        
+
         # Set splash dimensions
         splash_width = 600
         splash_height = 400
-        
+
         # Calculate position
         x = (screen_width - splash_width) // 2
         y = (screen_height - splash_height) // 2
-        
+
         # Set geometry
         self.root.geometry(f"{splash_width}x{splash_height}+{x}+{y}")
-        
+
         # Create a frame to hold content
-        self.frame = tk.Frame(self.root)
+        self.frame = tk.Frame(self.root, bg='#2b2b2b')
         self.frame.pack(fill="both", expand=True)
-        
-        # Inside your SplashScreen __init__:
+
+        # Paths for splash image lookup
         possible_paths = [
-            # 1) Local PNG/JPG
             "splash.png",
             "splash.jpg",
-            
-            # 2) Script directory PNG/JPG
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.png"),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.jpg"),
-            
-            # 3) Working directory PNG/JPG
             os.path.join(os.getcwd(), "splash.png"),
             os.path.join(os.getcwd(), "splash.jpg"),
-            
-            # 4) Executable directory PNG/JPG
             os.path.join(os.path.dirname(sys.executable), "splash.png"),
             os.path.join(os.path.dirname(sys.executable), "splash.jpg"),
         ]
 
-        
         image_loaded = False
         for splash_path in possible_paths:
             try:
                 if os.path.exists(splash_path):
                     print(f"Found splash image at: {splash_path}")
                     image = Image.open(splash_path)
-                    image = image.resize((splash_width, splash_height-50))
+                    image = image.resize((splash_width, splash_height - 50))
                     photo = ImageTk.PhotoImage(image)
-                    image_label = tk.Label(self.frame, image=photo)
-                    image_label.image = photo
-                    image_label.pack(fill="both", expand=True)
+                    self.image_label = tk.Label(self.frame, image=photo, bg='#2b2b2b')
+                    self.image_label.image = photo
+                    self.image_label.pack(fill="both", expand=True)
                     image_loaded = True
                     break
             except Exception as e:
                 print(f"Failed to load splash image from {splash_path}: {e}")
                 continue
-        
+
         if not image_loaded:
             print("\nNo splash image found. Checked the following locations:")
             for path in possible_paths:
                 print(f"- {path}")
             print("\nPlease place splash.png in one of these locations.")
-            
+
             # Fallback to default-style text if image fails to load
-            # (No 'bg' argument, so it will inherit the default system color)
             label = tk.Label(
                 self.frame,
                 text="Loading Application...",
                 font=("Helvetica", 24),
-                # No explicit background color here
-                fg='black'  # Or any other text color you prefer
+                bg='#2b2b2b',
+                fg='white'
             )
             label.pack(fill="both", expand=True)
 
-        
         # Add a progress bar with custom style
         style = ttk.Style()
         style.configure("Custom.Horizontal.TProgressbar",
-                       troughcolor='#1a1a1a',
-                       background='#007acc',
-                       darkcolor='#007acc',
-                       lightcolor='#007acc')
-        
+                        troughcolor='#2b2b2b',
+                        background='#007acc',
+                        darkcolor='#007acc',
+                        lightcolor='#007acc')
+
         self.progress = ttk.Progressbar(
             self.frame,
             mode='indeterminate',
-            length=splash_width-20,
+            length=splash_width - 20,
             style="Custom.Horizontal.TProgressbar"
         )
         self.progress.pack(pady=10, padx=10)
         self.progress.start()
-        
+
         # Add status label with styling
         self.status_label = tk.Label(
             self.frame,
@@ -152,16 +145,23 @@ class SplashScreen:
             fg='white'
         )
         self.status_label.pack(pady=5)
-    
+
+        # Debugging information
+        print(f"Frame dimensions: {self.frame.winfo_width()}x{self.frame.winfo_height()}")
+        print(f"Status label dimensions: {self.status_label.winfo_width()}x{self.status_label.winfo_height()}")
+
     def update_status(self, text):
         """Update the status text on the splash screen"""
         self.status_label.config(text=text)
-    
+        # Debugging information
+        print(f"Updated status label text: {text}")
+        print(f"Status label dimensions: {self.status_label.winfo_width()}x{self.status_label.winfo_height()}")
+
     def close(self):
         """Close the splash screen"""
         self.progress.stop()
         self.root.destroy()
-
+        
 class FilterGamesApp:
     @staticmethod
     def resource_path(relative_path):
