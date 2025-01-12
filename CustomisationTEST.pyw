@@ -76,14 +76,21 @@ class SplashScreen:
 
         # Paths for splash image lookup
         possible_paths = [
-            "splash.png",
-            "splash.jpg",
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.png"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.jpg"),
-            os.path.join(os.getcwd(), "splash.png"),
-            os.path.join(os.getcwd(), "splash.jpg"),
-            os.path.join(os.path.dirname(sys.executable), "splash.png"),
-            os.path.join(os.path.dirname(sys.executable), "splash.jpg"),
+            # 1) Root directory PNG/JPG
+            os.path.join(os.path.dirname(sys.executable), "Helper.png"),
+            os.path.join(os.path.dirname(sys.executable), "Helper.jpg"),
+
+            # 2) Local PNG/JPG
+            "Helper.png",
+            "Helper.jpg",
+
+            # 3) Script directory PNG/JPG
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "Helper.png"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "Helper.jpg"),
+
+            # 4) Working directory PNG/JPG
+            os.path.join(os.getcwd(), "Helper.png"),
+            os.path.join(os.getcwd(), "Helper.jpg"),
         ]
 
         image_loaded = False
