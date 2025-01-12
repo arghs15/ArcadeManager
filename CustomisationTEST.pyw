@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Set, Optional, Any
 from datetime import datetime, timedelta
 
-modules = [
+'''modules = [
     "os", "sys", "csv", "re", "subprocess", "tkinter", "PIL", "customtkinter",
     "tempfile", "ctypes", "shutil", "cv2", "threading", "queue", "datetime",
     "asyncio", "keyboard", "inputs"
@@ -40,12 +40,127 @@ modules = [
 for module in modules:
     start = time.time()
     __import__(module)
-    print(f"Imported {module} in {time.time() - start:.4f} seconds")
+    print(f"Imported {module} in {time.time() - start:.4f} seconds")'''
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
     # Change the working directory to the directory where the script is located
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+class SplashScreen:
+    def __init__(self, parent):
+        self.root = tk.Toplevel(parent)  # Instead of tk.Tk()
+        self.root.overrideredirect(True)  # Remove window decorations
+        
+        # Get screen dimensions
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Set splash dimensions
+        splash_width = 600
+        splash_height = 400
+        
+        # Calculate position
+        x = (screen_width - splash_width) // 2
+        y = (screen_height - splash_height) // 2
+        
+        # Set geometry
+        self.root.geometry(f"{splash_width}x{splash_height}+{x}+{y}")
+        
+        # Create a frame to hold content
+        self.frame = tk.Frame(self.root)
+        self.frame.pack(fill="both", expand=True)
+        
+        # Inside your SplashScreen __init__:
+        possible_paths = [
+            # 1) Local PNG/JPG
+            "splash.png",
+            "splash.jpg",
+            
+            # 2) Script directory PNG/JPG
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.png"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "splash.jpg"),
+            
+            # 3) Working directory PNG/JPG
+            os.path.join(os.getcwd(), "splash.png"),
+            os.path.join(os.getcwd(), "splash.jpg"),
+            
+            # 4) Executable directory PNG/JPG
+            os.path.join(os.path.dirname(sys.executable), "splash.png"),
+            os.path.join(os.path.dirname(sys.executable), "splash.jpg"),
+        ]
+
+        
+        image_loaded = False
+        for splash_path in possible_paths:
+            try:
+                if os.path.exists(splash_path):
+                    print(f"Found splash image at: {splash_path}")
+                    image = Image.open(splash_path)
+                    image = image.resize((splash_width, splash_height-50))
+                    photo = ImageTk.PhotoImage(image)
+                    image_label = tk.Label(self.frame, image=photo)
+                    image_label.image = photo
+                    image_label.pack(fill="both", expand=True)
+                    image_loaded = True
+                    break
+            except Exception as e:
+                print(f"Failed to load splash image from {splash_path}: {e}")
+                continue
+        
+        if not image_loaded:
+            print("\nNo splash image found. Checked the following locations:")
+            for path in possible_paths:
+                print(f"- {path}")
+            print("\nPlease place splash.png in one of these locations.")
+            
+            # Fallback to default-style text if image fails to load
+            # (No 'bg' argument, so it will inherit the default system color)
+            label = tk.Label(
+                self.frame,
+                text="Loading Application...",
+                font=("Helvetica", 24),
+                # No explicit background color here
+                fg='black'  # Or any other text color you prefer
+            )
+            label.pack(fill="both", expand=True)
+
+        
+        # Add a progress bar with custom style
+        style = ttk.Style()
+        style.configure("Custom.Horizontal.TProgressbar",
+                       troughcolor='#1a1a1a',
+                       background='#007acc',
+                       darkcolor='#007acc',
+                       lightcolor='#007acc')
+        
+        self.progress = ttk.Progressbar(
+            self.frame,
+            mode='indeterminate',
+            length=splash_width-20,
+            style="Custom.Horizontal.TProgressbar"
+        )
+        self.progress.pack(pady=10, padx=10)
+        self.progress.start()
+        
+        # Add status label with styling
+        self.status_label = tk.Label(
+            self.frame,
+            text="Initializing...",
+            font=("Helvetica", 10),
+            bg='#2b2b2b',
+            fg='white'
+        )
+        self.status_label.pack(pady=5)
+    
+    def update_status(self, text):
+        """Update the status text on the splash screen"""
+        self.status_label.config(text=text)
+    
+    def close(self):
+        """Close the splash screen"""
+        self.progress.stop()
+        self.root.destroy()
 
 class FilterGamesApp:
     @staticmethod
@@ -56,13 +171,10 @@ class FilterGamesApp:
             base_path = sys._MEIPASS
         except Exception:
             base_path = os.path.abspath(".")
-
         return os.path.join(base_path, relative_path)
         
-    def __init__(self, root):  # Added fullscreen parameter
+    def __init__(self, root):
         self.root = root
-        #self.root.title("Customisation")
-
         # If running in a development environment, use the script name without the extension
         script_name = os.path.splitext(os.path.basename(__file__))[0]
 
@@ -71,58 +183,75 @@ class FilterGamesApp:
             self.root.title("")  # No title
         else:
             self.root.title(script_name)
-
-        # Store initial window state
-        self._window_state = {
-            'width_percentage': 0.65,  # 80% of screen width
-            'height_percentage': 0.7,  # 80% of screen height
-            'min_width': 1200,         # Minimum width
-            'min_height': 800,        # Minimum height
-            'is_fullscreen': False
-        }
+            
+        self.root.withdraw()  # Hide the main window initially
         
-        # Calculate initial size based on screen dimensions
-        self._calculate_and_set_window_size()
+        # Create the splash as a Toplevel child
+        self.splash = SplashScreen(root)
+        self.splash.update_status("Initializing application...")
         
-        # Bind to window resize events to track size
-        self.root.bind('<Configure>', self._on_window_configure)
-
-        self.root.resizable(True, True)  # Allow window resizing
-
-        # Initialize the configuration manager
-        self.config_manager = ConfigManager()
+        # Start loading the application
+        self.root.after(100, self.initialize_app)
+        
+    def initialize_app(self):
+        """Initialize the main application with loading status updates"""
+        try:
+            # Store initial window state
+            self.splash.update_status("Setting up window configurations...")
+            self._window_state = {
+                'width_percentage': 0.65,
+                'height_percentage': 0.7,
+                'min_width': 1200,
+                'min_height': 800,
+                'is_fullscreen': False
+            }
+            
+            # Calculate initial size
+            self._calculate_and_set_window_size()
+            
+            # Initialize configuration manager
+            self.splash.update_status("Loading configuration settings...")
+            self.config_manager = ConfigManager()
+            
+            # Setup main UI components
+            self.splash.update_status("Setting up user interface...")
+            self.setup_main_ui()
+            
+            # Close splash and show main window
+            self.splash.update_status("Launch complete!")
+            self.root.after(1000, self.finish_loading)  # Small delay to show "Launch complete"
+            
+        except Exception as e:
+            print(f"Error during initialization: {e}")
+            self.splash.update_status(f"Error: {str(e)}")
+            
+    def finish_loading(self):
+        """Close splash screen and show main window"""
+        self.splash.close()
+        self.root.deiconify()  # Show the main window
+        
+    def setup_main_ui(self):
+        """Setup all UI components (your existing UI setup code)"""
+        # Your existing UI setup code goes here
+        self.root.resizable(True, True)
         
         # Get playlist location setting from INI
-        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S', 'D', or 'U'
-
-        # Set window icon - handles both development and PyInstaller
+        self.playlist_location = self.config_manager.get_playlist_location()
+        
+        # Set window icon
         try:
-            # First try the bundled path
             icon_path = self.resource_path("icon.ico")
-            
-            # For Windows: set both the window icon and taskbar icon
-            if os.name == 'nt':  # Windows
+            if os.name == 'nt':
                 self.root.iconbitmap(default=icon_path)
-                # Set taskbar icon
-                myappid = 'company.product.subproduct.version'  # arbitrary string
+                myappid = 'company.product.subproduct.version'
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-            else:  # For other operating systems
+            else:
                 icon_img = PhotoImage(file=icon_path)
                 self.root.iconphoto(True, icon_img)
-                
         except Exception as e:
             print(f"Could not load icon: {e}")
-            # Continue without icon if there's an error
-            pass
-
-        # Center the window on the screen
-        #self.center_window(1200, 800)
-        
-        # Bottom frame for Appearance Mode options
-        ## Moved here to stop other frames from pushing it out of view
-        #self.add_appearance_mode_frame()
-
-        # Main container to hold both the tabview and exe selector
+            
+        # Main container
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
         self.main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
         
@@ -2202,7 +2331,6 @@ class ConfigManager:
             'videos': valid_videos,
             'logos': valid_logos
         }
-
 
     def get_ignore_list(self):
         """
@@ -8874,7 +9002,7 @@ class ViewRoms:
         confirm_window.grab_set()  # Make the window modal
 
 # Main application driver
-if __name__ == "__main__":
+def main():
     # Initialize GUI with customtkinter
     config_manager = ConfigManager()
     appearance_mode = config_manager.get_appearance_mode()
@@ -8882,17 +9010,25 @@ if __name__ == "__main__":
     ctk.set_default_color_theme("blue")
 
     root = ctk.CTk()
-    app = FilterGamesApp(root)
+    app = FilterGamesApp(root)  # This will create and show the splash screen
 
-    # Load fullscreen preference from config
-    fullscreen_mode = app.config_manager.get_fullscreen_preference()
-    if fullscreen_mode:
-        root.attributes("-fullscreen", True)
+    # The following will now happen after splash screen closes
+    def after_splash():
+        # Load fullscreen preference from config
+        fullscreen_mode = app.config_manager.get_fullscreen_preference()
+        if fullscreen_mode:
+            root.attributes("-fullscreen", True)
 
-    # Add appearance mode frame with fullscreen state
-    app.add_appearance_mode_frame(fullscreen=fullscreen_mode)
+        # Add appearance mode frame with fullscreen state
+        app.add_appearance_mode_frame(fullscreen=fullscreen_mode)
 
+    # Schedule the after_splash function to run after initialization
+    root.after(100, after_splash)
+    
     root.mainloop()
+
+if __name__ == "__main__":
+    main()
 
 
 
