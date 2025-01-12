@@ -1577,7 +1577,7 @@ class ConfigManager:
             'hidden': False  # Changed from True
         },
         'remove_games_button': { # Checklist of roms user can manually choose to remove
-            'default': 'never',  # 'always', 'never'
+            'default': 'always',  # 'always', 'never'
             'description': 'Controls visibility of Remove Games button',
             'type': str,
             'hidden': False  # Changed from True
