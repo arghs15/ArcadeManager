@@ -1,4 +1,5 @@
 import os
+import platform
 import random
 import sys
 import csv
@@ -7,6 +8,7 @@ import subprocess
 import tkinter as tk
 from tkinter import PhotoImage, messagebox, filedialog, Canvas
 from tkinter import ttk
+import traceback
 from PIL import Image, ImageTk
 import customtkinter as ctk
 import time
@@ -30,6 +32,8 @@ import queue
 from dataclasses import dataclass
 from typing import Dict, List, Set, Optional, Any
 from datetime import datetime, timedelta
+from functools import wraps
+import psutil
 
 '''modules = [
     "os", "sys", "csv", "re", "subprocess", "tkinter", "PIL", "customtkinter",
@@ -49,61 +53,100 @@ if not getattr(sys, 'frozen', False):
 
 class SplashScreen:
     def __init__(self, parent):
-        self.root = tk.Toplevel(parent)  # Instead of tk.Tk()
-        self.root.overrideredirect(True)  # Remove window decorations
+        self.root = tk.Toplevel(parent)
+        self.root.overrideredirect(True)
+        self.root.attributes('-topmost', True)
 
-        # Set dark grey background for root
+        # Get DPI scale factor
+        try:
+            from ctypes import windll
+            self.dpi_scale = windll.shcore.GetScaleFactorForDevice(0) / 100
+        except Exception as e:
+            print(f"Failed to get DPI scale: {e}")
+            self.dpi_scale = 1.0
+
+        # Set dark grey background
         self.root.configure(bg='#2b2b2b')
 
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
-        # Set splash dimensions
-        splash_width = 600
-        splash_height = 400
+        # Calculate splash dimensions based on screen size and DPI
+        base_width = int(min(screen_width * 0.8, 1200))    # Doubled from 0.3 to 0.6
+        base_height = int(min(screen_height * 0.8, 800))   # Doubled from 0.4 to 0.8
+        
+        # Apply DPI scaling
+        splash_width = int(base_width * self.dpi_scale)
+        splash_height = int(base_height * self.dpi_scale)
 
         # Calculate position
         x = (screen_width - splash_width) // 2
         y = (screen_height - splash_height) // 2
 
-        # Set geometry
-        self.root.geometry(f"{splash_width}x{splash_height}+{x}+{y}")
+        # Configure root grid
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
-        # Create a frame to hold content
+        # Create main frame with grid
         self.frame = tk.Frame(self.root, bg='#2b2b2b')
-        self.frame.pack(fill="both", expand=True)
+        self.frame.grid(row=0, column=0, sticky="nsew")
+        
+        # Configure frame grid
+        self.frame.grid_rowconfigure(0, weight=1)  # Image/text area
+        self.frame.grid_rowconfigure(1, weight=0)  # Progress bar
+        self.frame.grid_rowconfigure(2, weight=0)  # Status label
+        self.frame.grid_columnconfigure(0, weight=1)
+
+        # Set initial geometry
+        self.root.geometry(f"{splash_width}x{splash_height}+{x}+{y}")
 
         # Paths for splash image lookup
         possible_paths = [
-            # 1) Root directory PNG/JPG
             os.path.join(os.path.dirname(sys.executable), "Helper.png"),
             os.path.join(os.path.dirname(sys.executable), "Helper.jpg"),
-
-            # 2) Local PNG/JPG
             "Helper.png",
             "Helper.jpg",
-
-            # 3) Script directory PNG/JPG
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "Helper.png"),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "Helper.jpg"),
-
-            # 4) Working directory PNG/JPG
             os.path.join(os.getcwd(), "Helper.png"),
             os.path.join(os.getcwd(), "Helper.jpg"),
         ]
 
+        # Try to load image
         image_loaded = False
         for splash_path in possible_paths:
             try:
                 if os.path.exists(splash_path):
                     print(f"Found splash image at: {splash_path}")
                     image = Image.open(splash_path)
-                    image = image.resize((splash_width, splash_height - 50))
+                    
+                    # Use full frame width and height above progress bar
+                    # Remove padding to allow image to fill entire space
+                    img_width = splash_width
+                    img_height = int(splash_height * 0.9)  # Leave 10% for progress bar and status
+                    
+                    # Maintain aspect ratio while filling the space
+                    aspect_ratio = image.width / image.height
+                    target_ratio = img_width / img_height
+                    
+                    if target_ratio > aspect_ratio:
+                        # Image is taller than space, will fill height
+                        new_height = img_height
+                        new_width = int(img_height * aspect_ratio)
+                    else:
+                        # Image is wider than space, will fill width
+                        new_width = img_width
+                        new_height = int(img_width / aspect_ratio)
+                    
+                    image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
                     photo = ImageTk.PhotoImage(image)
+                    
                     self.image_label = tk.Label(self.frame, image=photo, bg='#2b2b2b')
                     self.image_label.image = photo
-                    self.image_label.pack(fill="both", expand=True)
+                    # Remove padding to allow full-frame coverage
+                    self.image_label.grid(row=0, column=0, sticky="nsew")
+                    
                     image_loaded = True
                     break
             except Exception as e:
@@ -111,64 +154,97 @@ class SplashScreen:
                 continue
 
         if not image_loaded:
-            print("\nNo splash image found. Checked the following locations:")
-            for path in possible_paths:
-                print(f"- {path}")
-            print("\nPlease place splash.png in one of these locations.")
-
-            # Fallback to default-style text if image fails to load
+            print("\nNo splash image found. Using text fallback.")
+            # Scale font size based on DPI - doubled from 24 to 48
+            font_size = int(48 * self.dpi_scale)
             label = tk.Label(
                 self.frame,
                 text="Loading Application...",
-                font=("Helvetica", 24),
+                font=("Helvetica", font_size),
                 bg='#2b2b2b',
                 fg='white'
             )
-            label.pack(fill="both", expand=True)
+            label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        # Add a progress bar with custom style
+        # Progress bar with custom style
         style = ttk.Style()
-        style.configure("Custom.Horizontal.TProgressbar",
-                        troughcolor='#2b2b2b',
-                        background='#007acc',
-                        darkcolor='#007acc',
-                        lightcolor='#007acc')
+        style.configure(
+            "Custom.Horizontal.TProgressbar",
+            troughcolor='#2b2b2b',
+            background='#007acc',
+            darkcolor='#007acc',
+            lightcolor='#007acc'
+        )
 
+        # Calculate progress bar length based on window width
+        progress_width = int(splash_width * 0.95)  # Increased from 0.9 to 0.95
+        
         self.progress = ttk.Progressbar(
             self.frame,
             mode='indeterminate',
-            length=splash_width - 20,
+            length=progress_width,
             style="Custom.Horizontal.TProgressbar"
         )
-        self.progress.pack(pady=10, padx=10)
+        self.progress.grid(row=1, column=0, sticky="ew", padx=20, pady=10)
         self.progress.start()
 
-        # Add status label with styling
+        # Status label with DPI-aware font size - doubled from 10 to 20
+        status_font_size = int(20 * self.dpi_scale)
         self.status_label = tk.Label(
             self.frame,
             text="Initializing...",
-            font=("Helvetica", 10),
+            font=("Helvetica", status_font_size),
             bg='#2b2b2b',
             fg='white'
         )
-        self.status_label.pack(pady=5)
-
-        # Debugging information
-        print(f"Frame dimensions: {self.frame.winfo_width()}x{self.frame.winfo_height()}")
-        print(f"Status label dimensions: {self.status_label.winfo_width()}x{self.status_label.winfo_height()}")
+        self.status_label.grid(row=2, column=0, sticky="ew", pady=5)
 
     def update_status(self, text):
-        """Update the status text on the splash screen"""
-        self.status_label.config(text=text)
-        # Debugging information
-        print(f"Updated status label text: {text}")
-        print(f"Status label dimensions: {self.status_label.winfo_width()}x{self.status_label.winfo_height()}")
+        """Update status text with error checking"""
+        try:
+            self.status_label.config(text=text)
+            self.root.update_idletasks()
+            print(f"Updated status label text: {text}")
+            print(f"Status label dimensions: {self.status_label.winfo_width()}x{self.status_label.winfo_height()}")
+        except Exception as e:
+            print(f"Error updating status: {e}")
 
     def close(self):
         """Close the splash screen"""
-        self.progress.stop()
-        self.root.destroy()
+        try:
+            self.root.destroy()
+        except Exception as e:
+            print(f"Error closing splash screen: {e}")
+
+def timing_decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        memory_before = psutil.Process().memory_info().rss / 1024 / 1024  # Memory in MB
         
+        result = func(*args, **kwargs)
+        
+        end_time = time.time()
+        memory_after = psutil.Process().memory_info().rss / 1024 / 1024
+        duration = end_time - start_time
+        memory_used = memory_after - memory_before
+        
+        message = f"[TIMING] {func.__name__} took {duration:.3f} seconds | Memory change: {memory_used:.1f}MB"
+        print(message)
+        
+        instance = args[0]
+        if hasattr(instance, 'timing_data'):
+            instance.timing_data.append({
+                "function": func.__name__,
+                "duration": duration,
+                "memory_change": memory_used,
+                "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+            })
+        if hasattr(instance, 'timing_messages'):
+            instance.timing_messages.append(message)
+        return result
+    return wrapper
+
 class FilterGamesApp:
     @staticmethod
     def resource_path(relative_path):
@@ -181,68 +257,290 @@ class FilterGamesApp:
         return os.path.join(base_path, relative_path)
         
     def __init__(self, root):
-        self.root = root
-        # If running in a development environment, use the script name without the extension
-        script_name = os.path.splitext(os.path.basename(__file__))[0]
+        # Add window state tracking
+        self._popup_active = False
+        
+        # Initialize timing data first
+        self.timing_data = []
+        self.timing_messages = []
+        self.start_time = time.time()
 
-        # Check if the script name is 'noname'
+        # Initialize config_manager before anything else
+        self.config_manager = ConfigManager()
+
+        # Set DPI awareness
+        try:
+            from ctypes import windll
+            windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE_V2
+            self.dpi_scale = windll.shcore.GetScaleFactorForDevice(0) / 100
+        except Exception as e:
+            print(f"Failed to set DPI awareness: {e}")
+            self.dpi_scale = 1.0
+
+        self.root = root
+        
+        # Configure root window properties first
+        self.root.attributes('-alpha', 0.0)  # Start invisible but maintain geometry
+        self.root.protocol("WM_TAKE_FOCUS", self._handle_focus)
+        
+        # Window state setup
+        self._window_state = {
+            'width_percentage': 0.8,
+            'height_percentage': 0.8,
+            'min_width': 1200,
+            'min_height': 800,
+            'is_fullscreen': False
+        }
+
+        # Get the script name for the title
+        script_name = os.path.splitext(os.path.basename(__file__))[0]
         if script_name == 'noname':
-            self.root.title("")  # No title
+            self.root.title("")
         else:
             self.root.title(script_name)
-            
-        self.root.withdraw()  # Hide the main window initially
-        
-        # Create the splash as a Toplevel child
+
+        # Store original geometry
+        self.original_geometry = None
+
+        # Create and show splash screen
         self.splash = SplashScreen(root)
         self.splash.update_status("Initializing application...")
-        
+
         # Start loading the application
         self.root.after(100, self.initialize_app)
+
+    def _handle_focus(self):
+        """Handle window focus events"""
+        if not self._popup_active:
+            self.root.attributes('-alpha', 1.0)
+            self.root.focus_force()
+
+    def show_popup(self, popup_window):
+        """Standardized method to show popups"""
+        self._popup_active = True
+        popup_window.transient(self.root)
+        popup_window.attributes('-topmost', True)
+        popup_window.focus_force()
         
-    def initialize_app(self):
-        """Initialize the main application with loading status updates"""
-        try:
-            # Store initial window state
-            self.splash.update_status("Setting up window configurations...")
-            self._window_state = {
-                'width_percentage': 0.65,
-                'height_percentage': 0.7,
-                'min_width': 1200,
-                'min_height': 800,
-                'is_fullscreen': False
-            }
-            
-            # Calculate initial size
-            self._calculate_and_set_window_size()
-            
-            # Initialize configuration manager
-            self.splash.update_status("Loading configuration settings...")
-            self.config_manager = ConfigManager()
-            
-            # Setup main UI components
-            self.splash.update_status("Setting up user interface...")
-            self.setup_main_ui()
-            
-            # Close splash and show main window
-            self.splash.update_status("Launch complete!")
-            self.root.after(1000, self.finish_loading)  # Small delay to show "Launch complete"
-            
-        except Exception as e:
-            print(f"Error during initialization: {e}")
-            self.splash.update_status(f"Error: {str(e)}")
-            
+        def on_popup_close():
+            self._popup_active = False
+            popup_window.withdraw()  # Hide before destroying
+            self.root.after(50, lambda: self.root.attributes('-alpha', 1.0))
+            self.root.after(100, popup_window.destroy)  # Delay destruction
+            self.root.focus_force()
+        
+        popup_window.protocol("WM_DELETE_WINDOW", on_popup_close)
+        return on_popup_close
+
     def finish_loading(self):
         """Close splash screen and show main window"""
         self.splash.close()
-        self.root.deiconify()  # Show the main window
         
+        # Make window visible with a slight delay
+        self.root.after(50, lambda: self.root.attributes('-alpha', 1.0))
+        
+        # Get fullscreen preference
+        fullscreen_mode = self.config_manager.get_fullscreen_preference()
+        
+        # Add appearance frame after main UI is set up
+        self.add_appearance_mode_frame(fullscreen=fullscreen_mode)
+        
+        # Handle fullscreen if needed
+        if fullscreen_mode:
+            self._window_state['is_fullscreen'] = True
+            self.handle_fullscreen()
+
+    def initialize_app(self):
+        """Initialize the main application with loading status updates"""
+        try:
+            # Configure root grid before adding any widgets
+            self.root.grid_rowconfigure(0, weight=1)  # Main content
+            self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
+            self.root.grid_columnconfigure(0, weight=1)
+
+            # Window Configuration
+            self.splash.update_status("Setting up window configurations...")
+            self._calculate_and_set_window_size()
+            
+            # UI Setup
+            self.splash.update_status("Setting up user interface...")
+            self.setup_main_ui()
+            
+            # Calculate total time
+            total_time = time.time() - self.start_time
+            self.timing_data.append(("Total Startup", total_time))
+            
+            # Log timing data
+            self.log_performance_data()
+            
+            self.splash.update_status("Launch complete!")
+            self.root.after(1000, self.finish_loading)
+
+        except Exception as e:
+            print(f"Error during initialization: {e}")
+            import traceback
+            traceback.print_exc()
+            self.splash.update_status(f"Error: {str(e)}")
+
+    def log_performance_data(self, save_to_file=False):
+        """Log performance data to console and optionally to file"""
+        print("\n=== Performance Report ===")
+        
+        # Get more detailed system info
+        system_info = {
+            "OS": platform.system() + " " + platform.version(),
+            "CPU": platform.processor(),
+            "CPU Cores": psutil.cpu_count(),
+            "CPU Usage": f"{psutil.cpu_percent()}%",
+            "RAM Total": f"{psutil.virtual_memory().total / (1024**3):.1f} GB",
+            "RAM Available": f"{psutil.virtual_memory().available / (1024**3):.1f} GB",
+            "RAM Usage": f"{psutil.virtual_memory().percent}%",
+            "Python": platform.python_version(),
+            "Screen Resolution": f"{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}",
+            "DPI Scale": self.get_recommended_scaling()
+        }
+        
+        # Create log entry
+        log_entry = f"""
+    Performance Log - {time.strftime('%Y-%m-%d %H:%M:%S')}
+    System Information:
+    {chr(10).join(f'  {k}: {v}' for k, v in system_info.items())}
+
+    Timing Breakdown:
+    {chr(10).join(f'  {name}: {duration:.3f}s' for name, duration in self.timing_data)}
+
+    Tab Load Times:
+    {chr(10).join(f'  {name}: {duration:.3f}s' for name, duration in self.tab_load_times)}
+    """
+        
+        # Print to console
+        print(log_entry)
+        
+        # Only save to file if explicitly requested
+        if save_to_file:
+            try:
+                log_filename = f"performance_log_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+                with open(log_filename, "w") as f:
+                    f.write(log_entry)
+                return log_filename
+            except Exception as e:
+                print(f"Error saving performance log: {e}")
+                return None
+        
+        return log_entry
+
+    def _calculate_and_set_window_size(self):
+        """Calculate window size based on screen size, DPI, and constraints"""
+        try:
+            if os.name == 'nt':
+                # Get work area (accounting for taskbar)
+                SPI_GETWORKAREA = 48
+                work_area = ctypes.wintypes.RECT()
+                ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
+                screen_width = work_area.right - work_area.left
+                screen_height = work_area.bottom - work_area.top
+            else:
+                screen_width = self.root.winfo_screenwidth()
+                screen_height = self.root.winfo_screenheight()
+
+            # Calculate aspect ratio
+            aspect_ratio = screen_width / screen_height
+            
+            # Adjust layout based on aspect ratio
+            if aspect_ratio < 1.5:  # For unusual aspect ratios like 3:2
+                self._window_state['width_percentage'] = 0.85  # Use more width
+                self._window_state['height_percentage'] = 0.8  # And more height
+
+            # Apply DPI scaling to minimum dimensions
+            adjusted_min_width = int(self._window_state['min_width'] * self.dpi_scale)
+            adjusted_min_height = int(self._window_state['min_height'] * self.dpi_scale)
+
+            # Calculate size based on percentages with minimums
+            width = max(adjusted_min_width, int(screen_width * self._window_state['width_percentage']))
+            height = max(adjusted_min_height, int(screen_height * self._window_state['height_percentage']))
+            
+            # Ensure the window isn't larger than the screen
+            width = min(width, screen_width)
+            height = min(height, screen_height)
+            
+            # Calculate centered position
+            x = (screen_width - width) // 2
+            y = (screen_height - height) // 2
+            
+            # Store current dimensions
+            self._window_state['width'] = width
+            self._window_state['height'] = height
+            
+            if not self._window_state['is_fullscreen']:
+                geometry_string = f"{width}x{height}+{x}+{y}"
+                self.root.geometry(geometry_string)
+                self.original_geometry = geometry_string
+                
+        except Exception as e:
+            print(f"Error calculating window size: {e}")
+            # Set fallback dimensions if calculation fails
+            self.root.geometry("1200x800+100+100")
+
+    def handle_fullscreen(self):
+        """Enhanced fullscreen handling with scaling awareness"""
+        try:
+            if self._window_state['is_fullscreen']:
+                # Store current geometry if not already stored
+                if not self.original_geometry:
+                    self.original_geometry = self.root.geometry()
+                
+                # Adjust column weights for better fullscreen distribution
+                # This ensures exe frame doesn't get pushed off screen
+                self.main_frame.grid_columnconfigure(0, weight=4)  # More space for tabs
+                self.main_frame.grid_columnconfigure(1, weight=1)  # Maintain exe frame visibility
+                
+                # Set fullscreen
+                self.root.attributes('-fullscreen', True)
+                
+            else:
+                # Restore original geometry
+                self.root.attributes('-fullscreen', False)
+                if self.original_geometry:
+                    self.root.geometry(self.original_geometry)
+                    
+                # Reset to normal weight distribution
+                self.main_frame.grid_columnconfigure(0, weight=4)
+                self.main_frame.grid_columnconfigure(1, weight=1)
+        except Exception as e:
+            print(f"Error handling fullscreen: {e}")
+            self.root.attributes('-fullscreen', False)
+    
+    def add_resize_observer(self):
+        """Add window resize handling"""
+        self.root.bind('<Configure>', self.on_window_resize)
+
+    def on_window_resize(self, event):
+        """Enhanced resize handling for proper scaling"""
+        if event.widget == self.root and not self._window_state['is_fullscreen']:
+            # Update window dimensions
+            self._window_state['width'] = event.width
+            self._window_state['height'] = event.height
+            
+            # Store the new geometry
+            self.original_geometry = self.root.geometry()
+
+            # Ensure frames maintain proper proportions
+            if hasattr(self, 'tabview_frame') and hasattr(self, 'exe_selector_frame'):
+                # Let grid weights handle the proportions rather than setting fixed heights
+                # This ensures better scaling with DPI and window size changes
+                pass
+
+            # Trigger a frame update to ensure proper layout
+            self.root.update_idletasks()
+
     def setup_main_ui(self):
-        """Setup all UI components (your existing UI setup code)"""
-        # Your existing UI setup code goes here
-        self.root.resizable(True, True)
+        """Setup all UI components with proper vertical expansion"""
+        overall_start = time.time()
+        self.tab_load_times = []
+        ui_setup_start = time.time()
         
-        # Get playlist location setting from INI
+        # Basic UI setup
+        self.root.resizable(True, True)
         self.playlist_location = self.config_manager.get_playlist_location()
         
         # Set window icon
@@ -257,94 +555,112 @@ class FilterGamesApp:
                 self.root.iconphoto(True, icon_img)
         except Exception as e:
             print(f"Could not load icon: {e}")
-            
-        # Main container
+        
+         # Configure root window grid - main content and appearance frame
+        self.root.grid_rowconfigure(0, weight=1)  # Main content
+        self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
+        self.root.grid_columnconfigure(0, weight=1)
+                
+        # Create main container
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=(10, 0))
+        self.main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 0))
         
-        #self.main_frame.pack_propagate(False)
-
-        # Create the frame for the tabs (Filter Games, Advanced Configs, and Playlists)
+        # Configure main_frame grid - critical for proper space distribution
+        self.main_frame.grid_rowconfigure(0, weight=1)
+        self.main_frame.grid_columnconfigure(0, weight=4)  # TabView gets 80% of width
+        self.main_frame.grid_columnconfigure(1, weight=1)  # ExeSelector gets 20% of width
+        
+        # Create tabview frame with proper scaling
         self.tabview_frame = ctk.CTkFrame(self.main_frame, corner_radius=10, fg_color="transparent")
-        self.tabview_frame.pack(side="left", fill="both", expand=True, padx=(0, 10), pady=10)
-
-        # Create the exe selector frame (on the right side)
-        self.exe_selector_frame = ctk.CTkFrame(self.main_frame, width=300, corner_radius=10)
-        self.exe_selector_frame.pack(side="right", fill="y", padx=10, pady=(0, 10))  # Adjusted padding
-
-        # Create tab view and initialize the tabs for each class
-        self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
-        self.tabview.pack(expand=True, fill="both")
+        self.tabview_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=10)
         
-        # Check if the zzzSettings folder exists before adding the Themes tab
-        '''self.zzz_auto_path = os.path.join(os.getcwd(), "autochanger", "themes")
-        self.zzz_set_path = os.path.join(os.getcwd(), "collections", "zzzSettings")
-        self.zzz_shutdwn_path = os.path.join(os.getcwd(), "collections", "zzzShutdown")
-        if self.check_zzz_settings_folder():
-            self.Themes_games_tab = self.tabview.add("Themes")
-            self.Themes_games = Themes(self.Themes_games_tab)'''
+        # Configure tabview_frame grid
+        self.tabview_frame.grid_rowconfigure(0, weight=1)
+        self.tabview_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create exe selector frame that maintains visibility
+        self.exe_selector_frame = ctk.CTkFrame(self.main_frame, corner_radius=10)
+        self.exe_selector_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+        
+        # Configure exe_selector_frame grid
+        self.exe_selector_frame.grid_rowconfigure(0, weight=1)
+        self.exe_selector_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create tabview that will adjust its size
+        self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
+        self.tabview.grid(row=0, column=0, sticky="nsew")
+        
+        # Record base UI setup time
+        base_ui_time = time.time() - ui_setup_start
+        self.timing_data.append(("Base UI Setup", base_ui_time))
 
-        self.tab_load_times = []
-
+        # Start tracking total tab load time
+        tab_load_start = time.time()
+        
+        # Add tabs
         # MultiPath Themes tab
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
-            start_time = time.time()
+            tab_start = time.time()
             self.multi_path_themes_tab = self.tabview.add("Themes")
             self.multi_path_themes = MultiPathThemes(self.multi_path_themes_tab)
-            end_time = time.time()
-            duration = end_time - start_time
+            tab_end = time.time()
+            duration = tab_end - tab_start
             self.tab_load_times.append(("Themes", duration))
-            print(f"[TIMING] MultiPathThemes loaded in {end_time - start_time:.3f} seconds")
+            print(f"[TIMING] MultiPathThemes loaded in {duration:.3f} seconds")
 
         # Advanced Configurations tab
         if self.config_manager.determine_tab_visibility('advanced_configs'):
-            start_time = time.time()
+            tab_start = time.time()
             self.advanced_configs_tab = self.tabview.add("Advanced Configs")
             self.advanced_configs = AdvancedConfigs(self.advanced_configs_tab)
-            end_time = time.time()
-            duration = end_time - start_time
+            tab_end = time.time()
+            duration = tab_end - tab_start
             self.tab_load_times.append(("Advanced Configs", duration))
-            print(f"[TIMING] AdvancedConfigs loaded in {end_time - start_time:.3f} seconds")
+            print(f"[TIMING] AdvancedConfigs loaded in {duration:.3f} seconds")
             
         # Playlists tab
         if self.config_manager.determine_tab_visibility('playlists'):
-            start_time = time.time()
+            tab_start = time.time()
             self.playlists_tab = self.tabview.add("Playlists")
             self.playlists = Playlists(self.root, self.playlists_tab)
-            end_time = time.time()
-            duration = end_time - start_time
+            tab_end = time.time()
+            duration = tab_end - tab_start
             self.tab_load_times.append(("Playlists", duration))
-            print(f"[TIMING] Playlists loaded in {end_time - start_time:.3f} seconds")
+            print(f"[TIMING] Playlists loaded in {duration:.3f} seconds")
 
         # Filter Games tab
         if self.config_manager.determine_tab_visibility('filter_games'):
-            start_time = time.time()
+            tab_start = time.time()
             self.filter_games_tab = self.tabview.add("Filter Arcades")
             self.filter_games = FilterGames(self.filter_games_tab)
-            end_time = time.time()
-            duration = end_time - start_time
+            tab_end = time.time()
+            duration = tab_end - tab_start
             self.tab_load_times.append(("Filter Arcades", duration))
-            print(f"[TIMING] FilterGames loaded in {end_time - start_time:.3f} seconds")
+            print(f"[TIMING] FilterGames loaded in {duration:.3f} seconds")
 
         # Controls tab
         if self.config_manager.determine_tab_visibility('controls'):
-            start_time = time.time()
+            tab_start = time.time()
             self.controls_tab = self.tabview.add("Controls")
             self.controls = Controls(self.controls_tab)
-            end_time = time.time()
-            duration = end_time - start_time
+            tab_end = time.time()
+            duration = tab_end - tab_start
             self.tab_load_times.append(("Controls", duration))
-            print(f"[TIMING] Controls loaded in {end_time - start_time:.3f} seconds")
+            print(f"[TIMING] Controls loaded in {duration:.3f} seconds")
 
         # Manage Games tab
         if self.config_manager.determine_tab_visibility('view_games'):
-            start_time = time.time()
+            tab_start = time.time()
             self.view_games_tab = self.tabview.add("Manage Games")
-            self.view_games = ViewRoms(self.view_games_tab, self.config_manager)
-            end_time = time.time()
-            duration = end_time - start_time
+            self.view_games = ViewRoms(self.view_games_tab, self.config_manager, self)
+            tab_end = time.time()
+            duration = tab_end - tab_start
             self.tab_load_times.append(("Manage Games", duration))
-            print(f"[TIMING] ViewRoms loaded in {end_time - start_time:.3f} seconds")
+            print(f"[TIMING] ViewRoms loaded in {duration:.3f} seconds")
+
+        # Calculate and store total tab load time
+        total_tab_time = time.time() - tab_load_start
+        self.timing_data.append(("Total Tab Loading Time", total_tab_time))
 
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -352,44 +668,190 @@ class FilterGamesApp:
         # Add exe file selector on the right side
         self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
 
-    def _calculate_and_set_window_size(self):
-        """Calculate window size based on screen size and constraints"""
-        if os.name == 'nt':
-            # Get work area (accounting for taskbar)
-            SPI_GETWORKAREA = 48
-            work_area = ctypes.wintypes.RECT()
-            ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
-            screen_width = work_area.right - work_area.left
-            screen_height = work_area.bottom - work_area.top
-        else:
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
+        # Add total UI setup time
+        total_ui_time = time.time() - overall_start
+        self.timing_data.append(("Total UI Setup", total_ui_time))
 
-        # Calculate size based on percentages with minimums
-        width = max(
-            self._window_state['min_width'],
-            int(screen_width * self._window_state['width_percentage'])
+        # Add resize observer
+        self.add_resize_observer()
+
+        print("Debug - Final tab load times:", self.tab_load_times)
+
+    def show_performance_data(self):
+        """Show performance data in a popup window"""
+        # Prevent duplicate popups
+        if hasattr(self, 'performance_popup') and self.performance_popup:
+            self.performance_popup.lift()
+            return
+
+        # Create popup
+        popup = tk.Toplevel(self.root)
+        self.performance_popup = popup
+        popup.title("System Info")
+        popup.configure(bg='#2c2c2c')
+
+        # Calculate window size based on screen dimensions
+        screen_width = popup.winfo_screenwidth()
+        screen_height = popup.winfo_screenheight()
+        
+        # Use 60% of screen width and 70% of screen height
+        window_width = int(screen_width * 0.4)
+        window_height = int(screen_height * 0.6)
+        
+        # Center the window
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Create a scrollable frame with dark theme
+        main_frame = ctk.CTkScrollableFrame(
+            popup,
+            fg_color='#2c2c2c',
+            scrollbar_button_color='#4CAF50',
+            scrollbar_button_hover_color='#45a049',
+            width=window_width - 40  # Account for padding
         )
-        height = max(
-            self._window_state['min_height'],
-            int(screen_height * self._window_state['height_percentage'])
+        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        system_info = {
+            "System": {
+                "OS": platform.system() + " " + platform.version(),
+                "Machine": platform.machine(),
+                "Processor": platform.processor(),
+                "Python Version": platform.python_version()
+            },
+            "Hardware": {
+                "CPU Cores": psutil.cpu_count(logical=False),
+                "CPU Threads": psutil.cpu_count(),
+                "CPU Usage": f"{psutil.cpu_percent()}%",
+                "Total RAM": f"{psutil.virtual_memory().total / (1024**3):.1f} GB",
+                "Available RAM": f"{psutil.virtual_memory().available / (1024**3):.1f} GB",
+                "RAM Usage": f"{psutil.virtual_memory().percent}%",
+                "Disk Usage": f"{psutil.disk_usage('/').percent}%"
+            },
+            "Display": {
+                "Screen Resolution": f"{screen_width}x{screen_height}"
+            }
+        }
+
+        # Add each section
+        for section_name, section_data in system_info.items():
+            section_label = ctk.CTkLabel(
+                main_frame,
+                text=section_name,
+                font=("Helvetica", 18, "bold"),
+                text_color="#4CAF50"
+            )
+            section_label.pack(pady=(20, 10), anchor="w")
+
+            section_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
+            section_frame.pack(fill="x", padx=5, pady=(0, 10))
+
+            for key, value in section_data.items():
+                info_label = ctk.CTkLabel(
+                    section_frame,
+                    text=f"{key}: {value}",
+                    font=("Helvetica", 12),
+                    text_color="#ffffff"
+                )
+                info_label.pack(pady=2, padx=10, anchor="w")
+
+        # Performance Metrics Section
+        perf_label = ctk.CTkLabel(
+            main_frame,
+            text="Performance Metrics",
+            font=("Helvetica", 18, "bold"),
+            text_color="#4CAF50"
         )
-        
-        # Ensure the window isn't larger than the screen
-        width = min(width, screen_width)
-        height = min(height, screen_height)
-        
-        # Calculate centered position
-        x = (screen_width - width) // 2
-        y = (screen_height - height) // 2
-        
-        # Store current dimensions
-        self._window_state['width'] = width
-        self._window_state['height'] = height
-        
-        # Set geometry
-        if not self._window_state['is_fullscreen']:
-            self.root.geometry(f"{width}x{height}+{x}+{y}")
+        perf_label.pack(pady=(20, 10), anchor="w")
+
+        perf_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
+        perf_frame.pack(fill="x", padx=5, pady=(0, 10))
+
+        # Startup Times Section
+        startup_label = ctk.CTkLabel(
+            perf_frame,
+            text="Startup Times",
+            font=("Helvetica", 14, "bold"),
+            text_color="#00BCD4"
+        )
+        startup_label.pack(pady=5, padx=10, anchor="w")
+
+        startup_frame = ctk.CTkFrame(perf_frame, fg_color='#252525', corner_radius=5)
+        startup_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        total_time = 0
+        for entry in self.timing_data:
+            if isinstance(entry, tuple) and len(entry) == 2:
+                name, duration = entry
+                total_time += duration
+                timing_label = ctk.CTkLabel(
+                    startup_frame,
+                    text=f"{name}: {duration:.3f} seconds",
+                    font=("Helvetica", 12),
+                    text_color="#ffffff"
+                )
+                timing_label.pack(pady=2, padx=10, anchor="w")
+
+        if total_time > 0:
+            total_label = ctk.CTkLabel(
+                startup_frame,
+                text=f"Total Startup Time: {total_time:.3f} seconds",
+                font=("Helvetica", 12, "bold"),
+                text_color="#4CAF50"
+            )
+            total_label.pack(pady=(5, 10), padx=10, anchor="w")
+
+        # Tab Load Times Section
+        if hasattr(self, 'tab_load_times') and self.tab_load_times:
+            tabs_label = ctk.CTkLabel(
+                perf_frame,
+                text="\nTab Load Times",
+                font=("Helvetica", 14, "bold"),
+                text_color="#00BCD4"
+            )
+            tabs_label.pack(pady=5, padx=10, anchor="w")
+
+            tabs_frame = ctk.CTkFrame(perf_frame, fg_color='#252525', corner_radius=5)
+            tabs_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+            total_tab_time = 0
+            for tab_name, duration in self.tab_load_times:
+                tab_label = ctk.CTkLabel(
+                    tabs_frame,
+                    text=f"{tab_name}: {duration:.3f} seconds",
+                    font=("Helvetica", 12),
+                    text_color="#ffffff"
+                )
+                tab_label.pack(pady=2, padx=10, anchor="w")
+                total_tab_time += duration
+
+            # Add total tab load time
+            total_tab_label = ctk.CTkLabel(
+                tabs_frame,
+                text=f"\nTotal Tab Load Time: {total_tab_time:.3f} seconds",
+                font=("Helvetica", 12, "bold"),
+                text_color="#4CAF50"
+            )
+            total_tab_label.pack(pady=(5, 10), padx=10, anchor="w")
+
+        # Get the centralized popup management
+        on_close = self.show_popup(popup)
+
+        # OK Button
+        def close_popup():
+            self.performance_popup = None
+            if on_close:
+                on_close()
+
+        ok_button = ctk.CTkButton(
+            main_frame,
+            text="OK",
+            command=close_popup,
+            fg_color='#4CAF50',
+            hover_color='#45a049'
+        )
+        ok_button.pack(pady=10)
 
     def _on_window_configure(self, event):
         """Track window size changes when not in fullscreen"""
@@ -404,594 +866,12 @@ class FilterGamesApp:
             self._window_state['width_percentage'] = event.width / screen_width
             self._window_state['height_percentage'] = event.height / screen_height
 
-    def show_whats_new_popup_BASIC(self):
-        """Show the 'What's New' popup with the latest updates."""
-        def show_popup():
-            popup = tk.Toplevel(self.root)
-            popup.title("What's New")
-            popup.configure(bg='#2c2c2c')
-
-            window_width = 1000
-            window_height = 700
-
-            # Example usage of the version from ConfigManager
-            version_text = ConfigManager.CONFIG_FILE_VERSION
-
-            # Center the window
-            screen_width = popup.winfo_screenwidth()
-            screen_height = popup.winfo_screenheight()
-            x = (screen_width // 2) - (window_width // 2)
-            y = (screen_height // 2) - (window_height // 2)
-            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-            # Title Label
-            title_label = ctk.CTkLabel(
-                popup,
-                text=f"What's New in Version {version_text} 🎉",
-                text_color='#ffffff',
-                font=('Helvetica', 24, 'bold'),
-            )
-            title_label.pack(pady=(0, 30))
-
-            # Create main frame for content with padding
-            main_frame = ctk.CTkFrame(popup, fg_color='#2c2c2c')
-            main_frame.pack(fill="both", expand=True, padx=20, pady=20)
-
-            # Create a scrollable frame for the content
-            scrollable_frame = ctk.CTkScrollableFrame(main_frame, fg_color='transparent')
-            scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-            # Content frame for left-aligned items
-            content_frame = ctk.CTkFrame(scrollable_frame, fg_color='transparent')
-            content_frame.pack(fill="both", expand=True, padx=10)
-
-            # New Features section
-            new_features_label = ctk.CTkLabel(
-                content_frame,
-                text="New Features",
-                text_color='#4CAF50',  # Green color for section header
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            new_features_label.pack(fill="x", pady=(0, 10))
-
-            features = [
-                #"⭐ Controls Tab\nSet controls with the press of a button on your xinput device or keyboard.",
-                "⭐ Apply Saved Appearance Mode on Startup\nApp now remembers last appearance mode (Dark, Light, System) on startup.\n",
-                "⭐ New toggle Fullscreen on Startup.\nToggle to open app on fullscreen or normal window. Saved in INI file.\nAdded Close button for fullscreen mode.\n",
-                "⭐ Troubleshooting.\nWhats New button will display times for each tab to build.\n",
-                #"⭐ Manage ROMs Tab\nMove artwork and ROMs easily with a few clicks of a button!",
-                #"⭐ GUI Exit State\nThe application now remembers your last state after execution."
-            ]
-
-            for feature in features:
-                feature_label = ctk.CTkLabel(
-                    content_frame,
-                    text=feature,
-                    text_color="#e0e0e0",
-                    font=("Helvetica", 14),
-                    anchor="w",
-                    justify="left"
-                )
-                feature_label.pack(fill="x", pady=(0, 10))
-
-            # Bug Fixes section
-            bug_fixes_label = ctk.CTkLabel(
-                content_frame,
-                text="Improvements & Bug Fixes",
-                text_color='#FF9800',  # Orange color for section header
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            bug_fixes_label.pack(fill="x", pady=(20, 10))  # Consistent padding
-
-            fixes = [
-                "👾 Various bug fixes and stability improvements",
-                "🚀 Performance optimizations and enhancements"
-            ]
-
-            for fix in fixes:
-                fix_label = ctk.CTkLabel(
-                    content_frame,
-                    text=fix,
-                    text_color="#e0e0e0",
-                    font=("Helvetica", 14),
-                    anchor="w",
-                    justify="left"
-                )
-                fix_label.pack(fill="x", pady=(0, 5))
-
-            # =================================
-            #  Display Tab Load Times
-            # =================================
-            times_label = ctk.CTkLabel(
-                content_frame,
-                text="Tab Load Times",
-                text_color='#4CAF50',
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            times_label.pack(fill="x", pady=(20, 10))  # Consistent padding
-
-            # Create a frame for the load-time lines
-            times_frame = ctk.CTkFrame(content_frame, corner_radius=10)
-            times_frame.pack(fill="x", pady=(0, 20), padx=5)
-
-            for tab_name, duration in self.tab_load_times:
-                item_label = ctk.CTkLabel(
-                    times_frame,
-                    text=f"{tab_name} loaded in {duration:.3f} seconds",
-                    text_color="#ffffff",
-                    font=("Helvetica", 12),
-                    anchor="w"
-                )
-                item_label.pack(fill="x", pady=5, padx=10)
-
-            # Bottom frame for checkbox and button
-            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
-            bottom_frame.pack(fill="x", pady=(20, 0))
-
-            # Do not show again checkbox
-            '''do_not_show_var = tk.BooleanVar()
-            do_not_show_checkbox = ctk.CTkCheckBox(
-                bottom_frame,
-                text="Do not show again",
-                variable=do_not_show_var,
-                font=('Helvetica', 12),
-                text_color="#e0e0e0"
-            )
-            do_not_show_checkbox.pack(side="left", padx=(0, 10))'''
-
-            # OK button
-            def on_ok():
-                popup.destroy()
-
-            ok_button = ctk.CTkButton(
-                bottom_frame,
-                text="Got it!",
-                command=on_ok,
-                fg_color='#4CAF50',
-                hover_color='#45a049',
-                width=100
-            )
-            ok_button.pack(side="right", padx=(0, 10))
-
-            popup.transient(self.root)
-            popup.grab_set()
-            popup.wait_window()
-
-        show_popup()
-
-    def show_whats_new_popup_enahanced(self):
-        """Show the 'What's New' popup with the latest updates."""
-        # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
-        WINDOW_SIZE = {
-            'width': 800,
-            'height': 800,
-        }
-
-        SIZES = {
-            'icon': 20,  # Size in pixels for feature/bug icons
-            'screenshot': 400,  # Max width for screenshots in pixels
-            'window_padding': 20,  # Padding around the main window
-            'content_padding': 15,  # Padding for content elements
-            'button_spacing': 30,  # Spacing from scrollbar for bottom elements
-        }
-        # =================================================
-
-        # Helper function to get correct asset path
-        def get_asset_path(relative_path):
-            # First try the regular assets path
-            regular_path = os.path.join('assets', relative_path)
-            # Then try the PyInstaller temp directory path
-            bundled_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'assets', relative_path)
-            # Return the first path that exists
-            return regular_path if os.path.exists(regular_path) else bundled_path
-
-        # Define all asset paths using the helper function
-        assets = {
-            'feature_icon': get_asset_path('icons/feature_icon.png'),
-            'bug_icon': get_asset_path('icons/bug_icon.png'),
-            'rocket_icon': get_asset_path('icons/rocket_icon.png'),
-            'CoinOPS': get_asset_path('icons/CoinOPS.png'),
-            'image0': get_asset_path('screenshots/image0.png'),
-            #'image1': get_asset_path('screenshots/image1.png'),
-            #'image2': get_asset_path('screenshots/image2.png'),
-        }
-
-        def load_icon(icon_path, fallback="⭐"):
-            """Load PNG icon with fallback to text symbol."""
-            try:
-                original = tk.PhotoImage(file=icon_path)
-                aspect_ratio = original.width() / original.height()
-                new_width = SIZES['icon']
-                new_height = int(SIZES['icon'] / aspect_ratio)
-                subsample_x = original.width() // new_width
-                subsample_y = original.height() // new_height
-                if subsample_x > 0 and subsample_y > 0:
-                    return original.subsample(subsample_x, subsample_y)
-                return original
-            except (tk.TclError, FileNotFoundError):
-                print(f"Could not load icon from {icon_path}, using fallback")
-                return fallback
-
-        def resize_screenshot(screenshot):
-            """Resize screenshot to fit the desired width while maintaining aspect ratio."""
-            original_width = screenshot.width()
-            original_height = screenshot.height()
-
-            if original_width > SIZES['screenshot']:
-                aspect_ratio = original_width / original_height
-                new_width = SIZES['screenshot']
-                new_height = int(SIZES['screenshot'] / aspect_ratio)
-
-                subsample_x = original_width // new_width
-                subsample_y = original_height // new_height
-
-                if subsample_x > 0 and subsample_y > 0:
-                    return screenshot.subsample(subsample_x, subsample_y)
-            return screenshot
-
-        def create_feature_frame(parent, icon, title, description, image_path=None, full_width=False):
-            """Create a framed feature that can be either full-width or split layout, with a consistent outer border."""
-            # Outer frame for the darker border
-            outer_frame = ctk.CTkFrame(
-                parent,
-                fg_color="#1e1e1e",  # Darker border color
-                corner_radius=10,  # Rounded corners for the outer border
-            )
-            outer_frame.pack(fill="x", pady=(10, 20), padx=20)  # Padding around the entire frame
-
-            # Inner frame for the lighter content area
-            inner_frame = ctk.CTkFrame(
-                outer_frame,
-                fg_color="#252525",  # Lighter gray color for the inner frame
-                corner_radius=8,  # Slightly smaller rounding for the inner frame
-            )
-            inner_frame.pack(fill="both", expand=True, padx=10, pady=10)  # Padding inside the border
-
-            if full_width:
-                # Full-width layout
-                # Single content area for full-width items
-                content = ctk.CTkFrame(
-                    inner_frame,
-                    fg_color="#252525",  # Lighter gray for content
-                    corner_radius=8,
-                )
-                content.pack(fill="both", expand=True, padx=10, pady=10)
-
-                # Header frame for icon and title
-                header_frame = ctk.CTkFrame(content, fg_color="transparent")
-                header_frame.pack(fill="x", pady=(10, 5))
-
-                if isinstance(icon, str):
-                    icon_label = ctk.CTkLabel(
-                        header_frame,
-                        text=icon,
-                        font=("Helvetica", 14),
-                        width=20,
-                    )
-                else:
-                    icon_label = tk.Label(
-                        header_frame,
-                        image=icon,
-                        bg="#252525",
-                    )
-                icon_label.pack(side="left", padx=(5, 10))
-
-                title_label = ctk.CTkLabel(
-                    header_frame,
-                    text=title,
-                    text_color="#ffffff",
-                    font=("Helvetica", 16, "bold"),
-                    anchor="w",
-                )
-                title_label.pack(side="left", fill="x", expand=True)
-
-                # Description
-                desc_label = ctk.CTkLabel(
-                    content,
-                    text=description,
-                    text_color="#e0e0e0",
-                    font=("Helvetica", 12),
-                    justify="left",
-                    anchor="w",
-                    wraplength=800,  # Adjusted for full width
-                )
-                desc_label.pack(fill="both", expand=True, pady=(10, 10), padx=15)
-            else:
-                # Split layout
-                inner_frame.grid_columnconfigure(0, weight=1)  # Left column
-                inner_frame.grid_columnconfigure(1, weight=1)  # Right column
-
-                # Left content (text area)
-                left_content = ctk.CTkFrame(
-                    inner_frame,
-                    fg_color="#252525",  # Same color as the inner frame
-                    corner_radius=0,  # No additional border
-                )
-                left_content.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-
-                header_frame = ctk.CTkFrame(left_content, fg_color="transparent")
-                header_frame.pack(fill="x", pady=(5, 5))
-
-                if isinstance(icon, str):
-                    icon_label = ctk.CTkLabel(
-                        header_frame,
-                        text=icon,
-                        font=("Helvetica", 14),
-                        width=20,
-                    )
-                else:
-                    icon_label = tk.Label(
-                        header_frame,
-                        image=icon,
-                        bg="#252525",
-                    )
-                icon_label.pack(side="left", padx=(5, 10))
-
-                title_label = ctk.CTkLabel(
-                    header_frame,
-                    text=title,
-                    text_color="#ffffff",
-                    font=("Helvetica", 16, "bold"),
-                    anchor="w",
-                )
-                title_label.pack(side="left", fill="x", expand=True)
-
-                desc_label = ctk.CTkLabel(
-                    left_content,
-                    text=description,
-                    text_color="#e0e0e0",
-                    font=("Helvetica", 12),
-                    justify="left",
-                    anchor="w",
-                    wraplength=400,
-                )
-                desc_label.pack(fill="both", expand=True, pady=(10, 10), padx=15)
-
-                # Right content (image area)
-                if image_path:
-                    try:
-                        right_content = ctk.CTkFrame(
-                            inner_frame,
-                            fg_color="#252525",  # Same color as the inner frame
-                            corner_radius=0,  # No additional border
-                        )
-                        right_content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-
-                        original_screenshot = tk.PhotoImage(file=image_path)
-                        resized_screenshot = resize_screenshot(original_screenshot)
-
-                        screenshot_label = tk.Label(
-                            right_content,
-                            image=resized_screenshot,
-                            bg="#252525",  # Match the inner frame background
-                        )
-                        screenshot_label.image = resized_screenshot
-                        screenshot_label.pack(expand=True, padx=5, pady=5)
-
-                    except (tk.TclError, FileNotFoundError) as e:
-                        print(f"Failed to load screenshot {image_path}: {e}")
-
-            return outer_frame
-
-        def show_popup():
-            popup = tk.Toplevel(self.root)
-            popup.title("What's New")
-            popup.configure(bg='#2c2c2c')
-
-            window_width = 1000
-            window_height = 700
-
-            # Example usage of the version from ConfigManager
-            version_text = ConfigManager.CONFIG_FILE_VERSION
-
-            # Center the window
-            screen_width = popup.winfo_screenwidth()
-            screen_height = popup.winfo_screenheight()
-            x = (screen_width // 2) - (window_width // 2)
-            y = (screen_height // 2) - (window_height // 2)
-            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-            # Now you can dynamically include it in your label
-            title_label = ctk.CTkLabel(
-                popup,
-                text=f"What's New in Version {version_text} 🎉",
-                text_color='#ffffff',
-                font=('Helvetica', 24, 'bold'),
-            )
-            title_label.pack(pady=(0, 30))
-
-            # Main scrollable frame with darker background
-            main_frame = ctk.CTkScrollableFrame(
-                popup,
-                fg_color='#2c2c2c',
-                scrollbar_button_color='#4CAF50',
-                scrollbar_button_hover_color='#45a049',
-                width=window_width - 40
-            )
-            main_frame.pack(
-                fill="both",
-                expand=True,
-                padx=SIZES['window_padding'],
-                pady=SIZES['window_padding']
-            )
-
-            # Load icons with fallbacks
-            feature_icon = load_icon(assets['feature_icon'], "⭐")
-            bug_icon = load_icon(assets['bug_icon'], "👾")
-            rocket_icon = load_icon(assets['rocket_icon'], "🚀")
-
-            # New Features section
-            new_features_label = ctk.CTkLabel(
-                main_frame,
-                text="Shout Out",
-                text_color='#4CAF50',
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            new_features_label.pack(fill="x", pady=(0, 10))
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Thanks to the CoinOPS Team",
-                "BP.",
-                image_path=assets['CoinOPS']  # Pass the correct image path here
-            )
-
-            # New Features section
-            new_features_label = ctk.CTkLabel(
-                main_frame,
-                text="New Features",
-                text_color='#4CAF50',
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            new_features_label.pack(fill="x", pady=(0, 10))
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Apply Saved Appearance Mode on Startup",
-                "App now remembers last appearance mode (Dark, Light, System) on startup.",
-                image_path=assets['image0'],  # Pass the correct image path here
-                full_width=False
-            )
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "New toggle Fullscreen on Startup",
-                "Toggle to open app on fullscreen or normal window. Saved in INI file.\nAdded Close button for fullscreen mode.",
-                full_width=True
-            )
-
-            create_feature_frame(
-                main_frame,
-                rocket_icon,
-                "Remove Games",
-                "Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
-                full_width=True
-            )
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Advanced Configs, and Manage Games",
-                "Can add folders, and sub folders to append list in Advanced Configs via ini.\nCan add collections and roms to exclude from manage games tab.",
-                full_width=True
-            )
-
-            '''create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Themes Tab",
-                "Can now have multiple roms, logo, and video folders added to INI file.\nIf found, a Jump Category button will show and allow you to jump between them.",
-                image_path=assets['image0']  # Pass the correct image path here
-            )
-
-            create_feature_frame(
-                main_frame,
-                feature_icon,
-                "Controls Tab",
-                "Added controller icon to xinput controls",
-                image_path=assets['image1']  # Pass the correct image path here
-            )'''
-
-            create_feature_frame(
-                main_frame,
-                rocket_icon,
-                "Performance Improvements",
-                "Defer (Lazy) Creation of GUI Elements for Advanced Configs Tab\nShould load faster on startup, but may increase load times on initial loading of each tab",
-                full_width=True
-            )
-
-            # New Features section
-            new_features_label = ctk.CTkLabel(
-                main_frame,
-                text="Performance & Bug Fixes",
-                text_color='#4CAF50',
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            new_features_label.pack(fill="x", pady=(0, 10))
-
-            create_feature_frame(
-                main_frame,
-                bug_icon,
-                "Various bug fixes and stability improvements",
-                "Performance optimizations and enhancements",
-                #"Remove Games",
-                #"Roms should now load almost instantly\nFixed issue with rom names not detecting correctly when removing, due to showing friendly names in UI\nRom names are now larger",
-                full_width=True
-            )
-
-            times_label = ctk.CTkLabel(
-                main_frame,
-                text="Tab Load Times",
-                text_color='#4CAF50',
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            times_label.pack(fill="x", pady=(0, 10))
-
-            # Create a frame for the load-time lines
-            times_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
-            times_frame.pack(fill="x", pady=(0, 20), padx=5)
-
-            for tab_name, duration in self.tab_load_times:
-                item_label = ctk.CTkLabel(
-                    times_frame,
-                    text=f"{tab_name} loaded in {duration:.3f} seconds",
-                    text_color="#ffffff",
-                    font=("Helvetica", 12),
-                    anchor="w"
-                )
-                item_label.pack(fill="x", pady=5, padx=10)
-
-            # Bottom frame with OK button
-            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
-            bottom_frame.pack(fill="x", pady=(20, 0))
-
-            # Bottom frame with adjusted spacing
-            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
-            bottom_frame.pack(fill="x", pady=(20, 0))
-
-            # OK button
-            def on_ok():
-                    popup.destroy()
-
-            ok_button = ctk.CTkButton(
-                bottom_frame,
-                text="Got it!",
-                command=on_ok,
-                fg_color='#4CAF50',
-                hover_color='#45a049',
-                width=100
-            )
-            ok_button.pack(side="right", padx=(0, SIZES['button_spacing']))
-
-            popup.transient(self.root)
-            popup.grab_set()
-            popup.wait_window()
-
-        show_popup()
-
     def show_whats_new_popup(self):
         """Show the 'What's New' popup with the latest updates."""
         # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
         WINDOW_SIZE = {
-            'width': 800,
-            'height': 800,
+            'width_percentage': 0.4,  # 70% of screen width
+            'height_percentage': 0.6,  # 80% of screen height
         }
 
         SIZES = {
@@ -1217,39 +1097,47 @@ class FilterGamesApp:
             return outer_frame
 
         def show_popup():
+            if hasattr(self, '_whats_new_window') and self._whats_new_window:
+                self._whats_new_window.lift()
+                return
+
             popup = tk.Toplevel(self.root)
+            self._whats_new_window = popup
             popup.title("What's New")
             popup.configure(bg='#2c2c2c')
-
-            window_width = 1000
-            window_height = 700
-
-            # Example usage of the version from ConfigManager
-            version_text = ConfigManager.CONFIG_FILE_VERSION
-
-            # Center the window
+            
+            # Position the window
             screen_width = popup.winfo_screenwidth()
             screen_height = popup.winfo_screenheight()
+            window_width = int(screen_width * WINDOW_SIZE['width_percentage'])
+            window_height = int(screen_height * WINDOW_SIZE['height_percentage'])
             x = (screen_width // 2) - (window_width // 2)
             y = (screen_height // 2) - (window_height // 2)
             popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
-            # Now you can dynamically include it in your label
+            # Get the config version
+            current_version = self.config_manager.config.get(
+                "DEFAULT", 
+                self.config_manager.CONFIG_VERSION_KEY, 
+                fallback=self.config_manager.CONFIG_FILE_VERSION
+            )
+
+            # Create title label
             title_label = ctk.CTkLabel(
                 popup,
-                text=f"What's New in Version {version_text} 🎉",
+                text=f"What's New in Version {current_version} 🎉",
                 text_color='#ffffff',
                 font=('Helvetica', 24, 'bold'),
             )
             title_label.pack(pady=(0, 30))
 
-            # Main scrollable frame with darker background
+            # Main scrollable frame
             main_frame = ctk.CTkScrollableFrame(
                 popup,
                 fg_color='#2c2c2c',
                 scrollbar_button_color='#4CAF50',
                 scrollbar_button_hover_color='#45a049',
-                width=window_width - 40
+                width=window_width - (2 * SIZES['window_padding'])
             )
             main_frame.pack(
                 fill="both",
@@ -1268,13 +1156,22 @@ class FilterGamesApp:
             try:
                 with open(json_file_path, "r", encoding="utf-8") as f:
                     whats_new_data = json.load(f)
+                    sections = whats_new_data.get("sections", [])
             except Exception as e:
-                print(f"Error loading JSON file: {e}")
-                whats_new_data = []
+                print(f"Whats New file not found - using default content")
+                sections = [{
+                    "section_header": "Welcome",
+                    "section_color": "#4CAF50",
+                    "items": [{
+                        "title": "Test Version",
+                        "description": "This is a test build - whats_new.json not found",
+                        "icon_key": "feature_icon",
+                        "full_width": True
+                    }]
+                }]
 
-            # After you load the JSON:
-            for section in whats_new_data:
-                # 1. Create the section label
+            # Process sections
+            for section in sections:
                 section_label_text = section.get("section_header", "Untitled Section")
                 section_label_color = section.get("section_color", "#4CAF50")
 
@@ -1288,65 +1185,51 @@ class FilterGamesApp:
                 )
                 new_features_label.pack(fill="x", pady=(0, 10))
 
-                # 2. Loop over each item (feature/bug) in this section
                 for item in section.get("items", []):
-                    # Extract data
-                    icon_key     = item.get("icon_key", "feature_icon")
-                    title        = item.get("title", "No title")
-                    description  = item.get("description", "No description")
-                    full_width   = item.get("full_width", False)
-                    image_key    = item.get("image_key")  # optional
+                    icon_key = item.get("icon_key", "feature_icon")
+                    title = item.get("title", "No title")
+                    description = item.get("description", "No description")
+                    full_width = item.get("full_width", False)
+                    image_key = item.get("image_key")
 
-                    # figure out icon from assets
                     icon = load_icon(assets[icon_key], "⭐") if icon_key in assets else "⭐"
+                    image_path = assets.get(image_key) if image_key and image_key in assets else None
 
-                    # figure out image path, if any
-                    if image_key and image_key in assets:
-                        image_path = assets[image_key]
-                    else:
-                        image_path = None
-
-                    # Now create the feature frame using your existing function
                     create_feature_frame(
-                        parent      = main_frame,
-                        icon        = icon,
-                        title       = title,
-                        description = description,
-                        image_path  = image_path,
-                        full_width  = full_width
+                        parent=main_frame,
+                        icon=icon,
+                        title=title,
+                        description=description,
+                        image_path=image_path,
+                        full_width=full_width
                     )
 
-            times_label = ctk.CTkLabel(
-                main_frame,
-                text="Tab Load Times",
-                text_color='#4CAF50',
-                font=('Helvetica', 18, 'bold'),
-                anchor="w",
-                justify="left"
-            )
-            times_label.pack(fill="x", pady=(0, 10))
-
-            # Create a frame for the load-time lines
-            times_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
-            times_frame.pack(fill="x", pady=(0, 20), padx=5)
-
-            for tab_name, duration in self.tab_load_times:
-                item_label = ctk.CTkLabel(
-                    times_frame,
-                    text=f"{tab_name} loaded in {duration:.3f} seconds",
-                    text_color="#ffffff",
-                    font=("Helvetica", 12),
-                    anchor="w"
-                )
-                item_label.pack(fill="x", pady=5, padx=10)
-
-            # Bottom frame with OK button
+            # Bottom frame with buttons
             bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
             bottom_frame.pack(fill="x", pady=(20, 0))
 
+            def show_system_info():
+                self.show_performance_data()
+
+            # System Info button
+            system_info_button = ctk.CTkButton(
+                bottom_frame,
+                text="System Info",
+                command=show_system_info,
+                fg_color="#1f538d",
+                hover_color="#14375e",
+                width=100
+            )
+            system_info_button.pack(side="left", padx=(SIZES['button_spacing'], 0))
+
+            # Get the centralized popup management
+            on_close = self.show_popup(popup)
+
             # OK button
             def on_ok():
-                    popup.destroy()
+                self._whats_new_window = None
+                if on_close:
+                    on_close()
 
             ok_button = ctk.CTkButton(
                 bottom_frame,
@@ -1358,9 +1241,7 @@ class FilterGamesApp:
             )
             ok_button.pack(side="right", padx=(0, SIZES['button_spacing']))
 
-            popup.transient(self.root)
-            popup.grab_set()
-            popup.wait_window()
+            return popup
 
         show_popup()
 
@@ -1401,14 +1282,55 @@ class FilterGamesApp:
         print(f"Warning: No themes folders found. Will remove Themes tab")
         return False      
     
+    def initialize_app(self):
+        """Initialize the main application with loading status updates"""
+        try:
+            # Configure all root grid weights first
+            self.root.grid_rowconfigure(0, weight=1)  # Main content
+            self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
+            self.root.grid_columnconfigure(0, weight=1)
+
+            # Window Configuration
+            self.splash.update_status("Setting up window configurations...")
+            self._calculate_and_set_window_size()
+            
+            # UI Setup
+            self.splash.update_status("Setting up user interface...")
+            self.setup_main_ui()
+            
+            # Calculate total time
+            total_time = time.time() - self.start_time
+            self.timing_data.append(("Total Startup", total_time))
+            
+            # Log timing data
+            self.log_performance_data()
+            
+            self.splash.update_status("Launch complete!")
+            self.root.after(1000, self.finish_loading)
+
+        except Exception as e:
+            print(f"Error during initialization: {e}")
+            import traceback
+            traceback.print_exc()
+            self.splash.update_status(f"Error: {str(e)}")
+
     def add_appearance_mode_frame(self, fullscreen=False):
+        """Add appearance mode frame using grid layout"""
         # Check if the frame already exists
         if hasattr(self, "appearance_frame"):
             return  # Do nothing if the frame already exists
 
         # Create frame
         self.appearance_frame = ctk.CTkFrame(self.root, corner_radius=10)
-        self.appearance_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+        self.appearance_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
+
+        # Create a grid layout inside appearance frame
+        self.appearance_frame.grid_columnconfigure(0, weight=0)  # Version button
+        self.appearance_frame.grid_columnconfigure(2, weight=0)  # Fullscreen toggle
+        self.appearance_frame.grid_columnconfigure(3, weight=1)  # Flexible space
+        self.appearance_frame.grid_columnconfigure(4, weight=0)  # Scale
+        self.appearance_frame.grid_columnconfigure(5, weight=0)  # Appearance mode
+        self.appearance_frame.grid_columnconfigure(6, weight=0)  # Close button
 
         # Get the config version
         current_version = self.config_manager.config.get(
@@ -1421,60 +1343,143 @@ class FilterGamesApp:
         has_been_clicked = self.config_manager.get_whats_new_clicked()
 
         # Set initial colors
-        button_color = "#1f538d" if has_been_clicked else "#4CAF50"  # Blue if clicked, Green if not
-        hover_color = "#14375e" if has_been_clicked else "#45a049"   # Darker blue if clicked, Darker green if not
+        button_color = "#1f538d" if has_been_clicked else "#4CAF50"
+        hover_color = "#14375e" if has_been_clicked else "#45a049"
 
         # Create version button
         version_button = ctk.CTkButton(
             self.appearance_frame,
-            text=f"Whats New v{current_version}",
+            text=f"What's New v{current_version}",
             font=("Arial", 14, "bold"),
             command=lambda: self.on_version_button_click(version_button),
             fg_color=button_color,
             hover_color=hover_color
         )
-        version_button.pack(side="left", padx=(10, 10), pady=10)
+        version_button.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="ew")
 
-        # Start flash animation if button hasn't been clicked
         if not has_been_clicked:
             self._start_flash_animation(version_button)
+
+        # Add system info button
+        #timing_button = ctk.CTkButton(
+           #self.appearance_frame,
+            #text="System Info",
+            #command=self.show_performance_data,
+            #fg_color="#1f538d",
+            #hover_color="#14375e"
+        #)
+        #timing_button.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
 
         # Add fullscreen toggle
         fullscreen_switch = ctk.CTkSwitch(
             self.appearance_frame,
             text="Start in Fullscreen",
-            command=lambda: self.set_fullscreen_preference(fullscreen_switch.get()),
+            command=lambda: self.set_fullscreen_preference(fullscreen_switch.get())
         )
-        fullscreen_switch.pack(side="left", padx=(10, 10), pady=10)
+        fullscreen_switch.grid(row=0, column=2, padx=5, pady=10, sticky="w")
 
-        # Set initial value based on config
         if self.config_manager.get_fullscreen_preference():
             fullscreen_switch.select()
         else:
             fullscreen_switch.deselect()
 
-        # Add a close button
+        # Add scaling factor dropdown
+        scaling_optionmenu = ctk.CTkOptionMenu(
+            self.appearance_frame,
+            values=["80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%"],
+            command=self.change_scaling_event
+        )
+        scaling_optionmenu.grid(row=0, column=4, padx=5, pady=10, sticky="e")
+
+        # Add appearance mode dropdown
+        current_mode = self.config_manager.get_appearance_mode()
+        appearance_mode_optionmenu = ctk.CTkOptionMenu(
+            self.appearance_frame,
+            values=["Dark", "Light", "System"],
+            command=lambda mode: self.set_appearance_mode(mode)
+        )
+        appearance_mode_optionmenu.grid(row=0, column=5, padx=5, pady=10, sticky="e")
+        appearance_mode_optionmenu.set(current_mode)
+
+        # Add close button
         close_button = ctk.CTkButton(
             self.appearance_frame,
             text="Close",
             font=("Arial", 14, "bold"),
-            fg_color="red",  # Set distinct color for the close button
+            fg_color="red",
             hover_color="darkred",
             command=self.close_app
         )
-        close_button.pack(side="right", padx=10, pady=10)
+        close_button.grid(row=0, column=6, padx=(5, 10), pady=10, sticky="e")
 
-        # The appearance mode dropdown
-        current_mode = self.config_manager.get_appearance_mode()
-        appearance_mode_optionmenu = ctk.CTkOptionMenu(
-            self.appearance_frame, 
-            values=["Dark", "Light", "System"],
-            command=lambda mode: self.set_appearance_mode(mode),
-        )
-        appearance_mode_optionmenu.pack(side="right", padx=(0, 10), pady=10)  # Adjust padding to align nicely
+        # Set default scaling based on screen properties
+        current_scale = self.get_recommended_scaling()
+        scaling_optionmenu.set(f"{int(current_scale * 100)}%")
 
-        # Set the dropdown to reflect the current mode
-        appearance_mode_optionmenu.set(current_mode)
+    def add_resize_observer(self):
+        """Add window resize handling"""
+        self.root.bind('<Configure>', self.on_window_resize)
+
+    def on_window_resize(self, event):
+        """Handle window resize events"""
+        if event.widget == self.root and not self._window_state['is_fullscreen']:
+            # Update window dimensions
+            self._window_state['width'] = event.width
+            self._window_state['height'] = event.height
+            
+            # Store the new geometry
+            self.original_geometry = self.root.geometry()
+
+            # Ensure proper height distribution
+            if hasattr(self, 'tabview_frame') and hasattr(self, 'exe_selector_frame'):
+                main_height = self.main_frame.winfo_height()
+                min_height = int(200 * self.dpi_scale)  
+                
+                self.tabview_frame.configure(height=max(main_height - 20, min_height))
+                self.exe_selector_frame.configure(height=max(main_height - 20, min_height))
+
+    def get_recommended_scaling(self):
+        """Calculate recommended scaling based on screen resolution and DPI"""
+        try:
+            # Get screen DPI
+            from ctypes import windll
+            dpi = windll.user32.GetDpiForSystem() / 96.0
+        except:
+            dpi = 1.0
+            
+        # Get screen dimensions
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Base scaling on screen size and DPI
+        base_scale = min(screen_width / 1920, screen_height / 1080)  # 1080p as reference
+        recommended_scale = base_scale * dpi
+        
+        # Round to nearest 10%
+        rounded_scale = round(recommended_scale * 10) / 10
+        
+        # Clamp between 0.8 and 1.5
+        return max(0.8, min(1.5, rounded_scale))
+
+    def change_scaling_event(self, new_scaling_str: str):
+        """Handle scaling change"""
+        try:
+            # Convert percentage string to float (e.g., "120%" -> 1.2)
+            new_scaling = float(new_scaling_str.strip('%')) / 100
+            
+            # Update CustomTkinter's widget scaling
+            ctk.set_widget_scaling(new_scaling)
+            
+            # Recalculate window size
+            self._calculate_and_set_window_size()
+            
+            # Store the scaling preference
+            if hasattr(self, 'config_manager'):
+                self.config_manager.config.set('Settings', 'ui_scale', str(new_scaling))
+                self.config_manager.save_config()
+                
+        except Exception as e:
+            print(f"Error changing scaling: {e}")
 
     def set_appearance_mode(self, mode: str):
         """Set and save the appearance mode."""
@@ -1484,6 +1489,7 @@ class FilterGamesApp:
     def set_fullscreen_preference(self, fullscreen: bool):
         """Set and save fullscreen preference."""
         self.config_manager.set_fullscreen_preference(fullscreen)
+        self._window_state['is_fullscreen'] = fullscreen
         
         if fullscreen:
             # Store current window dimensions before going fullscreen
@@ -1491,10 +1497,8 @@ class FilterGamesApp:
             self.root.attributes("-fullscreen", True)
         else:
             self.root.attributes("-fullscreen", False)
-            # Restore previous dimensions if they exist
-            if hasattr(self, '_previous_geometry'):
-                # Brief delay to let window manager catch up
-                self.root.after(100, lambda: self.root.geometry(self._previous_geometry))
+            # Allow time for window manager and recalculate size
+            self.root.after(100, self._calculate_and_set_window_size)
 
     def close_app(self):
         """Closes the application."""
@@ -1528,20 +1532,19 @@ class FilterGamesApp:
                         lambda: self._start_flash_animation(button, flash_count + 1))
 
     def on_version_button_click(self, button):
-        """
-        Handles the version button click event.
-        """
-        # Change the button color to blue
-        button.configure(
-            fg_color="#1f538d",  # Blue
-            hover_color="#14375e"  # Darker blue
-        )
+        self.root.update_idletasks()  # Process any pending updates first
         
-        # Save the clicked status
-        self.config_manager.set_whats_new_clicked(True)
+        # Batch our changes together
+        def update_ui():
+            button.configure(
+                fg_color="#1f538d",
+                hover_color="#14375e"
+            )
+            self.config_manager.set_whats_new_clicked(True)
+            self.show_whats_new_popup()
         
-        # Show the what's new popup
-        self.show_whats_new_popup()
+        # Schedule the UI updates together
+        self.root.after(1, update_ui)
    
     def center_window(self, width=None, height=None):
         """Center the window with proper geometry management"""
@@ -1584,7 +1587,7 @@ class FilterGamesApp:
 class ConfigManager:
     # Document all possible settings as class attributes
     # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.8"  # Current configuration file version
+    CONFIG_FILE_VERSION = "2.2.9"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -1796,7 +1799,7 @@ class ConfigManager:
             'hidden': False  # Changed from True
         },
         'remove_games_button': { # Checklist of roms user can manually choose to remove
-            'default': 'never',  # 'always', 'never'
+            'default': 'always',  # 'always', 'never'
             'description': 'Controls visibility of Remove Games button',
             'type': str,
             'hidden': False  # Changed from True
@@ -1821,17 +1824,119 @@ class ConfigManager:
         }
     }
 
+    @classmethod
+    def get_version_from_json(cls):
+        """Load version from whats_new.json"""
+        try:
+            json_file_path = os.path.join(os.path.dirname(__file__), "whats_new.json")
+            with open(json_file_path, "r", encoding="utf-8") as f:
+                whats_new_data = json.load(f)
+                return whats_new_data.get("version", "2.2.8")  # fallback to 2.2.8 if not found
+        except Exception as e:
+            print(f"Error loading version from JSON: {e}")
+            return "2.2.8"  # fallback version
+
+    # Use as a property to get the current version
+    @property
+    def CONFIG_FILE_VERSION(self):
+        return self.get_version_from_json()
+    
+    @classmethod
+    def _load_json_file(cls, filename):
+        """Load a JSON file if it exists, return None if file is missing"""
+        try:
+            json_path = os.path.join(os.path.dirname(__file__), filename)
+            if os.path.exists(json_path):
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            else:
+                print(f"Optional file {filename} not found - using defaults")
+                return None
+        except Exception as e:
+            print(f"Error loading {filename}: {e} - using defaults")
+            return None
+
+    @classmethod
+    def _load_settings_overrides(cls):
+        """Load and apply settings from config_overrides.json"""
+        print("\nLoading settings overrides...")
+        overrides = cls._load_json_file('config_overrides.json')
+        if not overrides:
+            print("No overrides loaded")
+            return
+
+        print("Processing overrides:")
+        # Update settings
+        for section, settings in overrides.items():
+            print(f"\nProcessing section: {section}")
+            if section not in cls.AVAILABLE_SETTINGS:
+                print(f"Creating new section: {section}")
+                cls.AVAILABLE_SETTINGS[section] = {}
+            
+            for key, value in settings.items():
+                print(f"  Setting {key}:")
+                print(f"    Before: {key} = {cls.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('default', 'Not present')}")
+                
+                # Convert type string to actual type
+                if 'type' in value:
+                    value['type'] = cls._convert_type(value['type'])
+                
+                # Handle ButtonVisibility section specially
+                if section == 'ButtonVisibility':
+                    cls.BUTTON_VISIBILITY_STATES[key] = value
+                else:
+                    cls.AVAILABLE_SETTINGS[section][key] = value
+                
+                print(f"    After: {key} = {cls.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('default', 'Not present')}")
+
+        print("\nFinal AVAILABLE_SETTINGS for Tabs section:")
+        tabs_section = cls.AVAILABLE_SETTINGS.get('Tabs', {})
+        for key, value in tabs_section.items():
+            print(f"  {key}: default = {value.get('default')}, hidden = {value.get('hidden')}")
+
+    @classmethod
+    def _convert_type(cls, type_str):
+        """Convert type string to actual type"""
+        type_mapping = {
+            'str': str,
+            'bool': bool,
+            'List[str]': List[str],
+            'int': int,
+            'float': float
+        }
+        return type_mapping.get(type_str, str)
+
+    @classmethod
+    def _load_build_types_overrides(cls):
+        """Load and apply build types from build_types.json if it exists"""
+        build_types = cls._load_json_file('build_types.json')
+        
+        # Only update if build_types exists and has the required key
+        if build_types is not None and 'BUILD_TYPE_PATHS' in build_types:
+            cls.BUILD_TYPE_PATHS.update(build_types['BUILD_TYPE_PATHS'])
+        else:
+            print("No build_types.json found or no BUILD_TYPE_PATHS key - using defaults")
+    
+    @classmethod
+    def initialize(cls):
+        """Initialize class-level settings"""
+        cls._load_settings_overrides()
+        cls._load_build_types_overrides()
+    
     def __init__(self, debug=True):
         self.debug = debug
         self.base_path = os.getcwd()
         self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
         self.config = configparser.ConfigParser()
-
-        # Caches for paths and build type
+        # Initialize the class
+        #ConfigManager.initialize()
+        # Initialize caches
         self._build_type = None
-        self._build_type_cache = {}
-        self._paths_cache = {}
         self._theme_paths = None
+        self._build_type_cache = {}
+        self._tab_visibility_cache = {}
+        self._button_visibility_cache = {}
+        self._paths_cache = {}
 
         self.initialize_config()
         self._build_type = self._determine_build_type()  # Only do once
@@ -1848,7 +1953,7 @@ class ConfigManager:
         self._tab_visibility_cache = {}
         for tab in ['controls', 'view_games', 'themes_games', 'advanced_configs', 'playlists', 'filter_games', 'multi_path_themes_tab']:
             self._tab_visibility_cache[tab] = self.determine_tab_visibility(tab)
-
+    
     def get_fullscreen_preference(self) -> bool:
         """Retrieve the fullscreen preference."""
         return self.config.getboolean('Settings', 'fullscreen', fallback=False)
@@ -2545,6 +2650,9 @@ class ConfigManager:
             self.save_config()
         except Exception as e:
             print(f"Error updating settings file: {str(e)}")
+
+# Right here, after the class definition ends
+ConfigManager.initialize()
 
 class Controls:
     def __init__(self, parent):
@@ -3471,24 +3579,48 @@ class ExeFileSelector:
         self.parent_frame = parent_frame
         self.config_manager = config_manager
 
-        # Retrieve the close_gui_after_running setting directly from the config manager
+        # Get close_gui_after_running setting
         close_gui_after_running = self.config_manager.get_setting('Settings', 'close_gui_after_running', True)
 
-        self.exe_frame = ctk.CTkFrame(parent_frame, width=300, height=400, corner_radius=10)
-        self.exe_frame.grid(row=1, column=1, sticky="nswe", padx=10, pady=10)
+        # Create the exe frame inside parent frame
+        self.exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)
+        self.exe_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Configure the exe_frame grid
+        self.exe_frame.grid_rowconfigure(0, weight=0)  # Logo row
+        self.exe_frame.grid_rowconfigure(1, weight=1)  # Scrollable frame
+        self.exe_frame.grid_rowconfigure(2, weight=0)  # Switch
+        self.exe_frame.grid_rowconfigure(3, weight=0)  # Button
+        self.exe_frame.grid_columnconfigure(0, weight=1)
 
-        parent_frame.grid_columnconfigure(1, weight=1)
-        parent_frame.grid_rowconfigure(1, weight=1)
-
-        # Determine the path for the logo
-        logo_path = 'autochanger/Logo.png'
-        default_logo_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'Logo.png')
-        logo_image_path = logo_path if os.path.exists(logo_path) else default_logo_path
-
+        # Determine the path for the logo using resource_path
         try:
-            # Load the original image
-            logo_original = Image.open(logo_image_path)
-            # Calculate scaled dimensions while maintaining aspect ratio
+            print("\nLogo loading debug:")
+            
+            # Try multiple possible logo locations
+            possible_paths = [
+                os.path.join('autochanger', 'Logo.png'),
+                'Logo.png',
+                os.path.join('assets', 'Logo.png')
+            ]
+            
+            logo_found = None
+            for path in possible_paths:
+                full_path = FilterGamesApp.resource_path(path)
+                print(f"Checking path: {full_path}")
+                if os.path.exists(full_path):
+                    logo_found = full_path
+                    print(f"Found logo at: {logo_found}")
+                    break
+                    
+            if not logo_found:
+                raise FileNotFoundError("Logo file not found in any of the expected locations")
+
+            # Load and process the logo
+            logo_original = Image.open(logo_found)
+            print(f"Logo loaded successfully! Dimensions: {logo_original.width}x{logo_original.height}")
+            
+            # Calculate scaled dimensions
             MAX_WIDTH = 300
             MAX_HEIGHT = 150
             width_ratio = MAX_WIDTH / logo_original.width
@@ -3496,32 +3628,41 @@ class ExeFileSelector:
             scale_ratio = min(width_ratio, height_ratio)
             new_width = int(logo_original.width * scale_ratio)
             new_height = int(logo_original.height * scale_ratio)
-            # Create the CTkImage with the calculated dimensions
+            
+            # Create and display the logo
             logo_image = ctk.CTkImage(
                 light_image=logo_original,
                 dark_image=logo_original,
                 size=(new_width, new_height)
             )
-            # Add the logo label to the exe_frame
+            
             logo_label = ctk.CTkLabel(self.exe_frame, text="", image=logo_image)
-            logo_label.pack(pady=(10, 0))
+            logo_label.grid(row=0, column=0, pady=(10, 0))
+            
+            # Store reference
+            self.logo_image = logo_image
+            
         except Exception as e:
+            print(f"Error loading logo: {str(e)}")
+            print(f"Full error traceback:", traceback.format_exc())
             title_label = ctk.CTkLabel(self.exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
-            title_label.pack(padx=10, pady=10)
-            print(f"Error loading logo: {e}")
-        # Create a scrollable frame inside exe_frame to hold the radio buttons
+            title_label.grid(row=0, column=0, padx=10, pady=10)
+
+        # Create a scrollable frame inside exe_frame
         self.scrollable_frame = ctk.CTkScrollableFrame(self.exe_frame, width=300, height=200, corner_radius=10)
-        self.scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        # Find all .exe files in the directory
+        self.scrollable_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Find all .exe files
         self.exe_files = self.find_exe_files()
         default_exe = self.exe_files[0] if self.exe_files else ""
         self.exe_var = tk.StringVar(value=default_exe)
-        # Add a radio button for each .exe file found inside the scrollable frame
-        for exe in self.exe_files:
+        
+        # Add radio buttons for each exe
+        for i, exe in enumerate(self.exe_files):
             rbutton = ctk.CTkRadioButton(self.scrollable_frame, text=exe, variable=self.exe_var, value=exe)
-            rbutton.pack(anchor="w", padx=20, pady=5)
+            rbutton.grid(row=i, column=0, sticky="w", padx=20, pady=5)
 
-        # Create the switch with the retrieved setting
+        # Create the switch
         self.close_gui_var = tk.BooleanVar(value=close_gui_after_running)
         self.close_gui_switch = ctk.CTkSwitch(
             self.exe_frame,
@@ -3531,14 +3672,14 @@ class ExeFileSelector:
             variable=self.close_gui_var,
             command=self.update_switch_text
         )
-        self.close_gui_switch.pack(pady=10)
+        self.close_gui_switch.grid(row=2, column=0, pady=10)
+        
         # Update switch text initially
         self.update_switch_text()
-        # Add a button to run the selected exe
+        
+        # Add run button
         run_exe_button = ctk.CTkButton(self.exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
-        run_exe_button.pack(pady=20)
-        # Call a method to add the batch file dropdown and button frame below this frame
-        self.add_batch_file_dropdown(parent_frame)
+        run_exe_button.grid(row=3, column=0, pady=(0, 20))
 
     def update_switch_text(self):
         # Update the visual text based on the current switch state
@@ -5969,70 +6110,61 @@ class MultiPathThemes:
             self._show_no_video_message()
 
     def _setup_ui(self):
-        """Initialize and configure UI components"""
+        # Main display frame
         self.display_frame = ctk.CTkFrame(self.parent_tab)
         self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
 
+        # Video canvas
         self.video_canvas = ctk.CTkCanvas(
             self.display_frame,
-            width=self.default_size[0],
-            height=self.default_size[1],
             bg="#2B2B2B",
-            bd="0",
+            bd=0,
             highlightthickness=0
         )
         self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
         self.video_canvas.bind('<Configure>', self.handle_resize)
 
-        self.status_frame = ctk.CTkFrame(self.display_frame)
-        self.status_frame.pack(fill="x", padx=10, pady=5)
-        self.theme_label = ctk.CTkLabel(self.status_frame, text="")
-        self.theme_label.pack(side="left", padx=5)
+        # Theme label - commented out but kept for future reference
+        """
+        self.theme_label = ctk.CTkLabel(self.display_frame, text="")
+        self.theme_label.pack(pady=(0, 5))
+        """
+        # We still need the theme_label attribute for other methods that use it
+        self.theme_label = ctk.CTkLabel(self.display_frame, text="")
+        self.theme_label.pack_forget()  # Create but don't display it
 
-        self.location_frame = ctk.CTkFrame(self.display_frame)
-        self.location_frame.pack(fill="x", padx=10, pady=5)
-
-        self.location_var = ctk.StringVar(
-            value=self.config_manager.config.get('Settings', 'theme_location', fallback='autochanger')
-        )
-        self.location_dropdown = ctk.CTkOptionMenu(
-            self.location_frame,
-            values=['autochanger', 'zzzSettings', 'custom'],
-            variable=self.location_var,
-            command=self.change_location
-        )
-        self.location_dropdown.pack(side="right", padx=5)
-        ctk.CTkLabel(self.location_frame, text="Theme Location:").pack(side="right", padx=5)
-
-        self.custom_paths_button = ctk.CTkButton(
-            self.location_frame,
-            text="Configure Custom Paths",
-            command=self.show_custom_paths_dialog
-        )
-        self.custom_paths_button.pack(side="right", padx=5)
-
+        # Button frame
         self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
         self.button_frame.pack(fill="x", padx=5, pady=5)
 
-        # Define your buttons
-        buttons = [
-            ("Previous", self.show_previous_theme, 0),
-            ("Apply Theme", self.run_selected_script, 1, "green", "darkgreen"),
-            ("Next", self.show_next_theme, 2),
-            ("Jump Category", self.jump_to_start, 3)  # We'll show/hide this depending on # of roms
+        # Configure button frame grid
+        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
+        should_show_jump = len(roms_list) > 1
+
+        # Define buttons
+        base_buttons = [
+            ("Previous", self.show_previous_theme),
+            ("Apply Theme", self.run_selected_script, "green", "darkgreen"),
+            ("Next", self.show_next_theme)
         ]
 
-        # Store a reference to the Jump Category button
-        self.jump_category_button = None
+        if should_show_jump:
+            base_buttons.append(("Jump Category", self.jump_to_start))
 
-        # Create and place each button
-        for btn_data in buttons:
-            if len(btn_data) == 3:
-                text, command, col = btn_data
+        # Configure button columns
+        num_buttons = len(base_buttons)
+        for i in range(num_buttons):
+            self.button_frame.grid_columnconfigure(i, weight=1)
+
+        # Create buttons
+        self.buttons = {}
+        for i, btn_data in enumerate(base_buttons):
+            if len(btn_data) == 2:
+                text, command = btn_data
                 fg_color = None
                 hover_color = None
             else:
-                text, command, col, fg_color, hover_color = btn_data
+                text, command, fg_color, hover_color = btn_data
 
             btn = ctk.CTkButton(
                 self.button_frame,
@@ -6042,23 +6174,37 @@ class MultiPathThemes:
                 hover_color=hover_color,
                 border_width=0
             )
-            btn.grid(row=0, column=col, sticky="ew", padx=5, pady=5)
+            btn.grid(row=0, column=i, sticky="ew", padx=5)
+            self.buttons[text] = btn
 
-            if text == "Jump Category":
-                self.jump_category_button = btn
-
-        # Check the roms list to determine Jump Category button visibility
-        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
-        #print("DEBUG: roms_list =", roms_list, "Length =", len(roms_list))
-
-        if len(roms_list) <= 1 and self.jump_category_button:
-            # Hide the Jump Category button and reconfigure grid weights
-            self.jump_category_button.grid_remove()
-            self._adjust_button_weights(3)  # Adjust weights for 3 columns
-        else:
-            self._adjust_button_weights(4)  # Adjust weights for 4 columns by default
+        # Location frame (if needed)
+        self.location_frame = ctk.CTkFrame(self.display_frame)
+        self.location_frame.pack(fill="x", padx=10, pady=5)
 
         self.update_location_frame_visibility()
+        
+    def _update_button_layout(self, event=None):
+        """Update button layout proportionally based on frame size"""
+        frame_width = self.button_frame.winfo_width()
+        if frame_width > 0:
+            # Calculate proportional padding (1% of frame width)
+            padding = int(frame_width * 0.01)
+            
+            # Update padding for all buttons
+            for btn in self.buttons.values():
+                btn.grid_configure(padx=padding, pady=padding)
+
+        # Maintain button visibility
+        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
+        should_show_jump = len(roms_list) > 1
+        
+        if 'Jump Category' in self.buttons:
+            if should_show_jump:
+                self.buttons['Jump Category'].grid()
+                self.button_frame.grid_columnconfigure(3, weight=1)
+            else:
+                self.buttons['Jump Category'].grid_remove()
+                self.button_frame.grid_columnconfigure(3, weight=0)
 
     def _adjust_button_weights(self, columns):
         """Adjust the button frame column weights dynamically."""
@@ -6066,8 +6212,6 @@ class MultiPathThemes:
             self.button_frame.grid_columnconfigure(col, weight=0)
         for col in range(columns):  # Adjust the active columns
             self.button_frame.grid_columnconfigure(col, weight=1)
-
-
 
     def update_location_frame_visibility(self):
         """Update the visibility of the location frame based on config settings"""
@@ -7504,7 +7648,7 @@ class AdvancedConfigs:
             pass
         
 class ViewRoms:
-    def __init__(self, parent_tab, config_manager):
+    def __init__(self, parent_tab, config_manager, main_app):
         # Define font settings at the top of the class
         self.list_font = ("Arial", 14)  # Changed from 12 to 14
         self.label_font = ("Arial", 12)   # Added for labels
@@ -7513,6 +7657,7 @@ class ViewRoms:
         self.rom_list = []  # Ensure this is initialized
         self.rom_descriptions = {}  # Make sure this is initialized
         self.parent_tab = parent_tab
+        self.main_app = main_app  # Store reference to main app
         # Add this line with your other initializations
         self.buttons = {}
 
@@ -7749,27 +7894,29 @@ class ViewRoms:
                 messagebox.showerror("Error", "Please select a specific collection.")
                 return
 
-            # Pre-filter ROMs and get their base names (without collection)
+            # Pre-filter ROMs and get their base names
             filtered_roms = []
             for full_rom in self.rom_list:
                 if f"({selected_collection})" in full_rom:
-                    # Extract ROM name without the collection part
-                    # Find the last parenthetical section (collection) and remove it
                     base_rom = full_rom.rsplit(' (', 1)[0]
                     desc = self.rom_descriptions.get(base_rom.split(" (")[0], base_rom.split(" (")[0])
                     filtered_roms.append((base_rom, desc, full_rom))
             
-            # Sort the filtered ROMs list by description
             filtered_roms.sort(key=lambda x: x[1].lower())
 
-            # Create a new top-level window
-            select_window = tk.Toplevel()
+            # Create window
+            select_window = tk.Toplevel(self.parent_tab)
             select_window.title(f"Select Games to Remove - {selected_collection}")
             select_window.configure(bg='#2c2c2c')
 
-            # Dynamically size and center the window based on the screen resolution
+            # Window sizing
             screen_width = select_window.winfo_screenwidth()
             screen_height = select_window.winfo_screenheight()
+            window_width = int(screen_width * 0.4)
+            window_height = int(screen_height * 0.6)
+            x = (screen_width - window_width) // 2
+            y = (screen_height - window_height) // 2
+            select_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
             # Calculate window size as a percentage of the screen size
             window_width = int(screen_width * 0.4)  # 60% of screen width
@@ -7907,20 +8054,22 @@ class ViewRoms:
             )
             select_none_btn.pack(side='left', padx=5)
 
+            on_close = self.main_app.show_popup(select_window)
+
             def confirm_removal():
                 selected_items = [item for item, checked in checked_items.items() if checked]
                 if not selected_items:
                     messagebox.showinfo("No Selection", "No games were selected.")
                     return
 
-                # Get the base ROM names (without collection)
                 selected_roms = [item_to_rom[item] for item in selected_items]
-
-                # Close the selection window
-                select_window.destroy()
-
-                # Call move_roms with the selected ROMs list
+                if on_close:
+                    on_close()
                 self.move_roms(selected_roms)
+
+            def cancel():
+                if on_close:
+                    on_close()
 
             confirm_btn = ctk.CTkButton(
                 button_frame,
@@ -7935,17 +8084,13 @@ class ViewRoms:
             cancel_btn = ctk.CTkButton(
                 button_frame,
                 text="Cancel",
-                command=select_window.destroy,
+                command=cancel,
                 font=self.button_font,
                 fg_color='#f44336',
                 hover_color='#da190b'
             )
             cancel_btn.pack(side='right', padx=5)
 
-            # Make window modal
-            select_window.transient(self.parent_tab)
-            select_window.grab_set()
-            
             # Initial load of list
             update_list()
 
@@ -7954,83 +8099,79 @@ class ViewRoms:
 
     def show_instructions_popup(self, button_key):
         """Show the instructions popup for the given button."""
-        def show_popup():
-            popup = tk.Toplevel(self.parent_tab)
-            popup.title("Instructions")
-            popup.geometry("600x400")  # Slightly increased height to accommodate title
-            popup.configure(bg='#2c2c2c')
-
-            # Center the window on the screen
-            screen_width = popup.winfo_screenwidth()
-            screen_height = popup.winfo_screenheight()
-            window_width = 600
-            window_height = 400
-            x = (screen_width // 2) - (window_width // 2)
-            y = (screen_height // 2) - (window_height // 2)
-            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-            # Title label
-            title_text = "Instructions for Moving Artwork" if button_key == 'show_move_artwork_button' else "Instructions for Removing ROMs"
-            title_label = ctk.CTkLabel(
-                popup,
-                text=title_text,
-                wraplength=500,
-                text_color='white',
-                font=('Helvetica', 18, 'bold')  # Larger and bold
-            )
-            title_label.pack(pady=(20, 10))  # Reduced bottom padding
-
-            # Instructions text box
-            instructions_text = ctk.CTkTextbox(
-                popup,
-                width=500,
-                height=200,
-                text_color='white',
-                font=('Helvetica', 14),
-                fg_color='#2c2c2c',
-                state='normal'  # Allows setting text
-            )
-            instructions_text.insert('1.0', self.get_instructions(button_key))
-            instructions_text.configure(state='disabled')  # Make it read-only
-            instructions_text.pack(pady=(10, 20), padx=20)
-
-            # Do not display again checkbox
-            do_not_show_var = tk.BooleanVar()
-            do_not_show_checkbox = ctk.CTkCheckBox(
-                popup,
-                text="Do not show again",
-                variable=do_not_show_var,
-                font=('Helvetica', 12)
-            )
-            do_not_show_checkbox.pack(pady=10)
-
-            # OK button
-            def on_ok():
-                if do_not_show_var.get():
-                    self.config_manager.config.set('Settings', f'show_{button_key}_instructions', 'False')
-                    self.config_manager.save_config()
-                popup.destroy()
-                self.execute_button_action(button_key)
-
-            ok_button = ctk.CTkButton(
-                popup,
-                text="OK",
-                command=on_ok,
-                fg_color='#4CAF50',
-                hover_color='#45a049'
-            )
-            ok_button.pack(pady=20)
-
-            popup.transient(self.parent_tab)
-            popup.grab_set()
-            popup.update()
-
-        # Check if the popup should be shown
         show_popup_flag = self.config_manager.get_setting('Settings', f'show_{button_key}_instructions', 'True')
-        if show_popup_flag == 'True':
-            show_popup()
-        else:
+        if show_popup_flag != 'True':
             self.execute_button_action(button_key)
+            return
+
+        popup = tk.Toplevel(self.parent_tab)
+        popup.title("Instructions")
+        popup.geometry("600x400")
+        popup.configure(bg='#2c2c2c')
+
+        # Center the window
+        screen_width = popup.winfo_screenwidth()
+        screen_height = popup.winfo_screenheight()
+        window_width = 600
+        window_height = 400
+        x = (screen_width // 2) - (window_width // 2)
+        y = (screen_height // 2) - (window_height // 2)
+        popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+        # Title label
+        title_text = "Instructions for Moving Artwork" if button_key == 'show_move_artwork_button' else "Instructions for Removing ROMs"
+        title_label = ctk.CTkLabel(
+            popup,
+            text=title_text,
+            wraplength=500,
+            text_color='white',
+            font=('Helvetica', 18, 'bold')
+        )
+        title_label.pack(pady=(20, 10))
+
+        # Instructions text box
+        instructions_text = ctk.CTkTextbox(
+            popup,
+            width=500,
+            height=200,
+            text_color='white',
+            font=('Helvetica', 14),
+            fg_color='#2c2c2c',
+            state='normal'
+        )
+        instructions_text.insert('1.0', self.get_instructions(button_key))
+        instructions_text.configure(state='disabled')
+        instructions_text.pack(pady=(10, 20), padx=20)
+
+        # Do not display again checkbox
+        do_not_show_var = tk.BooleanVar()
+        do_not_show_checkbox = ctk.CTkCheckBox(
+            popup,
+            text="Do not show again",
+            variable=do_not_show_var,
+            font=('Helvetica', 12)
+        )
+        do_not_show_checkbox.pack(pady=10)
+
+        # Get centralized popup management from main app
+        on_close = self.main_app.show_popup(popup)
+
+        def on_ok():
+            if do_not_show_var.get():
+                self.config_manager.config.set('Settings', f'show_{button_key}_instructions', 'False')
+                self.config_manager.save_config()
+            if on_close:
+                on_close()
+            self.execute_button_action(button_key)
+
+        ok_button = ctk.CTkButton(
+            popup,
+            text="OK",
+            command=on_ok,
+            fg_color='#4CAF50',
+            hover_color='#45a049'
+        )
+        ok_button.pack(pady=20)
 
     def execute_button_action(self, button_key):
         """Execute the action associated with the button."""
@@ -8419,9 +8560,14 @@ class ViewRoms:
             # Custom confirmation dialog with scrollable list
             def create_scrollable_confirmation():
                 confirm_window = tk.Toplevel()
-                confirm_window.title(f"Confirm Artwork Move - {selected_collection}")
+                confirm_window.title(f"Confirm ROM Move - {selected_collection}")
                 confirm_window.geometry("400x500")
                 confirm_window.configure(bg='#2c2c2c')
+
+                # Add proper window management
+                confirm_window.transient(self.parent_tab.winfo_toplevel())
+                confirm_window.attributes('-topmost', True)
+                confirm_window.focus_force()
 
                 # Center the window on the screen
                 screen_width = confirm_window.winfo_screenwidth()
@@ -8463,9 +8609,17 @@ class ViewRoms:
                 button_frame = ctk.CTkFrame(confirm_window, fg_color='#2c2c2c')
                 button_frame.pack(pady=10)
 
+                # Get centralized popup management from main app
+                on_close = self.main_app.show_popup(confirm_window)
+
                 def on_confirm():
-                    confirm_window.destroy()
+                    if on_close:
+                        on_close()
                     proceed_with_move()
+
+                def on_cancel():
+                    if on_close:
+                        on_close()
 
                 confirm_button = ctk.CTkButton(
                     button_frame,
@@ -8479,13 +8633,11 @@ class ViewRoms:
                 cancel_button = ctk.CTkButton(
                     button_frame,
                     text="Cancel",
-                    command=confirm_window.destroy,
+                    command=on_cancel,
                     fg_color='#f44336',
                     hover_color='#da190b'
                 )
                 cancel_button.pack(side='left', padx=5)
-
-                confirm_window.grab_set()  # Make the window modal
 
             def proceed_with_move():
                 # Move artwork logic
