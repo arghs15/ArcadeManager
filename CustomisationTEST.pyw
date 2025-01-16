@@ -911,7 +911,7 @@ class FilterGamesApp:
         print("Exists?", os.path.exists(assets['rocket_icon']))
 
         def load_icon(icon_path, fallback="⭐"):
-            """Load PNG icon with fallback to text symbol."""
+            """Load PNG icon with fallback to colored emoji."""
             try:
                 original = tk.PhotoImage(file=icon_path)
                 aspect_ratio = original.width() / original.height()
@@ -924,7 +924,12 @@ class FilterGamesApp:
                 return original
             except (tk.TclError, FileNotFoundError) as e:
                 print(f"Could not load icon from {icon_path}, using fallback: {e}")
-                return fallback
+                # Create a colored label for the fallback emoji
+                return {
+                    'feature_icon': "⭐",  # Gold star
+                    'bug_icon': "👾",     # Space invader alien
+                    'rocket_icon': "🚀"   # Blue rocket
+                }.get(os.path.basename(icon_path).split('.')[0], fallback)
 
         def resize_screenshot(screenshot):
             """Resize screenshot to fit the desired width while maintaining aspect ratio."""
@@ -979,7 +984,7 @@ class FilterGamesApp:
                     icon_label = ctk.CTkLabel(
                         header_frame,
                         text=icon,
-                        font=("Helvetica", 14),
+                        font=("Segoe UI Emoji", 14),  # Use a font that supports colored emojis
                         width=20,
                     )
                 else:
