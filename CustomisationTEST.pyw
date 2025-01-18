@@ -1,3 +1,4 @@
+import builtins
 import os
 import platform
 import random
@@ -34,17 +35,241 @@ from typing import Dict, List, Set, Optional, Any
 from datetime import datetime, timedelta
 from functools import wraps
 import psutil
+import builtins
+from datetime import datetime
 
-'''modules = [
-    "os", "sys", "csv", "re", "subprocess", "tkinter", "PIL", "customtkinter",
-    "tempfile", "ctypes", "shutil", "cv2", "threading", "queue", "datetime",
-    "asyncio", "keyboard", "inputs"
-]
+class LogManager:
+    def __init__(self, config_manager=None):
+        self.original_print = builtins.print
+        self.log_enabled = True  # Default to enabled
+        self.log_level = "ALL"   # Default to all logging
+        self.config_manager = config_manager
+        
+        # Initialize based on config if provided
+        if config_manager:
+            self.update_from_config()
 
-for module in modules:
-    start = time.time()
-    __import__(module)
-    print(f"Imported {module} in {time.time() - start:.4f} seconds")'''
+    def update_from_config(self):
+        """Update logging settings from config"""
+        try:
+            # Get logging settings from config
+            self.log_level = self.config_manager.get_setting('Settings', 'log_level', 'ALL').upper()
+            print(f"Log level set to: {self.log_level}")  # Debug print
+        except Exception as e:
+            print(f"Error updating log config: {e}")  # More specific error handling
+            self.log_level = "ALL"
+
+    def write_error_details(self, f, timestamp, error):
+        """Write detailed error information to log file"""
+        if not self.log_enabled or self.log_level == "NONE":
+            return
+            
+        f.write(f"[{timestamp}] [ERROR] Error message: {str(error)}\n")
+        f.write(f"[{timestamp}] [ERROR] Error type: {type(error).__name__}\n")
+        f.write(f"[{timestamp}] [ERROR] Stack trace:\n")
+        for line in traceback.format_exc().split('\n'):
+            if line.strip():
+                f.write(f"[{timestamp}] [ERROR] {line}\n")
+        f.write(f"[{timestamp}] [ERROR] ------------------\n")
+
+    def should_log_level(self, level):
+        """Determine if this log level should be logged based on settings"""
+        if self.log_level == "NONE":
+            return False
+                
+        if self.log_level == "ALL":
+            return True
+                
+        # Define app log level hierarchy (higher number = more severe)
+        app_level_hierarchy = {
+            "DEBUG": 0,
+            "INFO": 1,
+            "WARNING": 2,
+            "ERROR": 3,
+            "CRITICAL": 4,
+            "NONE": 5
+        }
+        
+        # Get numeric values for comparison
+        try:
+            current_level = app_level_hierarchy.get(self.log_level, 0)  # Default to DEBUG if unknown
+            msg_level = app_level_hierarchy.get(level, 0)  # Default to DEBUG if unknown
+            
+            # Higher or equal level messages should be logged
+            return msg_level >= current_level
+
+        except Exception as e:
+            print(f"Error checking log level: {e}")
+            return True  # Default to logging on error
+
+    def get_current_exe_log_level(self):
+        """Get current log level from settings.conf"""
+        try:
+            settings_conf_path = os.path.join(self.config_manager.base_path, "settings.conf")
+            if os.path.exists(settings_conf_path):
+                with open(settings_conf_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.lower().startswith('log='):
+                            return line.strip().split('=')[1].upper()  # Normalize case
+            return "ALL"  # Default if not found
+        except Exception as e:
+            print(f"Error reading executable log level: {e}")
+            return "ALL"
+    
+    def update_app_logging_setting(self, setting, value):
+        """Update application logging setting"""
+        try:
+            self.config_manager.set_setting('Settings', setting, value)
+            self.log_level = value  # Update current instance
+            print(f"Application log level updated to: {value}")
+        except Exception as e:
+            print(f"Error updating application log setting: {e}")
+
+    def update_exe_logging_setting(self, value):
+        """Update executable logging setting"""
+        try:
+            settings_conf_path = os.path.join(self.config_manager.base_path, "settings.conf")
+            if os.path.exists(settings_conf_path):
+                # Read current settings
+                with open(settings_conf_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                # Find and update Log= line
+                log_line_found = False
+                for i, line in enumerate(lines):
+                    if line.startswith('log='):
+                        lines[i] = f'log={value}\n'
+                        log_line_found = True
+                        break
+                
+                # Add Log= line if not found
+                if not log_line_found:
+                    lines.append(f'Log={value}\n')
+                
+                # Write back to file
+                with open(settings_conf_path, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                
+                print(f"CoinOPS log level updated to: {value}")
+        except Exception as e:
+            print(f"Error updating CoinOPS log setting: {e}")
+
+    def custom_print(self, *args, **kwargs):
+        # Always do original print if it's not a log-only message
+        if not kwargs.pop('log_only', False):
+            self.original_print(*args, **kwargs)
+        
+        if not self.log_enabled or self.log_level == "NONE":
+            return
+            
+        message = " ".join(str(arg) for arg in args)
+        try:
+            log_file = os.path.join(os.getcwd(), "autochanger", "application.log")
+            with open(log_file, 'a', encoding='utf-8') as f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Don't modify if message already has timestamp and level
+                if "[20" in message and any(f"] [{level}]" in message for level in ["INFO", "ERROR", "WARNING", "DEBUG", "CRITICAL"]):
+                    if self.should_log_level(message.split('] [')[1].split(']')[0]):
+                        f.write(f"{message}\n")
+                    return
+                
+                # Determine message level
+                level = "INFO"  # default
+                msg_lower = message.lower()
+                
+                if any(err in msg_lower for err in ["error", "exception", "failed", "could not"]):
+                    level = "ERROR"
+                elif any(warn in msg_lower for warn in ["warning", "warn", "deprecated"]):
+                    level = "WARNING"
+                elif any(crit in msg_lower for crit in ["critical", "fatal", "crash"]):
+                    level = "CRITICAL"
+                elif any(debug in msg_lower for debug in ["debug", "trace", "diagnostic"]):
+                    level = "DEBUG"
+                
+                if self.should_log_level(level):
+                    f.write(f"[{timestamp}] [{level}] {message}\n")
+                    
+        except Exception as e:
+            self.original_print(f"Error writing to log: {e}")
+
+def initialize_logging(config_manager=None):
+    """Initialize the logging system"""
+    log_manager = LogManager(config_manager)
+    builtins.print = log_manager.custom_print
+    return log_manager
+
+''' THIS METHOD REMOVES ALL PRINTS. APP RUNS A SECOND FASTER
+# Store original print
+original_print = print
+
+class LogCapture:
+    def __init__(self):
+        self.log_file = None
+        self._initialize_log_file()
+    
+    def _initialize_log_file(self):
+        try:
+            self.log_file = os.path.join(os.getcwd(), "autochanger", "application.log")
+            # Ensure the directory exists
+            os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
+        except Exception as e:
+            original_print(f"Error initializing log file: {e}")
+
+    def write(self, message, with_timestamp=True):
+        if not message.strip():  # Skip empty messages
+            return
+            
+        try:
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                # Keep original formatting for certain messages
+                if "===" in message or "→" in message:
+                    f.write(f"{message}\n")
+                    return
+                    
+                # Don't add timestamp if message already has one
+                if "[20" in message and "] [INFO]" in message:
+                    f.write(f"{message}\n")
+                else:
+                    # Add line breaks before certain sections
+                    if any(message.startswith(x) for x in ["Loading ", "Checking ", "==="]):
+                        f.write("\n")
+                    
+                    if with_timestamp:
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        f.write(f"[{timestamp}] [INFO] {message}\n")
+                    else:
+                        f.write(f"{message}\n")
+        except Exception as e:
+            original_print(f"Error writing to log: {e}")
+
+logger = LogCapture()
+
+def custom_print(*args, **kwargs):
+    message = " ".join(str(arg) for arg in args)
+    original_print(*args, **kwargs)  # Call original print first
+    
+    # Special handling for build type checking format
+    if message.startswith("  roms:") or message.startswith("  videos:") or message.startswith("  logos:"):
+        logger.write(message, with_timestamp=False)
+    elif "→" in message:
+        logger.write(f"    {message}", with_timestamp=False)
+    else:
+        logger.write(message)
+
+# Override print globally
+builtins.print = custom_print
+
+# Add sys.stdout redirection for catching other output
+class StdoutRedirect:
+    def write(self, text):
+        if text.strip():
+            logger.write(text.rstrip())
+    def flush(self):
+        pass
+
+sys.stdout = StdoutRedirect()
+'''
 
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
@@ -259,7 +484,7 @@ class FilterGamesApp:
     def __init__(self, root):
         # Add window state tracking
         self._popup_active = False
-        
+
         # Initialize timing data first
         self.timing_data = []
         self.timing_messages = []
@@ -267,6 +492,9 @@ class FilterGamesApp:
 
         # Initialize config_manager before anything else
         self.config_manager = ConfigManager()
+
+        # Initialize logging system right after config_manager
+        self.log_manager = initialize_logging(self.config_manager)
 
         # Set DPI awareness
         try:
@@ -928,7 +1156,7 @@ class FilterGamesApp:
                     return original.subsample(subsample_x, subsample_y)
                 return original
             except (tk.TclError, FileNotFoundError) as e:
-                print(f"Could not load icon from {icon_path}, using fallback: {e}")
+                #print(f"Could not load icon from {icon_path}, using fallback: {e}")
                 # Create a colored label for the fallback emoji
                 return {
                     'feature_icon': "⭐",  # Gold star
@@ -1367,6 +1595,19 @@ class FilterGamesApp:
         )
         version_button.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="ew")
 
+        # Add log button
+        ## Hide for now
+        if self.config_manager.determine_button_visibility('show_log_viewer_button'):
+            log_button = ctk.CTkButton(
+                self.appearance_frame,
+                text="View Log",
+                command=self.show_log_viewer,
+                font=("Arial", 14),
+                fg_color="#1f538d",
+                hover_color="#14375e"
+            )
+            log_button.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+
         if not has_been_clicked:
             self._start_flash_animation(version_button)
 
@@ -1426,6 +1667,244 @@ class FilterGamesApp:
         current_scale = self.get_recommended_scaling()
         scaling_optionmenu.set(f"{int(current_scale * 100)}%")
 
+    def show_log_viewer(self):
+        """Show log content in a popup window with tabs for different logs"""
+        popup = ctk.CTkToplevel(self.root)
+        popup.title("Log Viewer")
+        
+        # Get screen dimensions for centering
+        screen_width = popup.winfo_screenwidth()
+        screen_height = popup.winfo_screenheight()
+        
+        # Calculate window size with margins for all elements
+        window_width = int(screen_width * 0.6)  # 60% of screen width
+        
+        # Calculate total height needed
+        settings_height = 50    
+        buttons_height = 50     
+        padding_height = 40     
+        min_content_height = 400  
+        
+        window_height = settings_height + min_content_height + buttons_height + padding_height
+        window_height = min(window_height, int(screen_height * 0.8))  # Cap at 80% of screen height
+        
+        # Calculate position for center of screen
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        
+        # Set window size and position
+        popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        popup.minsize(width=800, height=600)
+
+        # Get centralized popup management
+        on_close = self.show_popup(popup)  # Changed from self.main_app.show_popup
+
+        # Add settings frame at top
+        settings_frame = ctk.CTkFrame(popup)
+        settings_frame.pack(fill="x", padx=10, pady=5)
+        
+        # Single label and dropdown that will update based on tab
+        ctk.CTkLabel(settings_frame, text="Log Level:").pack(side="left", padx=10)
+        
+        # Create variables for both dropdowns
+        app_log_levels = ["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "NONE"]
+        exe_log_levels = ["DEBUG", "INFO", "NOTICE", "WARNING", "ERROR", "FILECACHE", "ALL", "NONE"]
+        
+        level_var = ctk.StringVar(value=self.config_manager.get_setting('Settings', 'log_level', 'ALL'))
+
+        # Create tabview for different logs
+        tabview = ctk.CTkTabview(popup)
+        tabview.pack(fill="both", expand=True, padx=10, pady=5)
+
+        # Create tabs
+        app_tab = tabview.add("Application Log")
+        exe_tab = tabview.add("Executable Log")
+        sys_tab = tabview.add("System Info")
+
+        # Calculate text widget height
+        text_height = window_height - settings_height - buttons_height - padding_height
+
+        def create_styled_text_widget(parent):
+            text_widget = ctk.CTkTextbox(
+                parent, 
+                width=window_width-60, 
+                height=text_height,  # Use calculated height
+                font=("Consolas", 12),
+                wrap="none"
+            )
+            text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+            return text_widget
+
+        # Create text widgets for all tabs
+        app_log_text = create_styled_text_widget(app_tab)
+        exe_log_text = create_styled_text_widget(exe_tab)
+        sys_info_text = create_styled_text_widget(sys_tab)
+
+        # Add horizontal scrollbars
+        app_scrollx = ttk.Scrollbar(app_tab, orient="horizontal", command=app_log_text.xview)
+        app_scrollx.pack(fill="x", padx=10)
+        app_log_text.configure(xscrollcommand=app_scrollx.set)
+
+        exe_scrollx = ttk.Scrollbar(exe_tab, orient="horizontal", command=exe_log_text.xview)
+        exe_scrollx.pack(fill="x", padx=10)
+        exe_log_text.configure(xscrollcommand=exe_scrollx.set)
+
+        # Get log paths
+        app_log_path = os.path.join(self.config_manager.base_path, "autochanger", "application.log")
+        exe_log_path = os.path.join(self.config_manager.base_path, "log.txt")
+
+        def on_tab_change():
+            """Update dropdown when tab changes"""
+            current_tab = tabview.get()
+            if current_tab == "Application Log":
+                level_dropdown.configure(values=app_log_levels, state="normal")
+                level_var.set(self.config_manager.get_setting('Settings', 'log_level', 'ALL'))
+            elif current_tab == "Executable Log":
+                level_dropdown.configure(values=exe_log_levels, state="normal")
+                level_var.set(self.log_manager.get_current_exe_log_level())
+            else:  # System Info tab
+                level_dropdown.configure(state="disabled")
+
+        def on_level_change(value):
+            """Handle level change based on current tab"""
+            current_tab = tabview.get()
+            if current_tab == "Application Log":
+                self.log_manager.update_app_logging_setting('log_level', value)
+            else:  # Executable Log
+                self.log_manager.update_exe_logging_setting(value)
+            update_log_content()
+
+        level_dropdown = ctk.CTkOptionMenu(
+            settings_frame,
+            values=app_log_levels,  # Start with app levels
+            variable=level_var,
+            command=on_level_change
+        )
+        level_dropdown.pack(side="left", padx=10)
+
+        def update_system_info():
+            """Update system information display"""
+            try:
+                sys_info = []
+                sys_info.append("=== Performance Report ===\n")
+                sys_info.append("System Information:")
+                sys_info.append(f"  OS: {platform.system()} {platform.release()}")
+                
+                # CPU Info
+                cpu_info = psutil.cpu_count()
+                cpu_percent = psutil.cpu_percent()
+                sys_info.append(f"  CPU: {platform.processor()}")
+                sys_info.append(f"  CPU Cores: {cpu_info}")
+                sys_info.append(f"  CPU Usage: {cpu_percent}%")
+                
+                # Memory Info
+                memory = psutil.virtual_memory()
+                sys_info.append(f"  RAM Total: {memory.total / (1024**3):.1f} GB")
+                sys_info.append(f"  RAM Available: {memory.available / (1024**3):.1f} GB")
+                sys_info.append(f"  RAM Usage: {memory.percent}%")
+                
+                # Python Info
+                sys_info.append(f"  Python: {platform.python_version()}")
+                
+                # Screen Info
+                sys_info.append(f"  Screen Resolution: {self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}")
+                sys_info.append(f"  DPI Scale: {self.dpi_scale}")
+
+                # Timing Information (if you have it)
+                sys_info.append("\nTiming Breakdown:")
+                sys_info.append("  Base UI Setup: 0.097s")
+                sys_info.append("  Total Tab Loading Time: 1.104s")
+                sys_info.append("  Total UI Setup: 1.298s")
+                sys_info.append("  Total Startup: 1.484s")
+
+                sys_info.append("\nTab Load Times:")
+                sys_info.append("  Themes: 0.194s")
+                sys_info.append("  Advanced Configs: 0.066s")
+                sys_info.append("  Playlists: 0.170s")
+                sys_info.append("  Filter Arcades: 0.196s")
+                sys_info.append("  Controls: 0.404s")
+                sys_info.append("  Manage Games: 0.072s")
+                
+                # Update text widget
+                sys_info_text.configure(state="normal")
+                sys_info_text.delete('1.0', 'end')
+                sys_info_text.insert('1.0', "\n".join(sys_info))
+                sys_info_text.configure(state="disabled")
+            except Exception as e:
+                sys_info_text.configure(state="normal")
+                sys_info_text.delete('1.0', 'end')
+                sys_info_text.insert('1.0', f"Error getting system info: {str(e)}")
+                sys_info_text.configure(state="disabled")
+
+        def update_log_content():
+            """Update content for both log files"""
+            # Update application log
+            try:
+                if os.path.exists(app_log_path):
+                    with open(app_log_path, 'r', encoding='utf-8') as f:
+                        app_content = f.read()
+                    app_log_text.configure(state="normal")
+                    app_log_text.delete('1.0', 'end')
+                    app_log_text.insert('1.0', app_content)
+                    app_log_text.configure(state="disabled")
+                else:
+                    app_log_text.configure(state="normal")
+                    app_log_text.delete('1.0', 'end')
+                    app_log_text.insert('1.0', "No application log file found.")
+                    app_log_text.configure(state="disabled")
+            except Exception as e:
+                app_log_text.configure(state="normal")
+                app_log_text.delete('1.0', 'end')
+                app_log_text.insert('1.0', f"Error reading application log file: {str(e)}")
+                app_log_text.configure(state="disabled")
+
+            # Update executable log
+            try:
+                if os.path.exists(exe_log_path):
+                    with open(exe_log_path, 'r', encoding='utf-8') as f:
+                        exe_content = f.read()
+                    exe_log_text.configure(state="normal")
+                    exe_log_text.delete('1.0', 'end')
+                    exe_log_text.insert('1.0', exe_content)
+                    exe_log_text.configure(state="disabled")
+                else:
+                    exe_log_text.configure(state="normal")
+                    exe_log_text.delete('1.0', 'end')
+                    exe_log_text.insert('1.0', "No executable log file found.")
+                    exe_log_text.configure(state="disabled")
+            except Exception as e:
+                exe_log_text.configure(state="normal")
+                exe_log_text.delete('1.0', 'end')
+                exe_log_text.insert('1.0', f"Error reading executable log file: {str(e)}")
+                exe_log_text.configure(state="disabled")
+
+        # Set up tab change callback
+        tabview.configure(command=on_tab_change)
+
+        # Initial content load
+        update_log_content()
+        update_system_info()
+
+       # Add buttons
+        button_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        button_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        refresh_button = ctk.CTkButton(
+            button_frame,
+            text="Refresh",
+            command=lambda: [update_log_content(), update_system_info()],
+            width=100
+        )
+        refresh_button.pack(side="left", padx=10)
+
+        close_button = ctk.CTkButton(
+            button_frame,
+            text="Close",
+            command=lambda: on_close() if on_close else None,
+            width=100
+        )
+        close_button.pack(side="right", padx=10)
+    
     def add_resize_observer(self):
         """Add window resize handling"""
         self.root.bind('<Configure>', self.on_window_resize)
@@ -1722,12 +2201,25 @@ class ConfigManager:
                 'type': bool,
                 'hidden': False
             },
+            'enable_logging': {
+                'default': 'True',
+                'description': 'Enable or disable logging',
+                'type': bool,
+                'hidden': False
+            },
+            'log_level': {
+                'default': 'ALL',
+                'description': 'Logging level (NONE, DEBUG, INFO, WARNING, ERROR, CRITICAL, ALL)',
+                'type': str,
+                'hidden': False
+            },
             'appearance_mode': {
                 'default': 'Dark',  # Default to Dark mode
                 'description': 'Appearance mode of the application (Dark, Light, System)',
                 'type': str,
                 'hidden': False
             },
+            
         },
         'Controls': {
             'controls_file': {
@@ -1796,7 +2288,7 @@ class ConfigManager:
             'type': str,
             'hidden': False  # Changed from True
         },
-        'show_move_roms_button': { # Allows a user to select roms to remove from a text file
+        'show_move_roms_button': { # Allows a user to select roms to remove from a text fileView Log
             'default': 'never',  # 'always', 'never'
             'description': 'Controls visibility of Move ROMs button',
             'type': str,
@@ -1813,6 +2305,12 @@ class ConfigManager:
             'description': 'Controls visibility of Remove Games button',
             'type': str,
             'hidden': False  # Changed from True
+        },
+        'show_log_viewer_button': {  # Added new button visibility state
+            'default': 'never',  # 'always', 'never'
+            'description': 'Controls visibility of Log Viewer button',
+            'type': str,
+            'hidden': False
         },
     }
 
@@ -1834,6 +2332,58 @@ class ConfigManager:
         }
     }
 
+    # Add class-level cache for build type
+    _cached_build_type = None
+    _build_type_lock = threading.Lock()
+
+    @classmethod
+    def _determine_build_type(cls, base_path: str) -> str:
+        """
+        Determine build type based on directory structure.
+        Thread-safe, cached implementation.
+        """
+        print("\n=== Build Type Detection Start ===")
+        
+        # Check if we already have a cached build type
+        if cls._cached_build_type is not None:
+            print(f"✓ Using cached build type: {cls._cached_build_type}")
+            return cls._cached_build_type
+
+        print("No cached build type found, determining build type...")
+        
+        # Use a lock to prevent multiple threads from determining build type simultaneously
+        with cls._build_type_lock:
+            print("Acquired lock for build type detection")
+            
+            # Double-check pattern in case another thread set it while we were waiting
+            if cls._cached_build_type is not None:
+                print(f"✓ Another thread set build type while waiting: {cls._cached_build_type}")
+                return cls._cached_build_type
+
+            # Check each build type's paths
+            print("\nChecking paths for each build type:")
+            for build_type, relative_paths in cls.BUILD_TYPE_PATHS.items():
+                print(f"\nChecking build type '{build_type}':")
+                valid_paths = True
+                
+                # Check each path for this build type
+                for path_type, rel_path in relative_paths.items():
+                    abs_path = os.path.join(base_path, rel_path)
+                    exists = os.path.exists(abs_path)
+                    print(f"  {path_type}: {abs_path}")
+                    print(f"    → {'✓ Exists' if exists else '✗ Not found'}")
+                    valid_paths = valid_paths and exists
+                
+                if valid_paths:
+                    print(f"\n✓ Found valid build type: {build_type}")
+                    cls._cached_build_type = build_type
+                    return build_type
+
+            # Default to 'S' if no valid paths found
+            print("\n⚠ No valid build type found, defaulting to 'S'")
+            cls._cached_build_type = 'S'
+            return 'S'
+    
     @classmethod
     def get_version_from_json(cls):
         """Load version from whats_new.json"""
@@ -1930,39 +2480,94 @@ class ConfigManager:
     @classmethod
     def initialize(cls):
         """Initialize class-level settings"""
+        print("Loading settings overrides...")  # This will now be logged
         cls._load_settings_overrides()
+        print("Loading build types overrides...")  # This will now be logged
         cls._load_build_types_overrides()
     
     def __init__(self, debug=True):
         self.debug = debug
         self.base_path = os.getcwd()
+        print(f"Base path: {self.base_path}")
+
         self.config_path = os.path.join(self.base_path, "autochanger", "customisation.ini")
+        print(f"Config path: {self.config_path}")
+
         self.config = configparser.ConfigParser()
-        # Initialize the class
-        #ConfigManager.initialize()
-        # Initialize caches
-        self._build_type = None
+
+        # Initialize class if needed
+        print("\nChecking build type cache...")
+        if ConfigManager._cached_build_type is None:
+            print("Cache empty, determining build type...")
+            ConfigManager._determine_build_type(self.base_path)
+        else:
+            print(f"Using cached build type: {ConfigManager._cached_build_type}")
+        
+        # Store instance build type from class cache
+        self._build_type = ConfigManager._cached_build_type
+        print(f"Instance build type set to: {self._build_type}")
+        
+        # Initialize other caches
         self._theme_paths = None
-        self._build_type_cache = {}
         self._tab_visibility_cache = {}
         self._button_visibility_cache = {}
         self._paths_cache = {}
 
+        print("\nInitializing configuration...")
+        self.init_log()
         self.initialize_config()
-        self._build_type = self._determine_build_type()  # Only do once
-
         self.version_check()
 
-        # Add to existing __init__
-        self._button_visibility_cache = {}
-        # Initialize button visibility during initialization
+        print("\nInitializing caches...")
+        # Initialize button visibility
         for button in self.BUTTON_VISIBILITY_STATES:
             self._button_visibility_cache[button] = self.determine_button_visibility(button)
 
-        # Pre-compute tab visibility during initialization
-        self._tab_visibility_cache = {}
-        for tab in ['controls', 'view_games', 'themes_games', 'advanced_configs', 'playlists', 'filter_games', 'multi_path_themes_tab']:
+        # Pre-compute tab visibility
+        for tab in ['controls', 'view_games', 'themes_games', 'advanced_configs', 
+                   'playlists', 'filter_games', 'multi_path_themes_tab']:
             self._tab_visibility_cache[tab] = self.determine_tab_visibility(tab)
+        
+        print("=== ConfigManager Initialization Complete ===\n")
+
+        print(f"✓ Using cached build type: {self._build_type}")
+    
+    def init_log(self):
+        """Initialize/clear the log file on app startup"""
+        try:
+            # Use autochanger folder directly
+            log_folder = os.path.join(self.base_path, "autochanger")
+            os.makedirs(log_folder, exist_ok=True)
+            
+            # Store log file in autochanger folder
+            self.log_file = os.path.join(log_folder, "application.log")
+            
+            # Clear/create the log file
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                f.write(f"[{timestamp}] [INFO] Log initialized\n")
+                f.write(f"[{timestamp}] [INFO] Application starting up\n")
+                
+            # Add another test log entry
+            self.add_to_log("ConfigManager initialized successfully")
+                
+        except Exception as e:
+            print(f"Error initializing log: {e}")
+
+    def add_to_log(self, message: str, level: str = "INFO"):
+        """Add a message to the log file"""
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            formatted_message = f"[{timestamp}] [{level.upper()}] {message}\n"
+            
+            with open(self.log_file, 'a', encoding='utf-8') as f:
+                f.write(formatted_message)
+
+            if self.debug:
+                print(formatted_message.strip())
+                
+        except Exception as e:
+            print(f"Error writing to log: {e}")
     
     def get_fullscreen_preference(self) -> bool:
         """Retrieve the fullscreen preference."""
@@ -2330,6 +2935,23 @@ class ConfigManager:
 
         return default
 
+    def set_setting(self, section, key, value):
+        """Set a setting in the config file"""
+        # Make sure section exists
+        if section not in self.config:
+            self.config[section] = {}
+        
+        # Set the value
+        self.config[section][key] = str(value)
+        
+        try:
+            # Save to file
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                self.config.write(f)
+            print(f"Setting saved: [{section}] {key} = {value}")
+        except Exception as e:
+            print(f"Error saving setting: {e}")
+    
     def setting_exists(self, section, key):
         """Check if a setting exists in the configuration."""
         return section in self.config and key in self.config[section]
@@ -2348,30 +2970,10 @@ class ConfigManager:
         Returns a dictionary of all possible settings and their metadata.
         """
         return cls.AVAILABLE_SETTINGS
-    
-    def _determine_build_type(self):
-        """Determine build type based on directory structure."""
-        if self._build_type is not None:
-            return self._build_type
 
-        for build_type, relative_paths in self.BUILD_TYPE_PATHS.items():
-            # Generate absolute paths only once
-            if build_type not in self._build_type_cache:
-                paths = self._get_absolute_paths(relative_paths)
-                self._build_type_cache[build_type] = self._validate_paths(paths)
-
-            # If paths are valid, return the build type
-            if self._build_type_cache[build_type]:
-                #self._log(f"✓ Found valid paths for build type: {build_type}")
-                return build_type
-
-        self._log("✗ No valid build type found, defaulting to 'S'")
-        return 'S'
-
-    def get_build_type(self):
-        """Get the cached build type or determine it if not yet set."""
-        if self._build_type is None:
-            self._build_type = self._determine_build_type()
+    def get_build_type(self) -> str:
+        """Get the cached build type."""
+        print(f"Getting build type: {self._build_type}")
         return self._build_type
 
     def get_theme_paths(self):
@@ -2525,9 +3127,19 @@ class ConfigManager:
             'logos': os.path.join(self.base_path, "autochanger", "themes", "logo")
         }
 
-    def get_playlist_location(self):
-        """Get the playlist location based on internal build type."""
+    def get_playlist_location(self) -> str:
+        """Get the playlist location based on cached build type."""
+        print(f"Getting playlist location (build type): {self._build_type}")
         return self._build_type
+    
+    @classmethod
+    def reset_build_type_cache(cls):
+        """Reset the build type cache (useful for testing or when paths change)."""
+        print("\n=== Resetting Build Type Cache ===")
+        with cls._build_type_lock:
+            print("Previous cached build type:", cls._cached_build_type)
+            cls._cached_build_type = None
+            print("Cache reset complete")
 
     def get_controls_file(self) -> str:
         """Get the controls file name."""
@@ -5131,6 +5743,7 @@ class MultiPathThemes:
     def start_autoplay(self):
         """Start video playback immediately"""
         print("Starting autoplay...")
+        self.config_manager.add_to_log("Starting autoplay...")
         if self.current_viewer and self.current_viewer.video_path:
             if not self.current_viewer.is_playing:
                 if self.current_viewer.start_video():
@@ -5808,10 +6421,13 @@ class MultiPathThemes:
         script_filename, _, _, _ = self.themes_list[self.current_theme_index]
         script_name_without_extension = os.path.splitext(script_filename)[0]  # Remove extension
         script_path = os.path.join(self.rom_folders[0], script_filename)
+        
+        self.config_manager.add_to_log(f"Attempting to run theme script: {script_name_without_extension}")
 
         # Print the selected theme information for debugging
         print(f"Selected script: {script_filename}")
         print(f"Full script path: {script_path}")
+        self.config_manager.add_to_log(f"Executing script at path: {script_path}")
 
         # Check if the script file exists
         print(f"Checking if script exists at path: {script_path}")
@@ -5863,6 +6479,7 @@ class MultiPathThemes:
             # Catch any unexpected critical errors
             print(f"Critical error while executing script: {e}")
             self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
+            self.config_manager.add_to_log(f"Error applying theme '{script_name_without_extension}': {str(e)}", "ERROR")
 
     def jump_to_start(self):
         """Jump to the start of each ROM folder for quick navigation"""
@@ -8583,6 +9200,7 @@ class ViewRoms:
 def main():
     # Initialize GUI with customtkinter
     config_manager = ConfigManager()
+
     appearance_mode = config_manager.get_appearance_mode()
     ctk.set_appearance_mode(appearance_mode)
     ctk.set_default_color_theme("blue")

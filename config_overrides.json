@@ -120,6 +120,18 @@
             "type": "bool",
             "hidden": false
         },
+        "enable_logging": {
+            "default": "True",
+            "description": "Enable or disable logging",
+            "type": "bool",
+            "hidden": false
+        },
+        "log_level": {
+            "default": "ALL",
+            "description": "Logging level (NONE, DEBUG, INFO, WARNING, ERROR, CRITICAL, ALL)",
+            "type": "str",
+            "hidden": "False"
+        },
         "appearance_mode": {
             "default": "Dark",
             "description": "Appearance mode of the application (Dark, Light, System)",
@@ -207,6 +219,12 @@
         "remove_games_button": {
             "default": "always",
             "description": "Controls visibility of Remove Games button",
+            "type": "str",
+            "hidden": false
+        },
+		"show_log_viewer_button": {
+            "default": "never",
+            "description": "Controls visibility of Log Viewer button",
             "type": "str",
             "hidden": false
         }

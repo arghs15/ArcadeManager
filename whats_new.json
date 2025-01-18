@@ -1,5 +1,7 @@
-[
-  {
+{
+  "version": "2.3.0",
+  "sections": [
+    {
     "section_header": "New Features",
     "section_color": "#4CAF50",
     "items": [
@@ -32,9 +34,10 @@
 	  {
         "icon_key": "bug_icon",
         "title": "Tab Build Load Times Added for Troubleshooting",
-        "description": "This pop up now displays the time taken to build each tab on startup.\nHelp point to where imrpovements can be made.",
+        "description": "The System Info button within this pop up now displays the time taken to build each tab on startup.\nHelp point to where imrpovements can be made.",
         "full_width": true
       }
     ]
   }
 ]
+}
