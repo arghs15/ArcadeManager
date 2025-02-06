@@ -347,6 +347,15 @@ class SplashScreen:
         self.root = tk.Toplevel(parent)
         self.root.overrideredirect(True)
         self.root.attributes('-topmost', True)
+        
+        # Store parent reference for force closing
+        self.parent = parent
+        
+        # Add taskbar icon and allow closing from taskbar
+        self.root.withdraw()  # Hide window temporarily
+        self.root.iconbitmap(default="") if os.name == 'nt' else None  # Show in taskbar
+        self.root.protocol("WM_DELETE_WINDOW", self.force_close)
+        self.root.deiconify()  # Show window again
 
         # Get DPI scale factor
         try:
@@ -358,6 +367,15 @@ class SplashScreen:
 
         # Set dark grey background
         self.root.configure(bg='#2b2b2b')
+
+        # Add right-click menu for force close
+        self.create_context_menu()
+
+        # Bind right-click event
+        self.root.bind('<Button-3>', self.show_context_menu)
+        
+        # Add timeout mechanism (30 seconds)
+        self.timeout_id = self.root.after(60000, self.handle_timeout)
 
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
@@ -484,19 +502,76 @@ class SplashScreen:
         )
         self.status_label.grid(row=2, column=0, sticky="ew", pady=5)
 
+    def create_context_menu(self):
+        """Create right-click context menu"""
+        self.context_menu = tk.Menu(self.root, tearoff=0)
+        self.context_menu.add_command(
+            label="Force Close Application", 
+            command=self.force_close,
+            background='#2b2b2b',
+            foreground='white',
+            activebackground='#ff0000',
+            activeforeground='white'
+        )
+
+    def show_context_menu(self, event):
+        """Show context menu on right-click"""
+        try:
+            self.context_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.context_menu.grab_release()
+
+    def handle_timeout(self):
+        """Handle splash screen timeout"""
+        print("Splash screen timed out after 30 seconds")
+        error_msg = ("Application failed to start within 30 seconds.\n"
+                    "This might indicate a problem with initialization.\n"
+                    "Would you like to force close the application?")
+                    
+        if messagebox.askyesno("Timeout Error", error_msg):
+            self.force_close()
+        else:
+            # Reset timeout for another 30 seconds
+            self.timeout_id = self.root.after(30000, self.handle_timeout)
+    
+    def force_close(self):
+        """Force close the entire application"""
+        print("Force closing application...")
+        try:
+            # Cancel timeout if it exists
+            if hasattr(self, 'timeout_id'):
+                self.root.after_cancel(self.timeout_id)
+            
+            # Destroy splash screen
+            self.root.destroy()
+            
+            # Force close parent application
+            if self.parent:
+                self.parent.quit()
+                self.parent.destroy()
+        except Exception as e:
+            print(f"Error during force close: {e}")
+            # If normal close fails, use os._exit as last resort
+            import os
+            os._exit(1)
+
     def update_status(self, text):
         """Update status text with error checking"""
         try:
             self.status_label.config(text=text)
             self.root.update_idletasks()
             print(f"Updated status label text: {text}")
-            print(f"Status label dimensions: {self.status_label.winfo_width()}x{self.status_label.winfo_height()}")
         except Exception as e:
             print(f"Error updating status: {e}")
 
     def close(self):
-        """Close the splash screen"""
+        """Normal close of splash screen"""
         try:
+            # Cancel timeout if it exists
+            if hasattr(self, 'timeout_id'):
+                self.root.after_cancel(self.timeout_id)
+            
+            self.root.attributes('-topmost', False)
             self.root.destroy()
         except Exception as e:
             print(f"Error closing splash screen: {e}")
@@ -556,7 +631,7 @@ class FilterGamesApp:
         
         # Configure root window properties first
         self.root.attributes('-alpha', 0.0)  # Start invisible but maintain geometry
-        self.root.protocol("WM_TAKE_FOCUS", self._handle_focus)
+        self.root.attributes('-topmost', False)  # Explicitly ensure window isn't topmost
         
         # Window state setup
         self._window_state = {
@@ -583,6 +658,9 @@ class FilterGamesApp:
 
         # Start loading the application
         self.root.after(100, self.initialize_app)
+        
+        # Ensure main window isn't topmost after a delay
+        self.root.after(200, lambda: self.root.attributes('-topmost', False))
 
     @staticmethod
     def resource_path(relative_path):
@@ -599,15 +677,17 @@ class FilterGamesApp:
         """Standardized method to show popups"""
         self._popup_active = True
         popup_window.transient(self.root)
+        # Only set topmost temporarily
         popup_window.attributes('-topmost', True)
         popup_window.focus_force()
+
+        popup_window.after(100, lambda: popup_window.attributes('-topmost', False))
         
         def on_popup_close():
             self._popup_active = False
-            popup_window.withdraw()  # Hide before destroying
+            popup_window.withdraw()
             self.root.after(50, lambda: self.root.attributes('-alpha', 1.0))
-            self.root.after(100, popup_window.destroy)  # Delay destruction
-            self.root.focus_force()
+            self.root.after(100, popup_window.destroy)
         
         popup_window.protocol("WM_DELETE_WINDOW", on_popup_close)
         return on_popup_close
@@ -615,6 +695,9 @@ class FilterGamesApp:
     def finish_loading(self):
         """Close splash screen and show main window"""
         self.splash.close()
+        
+        # Explicitly ensure window isn't topmost
+        self.root.attributes('-topmost', False)
         
         # Make window visible with a slight delay
         self.root.after(50, lambda: self.root.attributes('-alpha', 1.0))
@@ -629,6 +712,9 @@ class FilterGamesApp:
         if fullscreen_mode:
             self._window_state['is_fullscreen'] = True
             self.handle_fullscreen()
+            
+        # Final ensure of non-topmost state
+        self.root.after(100, lambda: self.root.attributes('-topmost', False))
 
     def initialize_app(self):
         """Initialize the main application with loading status updates"""
@@ -2349,6 +2435,18 @@ class ConfigManager:
             'type': str,
             'hidden': False
         },
+        'create_playlist_button': {
+            'default': 'always',  # 'always', 'never'
+            'description': '',
+            'type': str,
+            'hidden': False
+        },
+        'export_collections_button': {
+            'default': 'always',  # 'always', 'never'
+            'description': 'Controls visibility of Log Viewer button',
+            'type': str,
+            'hidden': False
+        }
     }
 
     BUILD_TYPE_PATHS = {
@@ -2442,15 +2540,31 @@ class ConfigManager:
     
     @classmethod
     def _load_json_file(cls, filename):
-        """Load a JSON file if it exists, return None if file is missing"""
+        """Load a JSON file from PyInstaller temp directory first"""
         try:
-            json_path = os.path.join(PathManager.get_base_path(), filename)
+            # First try PyInstaller temp directory
+            if hasattr(sys, '_MEIPASS'):
+                pyinstaller_path = os.path.join(sys._MEIPASS, filename)
+                print(f"Checking PyInstaller path: {pyinstaller_path}")
+                if os.path.exists(pyinstaller_path):
+                    print(f"✓ Found {filename} in PyInstaller directory")
+                    with open(pyinstaller_path, 'r', encoding='utf-8') as f:
+                        return json.load(f)
+                else:
+                    print(f"✗ {filename} not found in PyInstaller directory")
+            
+            # If not found in PyInstaller dir or not running from bundle,
+            # try base path
+            base_path = PathManager.get_base_path()
+            json_path = os.path.join(base_path, filename)
             if os.path.exists(json_path):
+                print(f"Loading {filename} from base directory")
                 with open(json_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            else:
-                print(f"Optional file {filename} not found - using defaults")
-                return None
+                    
+            print(f"Optional file {filename} not found - using defaults")
+            return None
+            
         except Exception as e:
             print(f"Error loading {filename}: {e} - using defaults")
             return None
@@ -2726,28 +2840,29 @@ class ConfigManager:
         try:
             # Check cache first
             if button_name in self._button_visibility_cache:
-                #print(f"Using cached value for {button_name}: {self._button_visibility_cache[button_name]}")
                 return self._button_visibility_cache[button_name]
 
-            #print(f"\nDebug for {button_name}:")
-            #print(f"Button exists in config: {button_name in self.config['Settings']}")
-            if 'Settings' in self.config and button_name in self.config['Settings']:
+            # First check ButtonVisibility section in INI
+            if 'ButtonVisibility' in self.config and button_name in self.config['ButtonVisibility']:
+                visibility = self.config['ButtonVisibility'][button_name]
+            # Then check Settings section in INI (for backward compatibility)
+            elif 'Settings' in self.config and button_name in self.config['Settings']:
                 visibility = self.config['Settings'][button_name]
-                #print(f"INI value: {visibility}")
+            # Finally fall back to hardcoded defaults/overrides
             else:
                 visibility = self.BUTTON_VISIBILITY_STATES.get(button_name, {}).get('default', 'never')
-                #print(f"Using hardcoded default: {visibility}")
 
+            print(f"Button {button_name} visibility from config: {visibility}")  # Debug logging
+            
             # Convert visibility setting to boolean
-            is_visible = visibility == 'always'
-            #print(f"Final visibility value: {is_visible}")
+            is_visible = visibility.lower() == 'always'
             
             # Cache the result
             self._button_visibility_cache[button_name] = is_visible
             return is_visible
 
         except Exception as e:
-            #print(f"Error determining button visibility for {button_name}: {e}")
+            print(f"Error determining button visibility for {button_name}: {e}")
             return False
 
     def update_button_visibility(self, button_name, visibility):
@@ -2761,13 +2876,17 @@ class ConfigManager:
             if visibility not in ['always', 'never']:
                 raise ValueError("Invalid visibility mode. Must be 'always' or 'never'")
 
+            # Ensure ButtonVisibility section exists
+            if 'ButtonVisibility' not in self.config:
+                self.config.add_section('ButtonVisibility')
+                
+            # Update the config
+            self.config.set('ButtonVisibility', button_name, visibility)
+            
             # Update the cache
             self._button_visibility_cache[button_name] = (visibility == 'always')
             
-            # Only update config if the setting already exists in the INI file
-            if self.setting_exists('Settings', button_name):
-                self.config.set('Settings', button_name, visibility)
-                self.save_config()
+            self.save_config()
 
         except Exception as e:
             print(f"Error updating button visibility for {button_name}: {e}")
@@ -2879,7 +2998,7 @@ class ConfigManager:
     def _initialize_default_config(self):
         """Initialize the INI file with only visible (non-hidden) default settings."""
         # Add base sections
-        for section in ['Settings', 'Controls', 'Tabs']:
+        for section in ['Settings', 'Controls', 'Tabs', 'ButtonVisibility']:  # Added ButtonVisibility
             if section not in self.config:
                 self.config[section] = {}
 
@@ -2891,10 +3010,10 @@ class ConfigManager:
                 if not setting_info.get('hidden', False):
                     self.config[section][key] = str(setting_info['default'])
 
-        # Initialize button visibility settings under [Settings]
+        # Initialize button visibility settings under [ButtonVisibility] section
         for button_name, button_info in self.BUTTON_VISIBILITY_STATES.items():
             if not button_info.get('hidden', False):
-                self.config['Settings'][button_name] = button_info['default']
+                self.config['ButtonVisibility'][button_name] = button_info['default']
 
     def determine_tab_visibility(self, tab_name):
         """
@@ -7816,6 +7935,14 @@ class ViewRoms:
             'remove_games_button': {
                 'text': "Remove Games",
                 'command': self.select_games_to_remove
+            },
+            'create_playlist_button': {
+                'text': "Create Playlist",
+                'command': self.create_playlist
+            },
+            'export_collections_button': {
+                'text': "Export Collections",
+                'command': self.export_collections_data
             }
         }
 
@@ -7836,6 +7963,308 @@ class ViewRoms:
                 )
                 self.buttons[button_name].pack(side='right', padx=5)
 
+    def create_playlist(self):
+        """Open a window to select games to add to a new playlist"""
+        try:
+            # Get the selected collection
+            selected_collection = self.collection_var.get()
+            if selected_collection == "All Collections":
+                messagebox.showerror("Error", "Please select a specific collection.")
+                return
+
+            # Pre-filter ROMs and get their base names
+            filtered_roms = []
+            for full_rom in self.rom_list:
+                if f"({selected_collection})" in full_rom:
+                    # Get the actual ROM name (without collection)
+                    base_rom = full_rom.rsplit(' (', 1)[0]  # This only removes the collection name
+                    # Get the description for display
+                    # First try with just the game name (before any parentheses)
+                    simple_name = base_rom.split(" (")[0]
+                    desc = self.rom_descriptions.get(simple_name)
+                    if desc is None:
+                        # If no description found in CSV, use the full ROM name including all parenthetical info
+                        desc = base_rom
+                    filtered_roms.append((base_rom, desc, full_rom))
+            
+            filtered_roms.sort(key=lambda x: x[1].lower())
+
+            # Create window
+            select_window = tk.Toplevel(self.parent_tab)
+            select_window.title(f"Create Playlist - {selected_collection}")
+            select_window.configure(bg='#2c2c2c')
+
+            # Window sizing
+            screen_width = select_window.winfo_screenwidth()
+            screen_height = select_window.winfo_screenheight()
+            window_width = int(screen_width * 0.4)
+            window_height = int(screen_height * 0.6)
+            x = (screen_width - window_width) // 2
+            y = (screen_height - window_height) // 2
+            select_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+
+            # Main container - set dark background color
+            main_frame = ctk.CTkFrame(select_window, fg_color='#2c2c2c')
+            main_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+            # Add playlist name input
+            name_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
+            name_frame.pack(fill='x', padx=5, pady=5)
+
+            name_label = ctk.CTkLabel(name_frame, text="Playlist Name:", font=self.label_font)
+            name_label.pack(side='left', padx=5)
+
+            playlist_name_var = tk.StringVar()
+            name_entry = ctk.CTkEntry(name_frame, textvariable=playlist_name_var, font=self.button_font)
+            name_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+            # Add search functionality
+            search_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
+            search_frame.pack(fill='x', padx=5, pady=5)
+
+            search_label = ctk.CTkLabel(search_frame, text="Search:", font=self.label_font)
+            search_label.pack(side='left', padx=5)
+
+            search_var = tk.StringVar()
+            search_entry = ctk.CTkEntry(search_frame, textvariable=search_var, font=self.button_font)
+            search_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+            # Create list frame with fixed height and dark background
+            list_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
+            list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+            # Use a Treeview for game selection
+            tree = ttk.Treeview(list_frame, selectmode='none', show='tree')
+            tree.pack(side='left', fill='both', expand=True)
+
+            # Configure Treeview style for dark theme
+            style = ttk.Style()
+            style.map('Treeview', background=[('selected', '#2c2c2c')])
+            style.configure("Treeview", 
+                        background="#2c2c2c", 
+                        foreground="white", 
+                        fieldbackground="#2c2c2c",
+                        font=('TkDefaultFont', 12))
+            style.layout("Treeview", [('Treeview.treearea', {'sticky': 'nswe'})])
+            style.configure("Treeview.Heading", 
+                        background="#2c2c2c", 
+                        foreground="white",
+                        font=('TkDefaultFont', 12))
+            
+            tree.tag_configure('custom', font=('TkDefaultFont', 12))
+            tree.tag_configure('checked', background='#2d5a27')
+            tree.tag_configure('unchecked', background='#2c2c2c')
+
+            # Add scrollbar
+            scrollbar = ctk.CTkScrollbar(list_frame, command=tree.yview)
+            scrollbar.pack(side='right', fill='y')
+            tree.configure(yscrollcommand=scrollbar.set)
+
+            # Tracking dictionaries
+            checked_items = {}
+            item_to_rom = {}
+            desc_to_display = {}
+
+            def toggle_check(event):
+                item = tree.identify_row(event.y)
+                if item:
+                    checked_items[item] = not checked_items.get(item, False)
+                    if checked_items[item]:
+                        tree.item(item, text="☒ " + desc_to_display[item], tags=('custom', 'checked'))
+                    else:
+                        tree.item(item, text="☐ " + desc_to_display[item], tags=('custom', 'unchecked'))
+
+            tree.bind('<Button-1>', toggle_check)
+
+            def update_list(search_text=''):
+                tree.delete(*tree.get_children())
+                search_text = search_text.lower()
+                
+                visible_items = [
+                    (base_rom, desc, full_rom) for base_rom, desc, full_rom in filtered_roms
+                    if search_text in desc.lower() or search_text in base_rom.lower()
+                ]
+
+                for rom_name, desc, full_rom in visible_items:
+                    item = tree.insert('', 'end', text="☐ " + desc, tags=('custom', 'unchecked'))
+                    checked_items[item] = False
+                    desc_to_display[item] = desc
+                    # Store the actual ROM name for the playlist file
+                    item_to_rom[item] = rom_name
+
+            search_after_id = None
+            def on_search(*args):
+                nonlocal search_after_id
+                if search_after_id:
+                    select_window.after_cancel(search_after_id)
+                search_after_id = select_window.after(150, lambda: update_list(search_var.get()))
+
+            search_var.trace_add('write', on_search)
+
+            # Button frame
+            button_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
+            button_frame.pack(fill='x', pady=5)
+
+            def select_all():
+                for item in tree.get_children():
+                    checked_items[item] = True
+                    tree.item(item, text="☒ " + desc_to_display[item], tags=('custom', 'checked'))
+
+            def select_none():
+                for item in tree.get_children():
+                    checked_items[item] = False
+                    tree.item(item, text="☐ " + desc_to_display[item], tags=('custom', 'unchecked'))
+
+            select_all_btn = ctk.CTkButton(
+                button_frame,
+                text="Select All",
+                command=select_all,
+                font=self.button_font
+            )
+            select_all_btn.pack(side='left', padx=5)
+
+            select_none_btn = ctk.CTkButton(
+                button_frame,
+                text="Select None",
+                command=select_none,
+                font=self.button_font
+            )
+            select_none_btn.pack(side='left', padx=5)
+
+            on_close = self.main_app.show_popup(select_window)
+
+            def create_playlist_file():
+                playlist_name = playlist_name_var.get().strip()
+                if not playlist_name:
+                    messagebox.showerror("Error", "Please enter a playlist name.")
+                    return
+                    
+                selected_items = [item for item, checked in checked_items.items() if checked]
+                if not selected_items:
+                    messagebox.showinfo("No Selection", "No games were selected.")
+                    return
+
+                # Create playlists directory if it doesn't exist
+                collection_path = os.path.join(PathManager.get_base_path(), 'collections', selected_collection)
+                playlists_dir = os.path.join(collection_path, 'playlists')
+                os.makedirs(playlists_dir, exist_ok=True)
+
+                # Create playlist file
+                playlist_file = os.path.join(playlists_dir, f"{playlist_name}.txt")
+                
+                # Check if file already exists
+                if os.path.exists(playlist_file):
+                    if not messagebox.askyesno("File Exists", 
+                        f"A playlist named '{playlist_name}' already exists. Do you want to overwrite it?"):
+                        return
+
+                # Write selected ROMs to playlist file
+                with open(playlist_file, 'w', encoding='utf-8') as f:
+                    selected_roms = [item_to_rom[item] for item in selected_items]
+                    for rom in selected_roms:
+                        f.write(f"{rom}\n")
+
+                messagebox.showinfo("Success", 
+                    f"Playlist '{playlist_name}' created successfully!\n\nNote: You will need to restart the application for the playlist to be visible in the Playlists tab.")
+                if on_close:
+                    on_close()
+
+            def cancel():
+                if on_close:
+                    on_close()
+
+            create_btn = ctk.CTkButton(
+                button_frame,
+                text="Create Playlist",
+                command=create_playlist_file,
+                font=self.button_font,
+                fg_color='#4CAF50',
+                hover_color='#45a049'
+            )
+            create_btn.pack(side='right', padx=5)
+
+            cancel_btn = ctk.CTkButton(
+                button_frame,
+                text="Cancel",
+                command=cancel,
+                font=self.button_font,
+                fg_color='#f44336',
+                hover_color='#da190b'
+            )
+            cancel_btn.pack(side='right', padx=5)
+
+            # Initial load of list
+            update_list()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error in playlist creation window: {str(e)}")
+    
+    def export_collections_data(self):
+        """Export a CSV file containing all collections and their ROMs"""
+        try:
+            # Get the save location from the user
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".csv",
+                filetypes=[("CSV files", "*.csv")],
+                title="Save Collections Report"
+            )
+            
+            if not file_path:  # User cancelled
+                return
+                
+            # Create a dictionary to store collection data
+            collections_data = {}
+            
+            # Process each ROM in the list
+            for rom in self.rom_list:
+                # Split the ROM name to get base name and collection
+                if " (" in rom and ")" in rom:
+                    base_name = rom.rsplit(" (", 1)[0]
+                    collection = rom.rsplit(" (", 1)[1].rstrip(")")
+                    
+                    # Get the description if available
+                    description = self.rom_descriptions.get(base_name, "")
+                    
+                    # Initialize collection list if needed
+                    if collection not in collections_data:
+                        collections_data[collection] = []
+                        
+                    # Add ROM data to collection
+                    collections_data[collection].append({
+                        'ROM Name': base_name,
+                        'Description': description
+                    })
+            
+            # Export as CSV
+            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.writer(csvfile)
+                # Write header
+                writer.writerow(['Collection', 'ROM Name', 'Description'])
+                
+                # Write data for each collection
+                for collection, roms in sorted(collections_data.items()):
+                    for rom in sorted(roms, key=lambda x: x['ROM Name'].lower()):
+                        writer.writerow([
+                            collection,
+                            rom['ROM Name'],
+                            rom['Description']
+                        ])
+                        
+            # Show success message
+            messagebox.showinfo(
+                "Export Complete",
+                f"Collections data has been exported to:\n{file_path}"
+            )
+            
+            # Update status bar
+            self.status_bar.configure(
+                text=f"Collections data exported successfully to {os.path.basename(file_path)}"
+            )
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error exporting collections data: {str(e)}")
+            self.status_bar.configure(text="Error exporting collections data")
+    
     def remove_random_roms(self):
         """Remove a percentage of ROMs at random and move their artwork."""
         try:
