@@ -1,7 +1,0 @@
-Pillow
-customtkinter
-opencv-python
-psutil
-inputs
-keyboard
-pyinstaller
