@@ -1,5 +1,6 @@
 import os
 import subprocess
+import sys
 
 def main():
     # Prompt user for the full path to the script location
@@ -17,24 +18,31 @@ def main():
     # Change to the script directory
     os.chdir(script_location)
     
+    # on unix, delimiter is :
+    delimiter = ";" if os.name == "nt" else ":"
+
     # PyInstaller command
     command = [
         "pyinstaller",
-        "--onefile",
         "--windowed",
-        "--add-data", "meta\\hyperlist\\META.csv;meta\\hyperlist",
-        "--add-data", "assets\\icons\\bug_icon.png;assets\\icons",
-        "--add-data", "assets\\icons\\feature_icon.png;assets\\icons",
-        "--add-data", "assets\\icons\\rocket_icon.png;assets\\icons",
-        "--add-data", "assets\\screenshots\\controls_tab.png;assets\\screenshots",
-        "--add-data", "assets\\screenshots\\exit_state.png;assets\\screenshots",
-        "--add-data", "assets\\screenshots\\manage_roms_tab.png;assets\\screenshots",
-        "--add-data", "assets\\screenshots\\filter_games_tab.png;assets\\screenshots",
-        "--add-data", "Logo.png;.",
-        "--add-data", "icon.ico;.",
-        "--icon=icon.ico",
-        "CustomisationFUA.pyw"
+        "--noconfirm",
+        "--add-data", f"meta{os.sep}hyperlist{os.sep}META.csv{delimiter}meta{os.sep}hyperlist",
+        "--add-data", f"whats_new.json{delimiter}.",
+#        "--add-data", f"config_overrides.json{delimiter}.",
+#        "--add-data", f"build_types.json{delimiter}.",
+        "--add-data", f"Logo.png{delimiter}.",
+        "--add-data", f"icon.ico{delimiter}.",
+        "Customisation.pyw"
     ]
+
+    # Add --icon if not linux
+    if sys.platform != "linux":
+        command.insert(1, "--icon=icon.ico")
+
+    # Add --onefile if not macOS, macOS uses a folder structure for apps
+    if sys.platform != "darwin":
+        command.insert(1, "--onefile")
+
     
     try:
         # Run the PyInstaller command
