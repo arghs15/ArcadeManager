@@ -14028,6 +14028,142 @@
       ]
     },
     {
+      "romname": "vsav",
+      "gamename": "Vampire Savior: The Lord of Vampire (Euro 970519)",
+      "numPlayers": 2,
+      "alternating": false,
+      "mirrored": true,
+      "usesService": false,
+      "tilt": false,
+      "cocktail": false,
+      "miscDetails": "",
+      "players": [
+        {
+          "number": 1,
+          "numButtons": 6,
+          "controls": [
+            {
+              "name": "8-way Joystick",
+              "constants": [
+                "joy8way"
+              ],
+              "buttons": []
+            }
+          ],
+          "labels": [
+            {
+              "name": "P1_BUTTON1",
+              "value": "Light Punch"
+            },
+            {
+              "name": "P1_BUTTON2",
+              "value": "Middle Punch"
+            },
+            {
+              "name": "P1_BUTTON3",
+              "value": "Heavy Punch"
+            },
+            {
+              "name": "P1_BUTTON4",
+              "value": "Light Kick"
+            },
+            {
+              "name": "P1_BUTTON5",
+              "value": "Middle Kick"
+            },
+            {
+              "name": "P1_BUTTON6",
+              "value": "Heavy Kick"
+            },
+            {
+              "name": "P1_JOYSTICK_UP",
+              "value": "Up"
+            },
+            {
+              "name": "P1_JOYSTICK_DOWN",
+              "value": "Down"
+            },
+            {
+              "name": "P1_JOYSTICK_LEFT",
+              "value": "Left"
+            },
+            {
+              "name": "P1_JOYSTICK_RIGHT",
+              "value": "Right"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "romname": "vsav2",
+      "gamename": "Vampire Savior: The Lord of Vampire [Jampan]",
+      "numPlayers": 2,
+      "alternating": false,
+      "mirrored": true,
+      "usesService": false,
+      "tilt": false,
+      "cocktail": false,
+      "miscDetails": "",
+      "players": [
+        {
+          "number": 1,
+          "numButtons": 6,
+          "controls": [
+            {
+              "name": "8-way Joystick",
+              "constants": [
+                "joy8way"
+              ],
+              "buttons": []
+            }
+          ],
+          "labels": [
+            {
+              "name": "P1_BUTTON1",
+              "value": "Light Punch"
+            },
+            {
+              "name": "P1_BUTTON2",
+              "value": "Middle Punch"
+            },
+            {
+              "name": "P1_BUTTON3",
+              "value": "Heavy Punch"
+            },
+            {
+              "name": "P1_BUTTON4",
+              "value": "Light Kick"
+            },
+            {
+              "name": "P1_BUTTON5",
+              "value": "Middle Kick"
+            },
+            {
+              "name": "P1_BUTTON6",
+              "value": "Heavy Kick"
+            },
+            {
+              "name": "P1_JOYSTICK_UP",
+              "value": "Up"
+            },
+            {
+              "name": "P1_JOYSTICK_DOWN",
+              "value": "Down"
+            },
+            {
+              "name": "P1_JOYSTICK_LEFT",
+              "value": "Left"
+            },
+            {
+              "name": "P1_JOYSTICK_RIGHT",
+              "value": "Right"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "romname": "deadang",
       "gamename": "Dead Angle",
       "numPlayers": 2,
