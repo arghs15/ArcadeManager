@@ -111,13 +111,21 @@ class MAMEControlConfig(ctk.CTk):
                 with open(settings_path, 'r') as f:
                     settings = json.load(f)
                     
-                # Load the single flag
+                # Load the flags
                 self.use_fast_mode = settings.get("use_fast_mode", False)
-                
-                # Also load the backward compatibility flags
                 self.use_controls_json = settings.get("use_controls_json", True)
                 self.use_gamedata_json = settings.get("use_gamedata_json", True)
                 self.use_mame_xml = settings.get("use_mame_xml", True)
+                
+                # Load screen preference
+                if 'preferred_preview_screen' in settings:
+                    self.preferred_preview_screen = settings['preferred_preview_screen']
+                    print(f"Loaded preferred screen from settings: {self.preferred_preview_screen}")
+                
+                # Load visibility settings
+                if 'visible_control_types' in settings:
+                    self.visible_control_types = settings['visible_control_types']
+                    print(f"Loaded visible control types: {self.visible_control_types}")
                 
                 # Update toggle state
                 if hasattr(self, 'fast_mode_toggle'):
@@ -128,6 +136,10 @@ class MAMEControlConfig(ctk.CTk):
                         
             except Exception as e:
                 print(f"Error loading settings: {e}")
+        
+        # Ensure the visible_control_types is initialized even if no settings file exists
+        if not hasattr(self, 'visible_control_types') or self.visible_control_types is None:
+            self.visible_control_types = ["BUTTON", "JOYSTICK"]
 
     def restart_application(self):
         """Restart the application to apply new settings"""
@@ -847,8 +859,33 @@ class MAMEControlConfig(ctk.CTk):
             import traceback
             traceback.print_exc()
     
+    def save_visibility_settings(self):
+        """Save joystick visibility and other display settings"""
+        try:
+            # Get the settings file path
+            settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+            
+            # Load existing settings if available
+            settings = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+            
+            # Add visibility settings
+            settings['visible_control_types'] = self.visible_control_types
+            
+            # Save back to file
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f)
+                
+            print(f"Saved visibility settings: {self.visible_control_types}")
+            return True
+        except Exception as e:
+            print(f"Error saving visibility settings: {e}")
+            return False
+
     def toggle_joystick_controls(self):
-        """Toggle joystick controls visibility"""
+        """Toggle joystick controls visibility and save the setting"""
         # Check if joystick is currently visible
         joystick_visible = "JOYSTICK" in self.visible_control_types
         
@@ -868,66 +905,86 @@ class MAMEControlConfig(ctk.CTk):
             if "JOYSTICK" in control_name:
                 self.preview_canvas.itemconfigure(data['text'], state=state)
                 self.preview_canvas.itemconfigure(data['shadow'], state=state)
+        
+        # Save the visibility setting
+        self.save_visibility_settings()
     
     
     def save_global_positions(self):
-        """Save all positions to global file with debugging"""
+        """Save all positions to global file"""
         try:
-            # Get all current positions with debugging
+            # Get all current positions 
             positions = {}
-            print("\nDEBUG - Saving positions:")
             for name, data in self.text_items.items():
                 if 'x' not in data or 'y' not in data:
-                    print(f"  ERROR: Missing x/y for {name}: {data}")
+                    print(f"  Warning: Missing x/y for {name}")
                     continue
                     
                 x, y = data['x'], data['y']
                 positions[name] = [x, y]  # Use lists instead of tuples
-                print(f"  Saving {name}: position ({x}, {y})")
                 
             if not positions:
-                print("  ERROR: No positions to save!")
+                print("  Warning: No positions to save!")
                 messagebox.showinfo("Error", "No valid positions found to save")
-                return
+                return False
                 
-            # Save to file
+            # Create preview directory if it doesn't exist
             preview_dir = os.path.join(self.mame_dir, "preview")
             os.makedirs(preview_dir, exist_ok=True)
+            
+            # Save to file with explicit path
             filepath = os.path.join(preview_dir, "global_positions.json")
             
             with open(filepath, 'w') as f:
                 json.dump(positions, f)
                 
-            print(f"  Success: Saved {len(positions)} positions to {filepath}")
-            messagebox.showinfo("Success", f"Global positions saved successfully ({len(positions)} items)")
+            print(f"Saved {len(positions)} global positions to: {filepath}")
+            messagebox.showinfo("Success", f"Global positions saved ({len(positions)} items)")
+            return True
         except Exception as e:
-            print(f"  ERROR in save_global_positions: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error saving global positions: {e}")
             messagebox.showerror("Error", f"Could not save positions: {e}")
+            return False
 
     def save_rom_positions(self):
         """Save positions for current ROM"""
         if not self.current_game:
             messagebox.showinfo("Error", "No game selected")
-            return
+            return False
             
         try:
             # Get all current positions
             positions = {}
             for name, data in self.text_items.items():
-                positions[name] = [data['x'], data['y']]  # Use lists instead of tuples
+                if 'x' not in data or 'y' not in data:
+                    print(f"  Warning: Missing x/y for {name}")
+                    continue
+                    
+                x, y = data['x'], data['y']
+                positions[name] = [x, y]  # Use lists instead of tuples
                 
-            # Save to file
+            if not positions:
+                print("  Warning: No positions to save!")
+                messagebox.showinfo("Error", "No valid positions found to save")
+                return False
+                
+            # Create preview directory if it doesn't exist  
             preview_dir = os.path.join(self.mame_dir, "preview")
             os.makedirs(preview_dir, exist_ok=True)
             
-            with open(os.path.join(preview_dir, f"{self.current_game}_positions.json"), 'w') as f:
+            # Save to file with explicit path
+            filepath = os.path.join(preview_dir, f"{self.current_game}_positions.json")
+            
+            with open(filepath, 'w') as f:
                 json.dump(positions, f)
                 
+            print(f"Saved {len(positions)} positions for {self.current_game} to: {filepath}")
             messagebox.showinfo("Success", f"Positions saved for {self.current_game}")
+            return True
         except Exception as e:
+            print(f"Error saving ROM positions: {e}")
             messagebox.showerror("Error", f"Could not save positions: {e}")
+            return False
     
     def make_draggable(self, canvas, text_item, shadow_item, control_name):
         """Make text draggable on the canvas with proper coordinate tracking"""
@@ -1043,83 +1100,33 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showinfo("Success", "Positions saved globally for all games")
     
     def load_text_positions(self, rom_name):
-        """Load text positions with preference control"""
+        """Load text positions, with more reliable file path handling"""
         positions = {}
         
         # Create preview directory if it doesn't exist
         preview_dir = os.path.join(self.mame_dir, "preview")
         if not os.path.exists(preview_dir):
             os.makedirs(preview_dir)
+            return positions  # Return empty positions if directory was just created
         
-        # Check where to load from based on most recent save
-        rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
-        global_positions_file = os.path.join(preview_dir, "global_positions.json")
-        
-        # Load ROM-specific positions if they exist
-        rom_positions = {}
-        if os.path.exists(rom_positions_file):
-            try:
-                with open(rom_positions_file, 'r') as f:
-                    rom_positions = json.load(f)
-                print(f"Loaded {len(rom_positions)} ROM-specific positions for {rom_name}")
-            except Exception as e:
-                print(f"Error loading ROM-specific positions: {e}")
-        
-        # Load global positions if they exist
-        global_positions = {}
-        if os.path.exists(global_positions_file):
-            try:
-                with open(global_positions_file, 'r') as f:
-                    global_positions = json.load(f)
-                print(f"Loaded {len(global_positions)} positions from global file")
-            except Exception as e:
-                print(f"Error loading global positions: {e}")
-        
-        # Choose which positions to use
-        # If both exist, check the last modification time to use the most recent
-        if rom_positions and global_positions:
-            rom_time = os.path.getmtime(rom_positions_file)
-            global_time = os.path.getmtime(global_positions_file)
-            
-            if global_time > rom_time:
-                print(f"Using global positions (more recent)")
-                positions = global_positions
-            else:
-                print(f"Using ROM-specific positions (more recent)")
-                positions = rom_positions
-        else:
-            # Use whichever exists
-            positions = rom_positions if rom_positions else global_positions
-        
-        return positions
-
-    def load_text_positions(self, rom_name):
-        """Load text positions, checking ROM-specific first then falling back to global"""
-        positions = {}
-        
-        # Create preview directory if it doesn't exist
-        preview_dir = os.path.join(self.mame_dir, "preview")
-        if not os.path.exists(preview_dir):
-            os.makedirs(preview_dir)
-        
-        # First try ROM-specific positions
+        # First try ROM-specific positions - with explicit path
         rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
         if os.path.exists(rom_positions_file):
             try:
                 with open(rom_positions_file, 'r') as f:
                     positions = json.load(f)
-                print(f"Loaded {len(positions)} ROM-specific positions for {rom_name}")
+                print(f"Loaded {len(positions)} ROM-specific positions from: {rom_positions_file}")
                 return positions
             except Exception as e:
                 print(f"Error loading ROM-specific positions: {e}")
         
-        # Fall back to global positions
+        # Fall back to global positions - with explicit path
         global_positions_file = os.path.join(preview_dir, "global_positions.json")
         if os.path.exists(global_positions_file):
             try:
                 with open(global_positions_file, 'r') as f:
                     positions = json.load(f)
-                print(f"Loaded {len(positions)} positions from global file")
+                print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
             except Exception as e:
                 print(f"Error loading global positions: {e}")
         
