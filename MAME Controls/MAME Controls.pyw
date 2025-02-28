@@ -7,52 +7,60 @@ from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
 
 class MAMEControlConfig(ctk.CTk):
-    def __init__(self):
+    def __init__(self, preview_only=False):
         super().__init__()
 
-        # Configure the window
-        self.title("MAME Control Configuration Checker")
-        self.geometry("1024x768")
-        self.fullscreen = True  # Track fullscreen state
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("dark-blue")
-        
-        # Bind F11 key for fullscreen toggle
-        self.bind("<F11>", self.toggle_fullscreen)
-        self.bind("<Escape>", self.exit_fullscreen)
-        
-        # Single flag for mode - KEEP THIS
+        # Initialize core attributes needed for both modes
+        self.visible_control_types = ["BUTTON", "JOYSTICK"]
         self.use_fast_mode = False
-        
-        # For backwards compatibility with existing code - KEEP THESE TOO
         self.use_controls_json = True
-        self.use_gamedata_json = True 
+        self.use_gamedata_json = True
         self.use_mame_xml = True
-        
-        # Set initial fullscreen state
-        self.after(100, self.state, 'zoomed')  # Use zoomed for Windows
-
-        # Initialize data structures
-        self.controls_data = []  # Changed to list for games array
+        self.default_controls = {}
+        self.controls_data = []
         self.available_roms = set()
         self.custom_configs = {}
         self.current_game = None
         self.use_xinput = True
-        self.selected_line = None
-        self.highlight_tag = "highlight"
         
-        # Find necessary directories
-        self.mame_dir = self.find_mame_directory()
-        if not self.mame_dir:
-            messagebox.showerror("Error", "Please place this script in the MAME directory!")
-            self.quit()
-            return
+        # Skip main window setup if in preview-only mode
+        if not preview_only:
+            # Configure the window
+            self.title("MAME Control Configuration Checker")
+            self.geometry("1024x768")
+            self.fullscreen = True  # Track fullscreen state
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("dark-blue")
+            
+            # Bind F11 key for fullscreen toggle
+            self.bind("<F11>", self.toggle_fullscreen)
+            self.bind("<Escape>", self.exit_fullscreen)
+            
+            self.selected_line = None
+            self.highlight_tag = "highlight"
+            
+            # Set initial fullscreen state
+            self.after(100, self.state, 'zoomed')  # Use zoomed for Windows
+            
+            # Find necessary directories
+            self.mame_dir = self.find_mame_directory()
+            if not self.mame_dir:
+                messagebox.showerror("Error", "Please place this script in the MAME directory!")
+                self.quit()
+                return
 
-        # Create the interface
-        self.create_layout()
-        
-        # Load all data
-        self.load_all_data()
+            # Create the interface
+            self.create_layout()
+            
+            # Load all data
+            self.load_all_data()
+        else:
+            # For preview-only mode, just initialize minimal attributes
+            self.fullscreen = True
+            self.preferred_preview_screen = 2  # Default to second screen
+            
+            # Hide the main window completely
+            self.withdraw()
 
     def toggle_fast_mode(self):
         """Toggle between full mode and fast mode"""
@@ -151,6 +159,20 @@ class MAMEControlConfig(ctk.CTk):
             'JOYCODE_1_HATDOWN': 'XINPUT_1_DPAD_DOWN',   # D-Pad Down
             'JOYCODE_1_HATLEFT': 'XINPUT_1_DPAD_LEFT',   # D-Pad Left
             'JOYCODE_1_HATRIGHT': 'XINPUT_1_DPAD_RIGHT', # D-Pad Right
+            'JOYCODE_2_BUTTON1': 'XINPUT_2_A',           # A Button
+            'JOYCODE_2_BUTTON2': 'XINPUT_2_B',           # B Button
+            'JOYCODE_2_BUTTON3': 'XINPUT_2_X',           # X Button
+            'JOYCODE_2_BUTTON4': 'XINPUT_2_Y',           # Y Button
+            'JOYCODE_2_BUTTON5': 'XINPUT_2_SHOULDER_L',  # Left Bumper
+            'JOYCODE_2_BUTTON6': 'XINPUT_2_SHOULDER_R',  # Right Bumper
+            'JOYCODE_2_BUTTON7': 'XINPUT_2_TRIGGER_L',   # Left Trigger
+            'JOYCODE_2_BUTTON8': 'XINPUT_2_TRIGGER_R',   # Right Trigger
+            'JOYCODE_2_BUTTON9': 'XINPUT_2_THUMB_L',     # Left Stick Button
+            'JOYCODE_2_BUTTON10': 'XINPUT_2_THUMB_R',    # Right Stick Button
+            'JOYCODE_2_HATUP': 'XINPUT_2_DPAD_UP',       # D-Pad Up
+            'JOYCODE_2_HATDOWN': 'XINPUT_2_DPAD_DOWN',   # D-Pad Down
+            'JOYCODE_2_HATLEFT': 'XINPUT_2_DPAD_LEFT',   # D-Pad Left
+            'JOYCODE_2_HATRIGHT': 'XINPUT_2_DPAD_RIGHT', # D-Pad Right
         }
         joycode_mappings = {v: k for k, v in xinput_mappings.items()}
         
@@ -222,20 +244,49 @@ class MAMEControlConfig(ctk.CTk):
     
     def format_mapping_display(self, mapping: str) -> str:
         """Format the mapping string for display"""
+        # Handle XInput mappings
         if "XINPUT" in mapping:
             # Convert XINPUT_1_A to "XInput A"
             parts = mapping.split('_')
             if len(parts) >= 3:
                 button_part = ' '.join(parts[2:])
                 return f"XInput {button_part}"
+                
+        # Handle JOYCODE mappings
         elif "JOYCODE" in mapping:
-            # Convert JOYCODE_1_BUTTON3 to "Joy 1 Button 3"
+            # Special handling for axis/stick controls
+            if "YAXIS_UP" in mapping or "DPADUP" in mapping:
+                return "Joy Stick Up"
+            elif "YAXIS_DOWN" in mapping or "DPADDOWN" in mapping:
+                return "Joy Stick Down"
+            elif "XAXIS_LEFT" in mapping or "DPADLEFT" in mapping:
+                return "Joy Stick Left"
+            elif "XAXIS_RIGHT" in mapping or "DPADRIGHT" in mapping:
+                return "Joy Stick Right"
+            elif "RYAXIS_NEG" in mapping:  # Right stick Y-axis negative
+                return "Joy Right Stick Up"
+            elif "RYAXIS_POS" in mapping:  # Right stick Y-axis positive
+                return "Joy Right Stick Down"
+            elif "RXAXIS_NEG" in mapping:  # Right stick X-axis negative
+                return "Joy Right Stick Left"
+            elif "RXAXIS_POS" in mapping:  # Right stick X-axis positive
+                return "Joy Right Stick Right"
+            
+            # Standard button format for other joystick controls
             parts = mapping.split('_')
             if len(parts) >= 4:
                 joy_num = parts[1]
-                button_type = parts[2].capitalize()
-                button_num = parts[3]
-                return f"Joy {joy_num} {button_type} {button_num}"
+                control_type = parts[2].capitalize()
+                
+                # Extract button number for BUTTON types
+                if control_type == "Button" and len(parts) >= 4:
+                    button_num = parts[3]
+                    return f"Joy {joy_num} {control_type} {button_num}"
+                else:
+                    # Generic format for other controls
+                    remainder = '_'.join(parts[3:])
+                    return f"Joy {joy_num} {control_type} {remainder}"
+                    
         return mapping
     
     def toggle_fullscreen(self, event=None):
@@ -263,6 +314,7 @@ class MAMEControlConfig(ctk.CTk):
     def toggle_xinput(self):
         """Handle toggling between JOYCODE and XInput mappings"""
         self.use_xinput = self.xinput_toggle.get()
+        print(f"XInput toggle set to: {self.use_xinput}")
         
         # Refresh the current game display if one is selected
         if self.current_game and self.selected_line is not None:
@@ -284,7 +336,7 @@ class MAMEControlConfig(ctk.CTk):
             # Create the mock event targeting our current line
             mock_event = MockEvent(self.selected_line)
             
-            # Refresh the display using the current selection
+            # Force a full refresh of the display
             self.on_game_select(mock_event)
             
             # Restore scroll position
@@ -293,7 +345,7 @@ class MAMEControlConfig(ctk.CTk):
     def create_layout(self):
         """Create the main application layout"""
         # Configure grid
-        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=3)
         self.grid_rowconfigure(0, weight=1)
 
@@ -358,6 +410,15 @@ class MAMEControlConfig(ctk.CTk):
                                     font=("Arial", 20, "bold"))
         self.game_title.grid(row=0, column=0, padx=5, pady=5)
 
+        # Add Preview button next to the game title
+        self.preview_button = ctk.CTkButton(
+            self.right_panel,
+            text="Preview Controls",
+            command=self.show_preview,
+            width=150
+        )
+        self.preview_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+
         # Add XInput toggle switch
         self.xinput_toggle = ctk.CTkSwitch(
             self.right_panel,
@@ -388,25 +449,713 @@ class MAMEControlConfig(ctk.CTk):
 
         # Controls display
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
-        self.control_frame.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
+        self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
 
+
+    def show_preview(self):
+        """Show a preview of the control layout for the current game on the second screen"""
+        if not self.current_game:
+            messagebox.showinfo("No Game Selected", "Please select a game first")
+            return
+            
+        # Create preview directory if it doesn't exist
+        preview_dir = os.path.join(self.mame_dir, "preview")
+        if not os.path.exists(preview_dir):
+            os.makedirs(preview_dir)
+
+        # Check for a ROM-specific image (PNG or JPG)
+        image_extensions = [".png", ".jpg", ".jpeg"]
+        image_path = None
+
+        for ext in image_extensions:
+            test_path = os.path.join(preview_dir, f"{self.current_game}{ext}")
+            if os.path.exists(test_path):
+                image_path = test_path
+                break
+
+        # Fall back to default image (PNG or JPG)
+        if not image_path:
+            for ext in image_extensions:
+                test_path = os.path.join(preview_dir, f"default{ext}")
+                if os.path.exists(test_path):
+                    image_path = test_path
+                    break
+
+        # If no image found, show a message
+        if not image_path:
+            messagebox.showinfo(
+                "Image Not Found",
+                f"No preview image found for {self.current_game}\n"
+                f"Place PNG or JPG images in {preview_dir} folder"
+            )
+            return
+
+        # Get game control data
+        game_data = self.get_game_data(self.current_game)
+        if not game_data:
+            messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
+            return
+
+        
+        # Check for screen preference in settings
+        preferred_screen = getattr(self, 'preferred_preview_screen', 2)  # Default to second screen
+        
+        # We'll use tkinter directly for the window but CustomTkinter for buttons
+        import tkinter as tk
+        from PIL import Image, ImageTk
+        
+        # Create our preview window directly
+        self.preview_window = tk.Toplevel()
+        self.preview_window.title(f"Control Preview: {self.current_game}")
+        
+        # Hide window initially and prevent flashing
+        self.preview_window.withdraw()
+        
+        # Get information about monitors through direct Windows API if possible
+        monitors = []
+        try:
+            # Try to use Windows API
+            import ctypes
+            from ctypes import windll
+            
+            # Define structs needed to get monitor info
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ('left', ctypes.c_long),
+                    ('top', ctypes.c_long),
+                    ('right', ctypes.c_long),
+                    ('bottom', ctypes.c_long)
+                ]
+                
+            # Get monitor info
+            def callback(monitor, dc, rect, data):
+                rect = ctypes.cast(rect, ctypes.POINTER(RECT)).contents
+                monitors.append({
+                    'left': rect.left,
+                    'top': rect.top,
+                    'right': rect.right,
+                    'bottom': rect.bottom,
+                    'width': rect.right - rect.left,
+                    'height': rect.bottom - rect.top,
+                    'index': len(monitors)  # Add index for selection
+                })
+                return 1
+                
+            MonitorEnumProc = ctypes.WINFUNCTYPE(
+                ctypes.c_bool,
+                ctypes.c_ulong,
+                ctypes.c_ulong,
+                ctypes.POINTER(RECT),
+                ctypes.c_double
+            )
+            
+            # Enumerate monitors
+            windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(callback), 0)
+            
+            print(f"Found {len(monitors)} monitors")
+            for i, mon in enumerate(monitors):
+                print(f"Monitor {i+1}: {mon['width']}x{mon['height']} at position {mon['left']},{mon['top']}")
+                
+        except Exception as e:
+            print(f"Error using Windows API for monitor detection: {e}")
+            # Create a minimal monitor list with defaults
+            monitors = [{'left': 0, 'top': 0, 'width': 1920, 'height': 1080, 'index': 0}]
+            
+            # Try to detect second monitor using simple method
+            full_width = self.winfo_screenwidth()
+            if full_width > 2000:  # Assume wide screen means multiple monitors
+                monitors.append({
+                    'left': 1920, 'top': 0, 
+                    'width': full_width - 1920, 'height': self.winfo_screenheight(),
+                    'index': 1
+                })
+                print(f"Detected probable second monitor at x=1920 (simple method)")
+        
+        # Use selected monitor or fall back to primary
+        target_monitor = None
+        if 0 <= preferred_screen - 1 < len(monitors):
+            target_monitor = monitors[preferred_screen - 1]
+            print(f"Using preferred screen {preferred_screen}: {target_monitor}")
+        else:
+            # Default to first monitor if preferred screen doesn't exist
+            target_monitor = monitors[0]
+            print(f"Preferred screen {preferred_screen} not available, using monitor 1")
+            
+        # Position window on selected monitor
+        window_x = target_monitor['left']
+        window_y = target_monitor['top']
+        window_width = target_monitor['width']
+        window_height = target_monitor['height']
+        
+        print(f"Setting window dimensions: {window_width}x{window_height}+{window_x}+{window_y}")
+        
+        # Configure the preview window
+        self.preview_window.geometry(f"{window_width}x{window_height}+{window_x}+{window_y}")
+        
+        # Make it fullscreen without window decorations
+        self.preview_window.overrideredirect(True)
+        
+        # Update tasks to allow window to process
+        self.preview_window.update_idletasks()
+        
+        # Make the window visible
+        self.preview_window.deiconify()
+        
+        # Ensure it stays on top
+        self.preview_window.attributes('-topmost', True)
+        
+        # Load and display the image
+        try:
+            # Load the image
+            img = Image.open(image_path)
+            print(f"Loaded image: {image_path}, size={img.size}")
+            
+            # Get window dimensions (use the values we set earlier)
+            win_width = window_width
+            win_height = window_height
+            
+            # Resize image to fit window while maintaining aspect ratio
+            img_width, img_height = img.size
+            
+            # Ensure dimensions are positive
+            if win_width <= 0:
+                win_width = 1024
+            if win_height <= 0:
+                win_height = 768
+            
+            # Handle zero-size image
+            if img_width <= 0 or img_height <= 0:
+                print("Image has invalid dimensions, creating blank image")
+                img = Image.new('RGB', (win_width, win_height), color='black')
+                img_width, img_height = img.size
+            
+            # Calculate resize ratio
+            ratio = min(win_width/max(img_width, 1), win_height/max(img_height, 1))
+            new_width = max(int(img_width * ratio), 1)  # Ensure at least 1 pixel
+            new_height = max(int(img_height * ratio), 1)  # Ensure at least 1 pixel
+            
+            print(f"Resizing image to: {new_width}x{new_height}")
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(img)
+            
+            # Create canvas with black background
+            canvas = tk.Canvas(self.preview_window, 
+                            width=win_width, 
+                            height=win_height,
+                            bg="black",
+                            highlightthickness=0)
+            canvas.pack(fill="both", expand=True)
+            
+            # Center the image
+            x = max((win_width - new_width) // 2, 0)
+            y = max((win_height - new_height) // 2, 0)
+            canvas.create_image(x, y, image=photo, anchor="nw")
+            canvas.image = photo  # Keep a reference to prevent garbage collection
+            
+            # Store canvas and image info for text placement
+            self.preview_canvas = canvas
+            self.image_x = x
+            self.image_y = y
+            
+            # Add control text overlays - track them for movement
+            self.text_items = {}
+            
+            # Try to load saved positions first (from global file)
+            # Try to load saved positions, checking ROM-specific first then global
+            positions = self.load_text_positions(self.current_game)
+            print(f"Loaded {len(positions)} positions from global file")
+            
+            # Add player controls as text overlays
+            text_y = y + 50  # Start 50px from top of image
+            control_count = 0
+            
+            # Process only Player 1 controls
+            for player in game_data.get('players', []):
+                if player['number'] != 1:
+                    continue
+                    
+                for label in player.get('labels', []):
+                    control_name = label['name']
+                    action = label['value']
+                    
+                    # Only include P1 controls
+                    if not control_name.startswith('P1_'):
+                        continue
+                    
+                    print(f"Adding control: {control_name} = {action}")
+                    
+                    # Position text (use saved positions if available, otherwise spread across the top)
+                    if control_name in positions:
+                        text_x, text_y = positions[control_name]
+                        print(f"Using saved position for {control_name}: {text_x}, {text_y}")
+                    else:
+                        text_x = x + 100 + (control_count * 150) % (new_width - 200)
+                        if text_x + 100 > x + new_width:
+                            text_x = x + 100
+                            text_y += 40
+                        print(f"Using default position for {control_name}: {text_x}, {text_y}")
+                    
+                    # Check visibility based on control type
+                    is_visible = False
+                    for control_type in self.visible_control_types:
+                        if control_type in control_name:
+                            is_visible = True
+                            break
+                    
+                    # Create text with shadow for better visibility
+                    shadow = canvas.create_text(text_x+2, text_y+2, text=action, 
+                                            font=("Arial", 20, "bold"), fill="black",
+                                            anchor="sw", state="" if is_visible else "hidden")
+                    text_item = canvas.create_text(text_x, text_y, text=action, 
+                                            font=("Arial", 20, "bold"), fill="white",
+                                            anchor="sw", state="" if is_visible else "hidden")
+                    
+                    # Store the text items
+                    self.text_items[control_name] = {
+                        'text': text_item,
+                        'shadow': shadow,
+                        'action': action,
+                        'x': text_x, 
+                        'y': text_y
+                    }
+                    
+                    # Make the text draggable
+                    self.make_draggable(canvas, text_item, shadow, control_name)
+                    control_count += 1
+            
+            # Add right-click menu for text removal
+            self.create_context_menu(canvas)
+            
+            # Create a transparent frame for buttons
+            frame_bg = tk.Frame(self.preview_window, bg="black")  # Same as canvas background
+            frame_bg.place(relx=0.5, rely=0.95, anchor="center", width=800, height=50)
+
+            # Create ctk frame with default color
+            button_frame = ctk.CTkFrame(frame_bg)  # Default styling
+            button_frame.pack(expand=True, fill="both")
+
+            # Close button
+            close_button = ctk.CTkButton(
+                button_frame,
+                text="Close Preview",
+                command=self.preview_window.destroy
+            )
+            close_button.pack(side="left", padx=10)
+            
+            # Reset positions button
+            reset_button = ctk.CTkButton(
+                button_frame,
+                text="Reset Positions",
+                command=self.reset_text_positions
+            )
+            reset_button.pack(side="left", padx=10)
+            
+            # Hide/Show text button
+            self.show_texts = True
+            
+            # Add toggle joystick button
+            joystick_button = ctk.CTkButton(
+                button_frame,
+                text="Toggle Joystick",
+                command=self.toggle_joystick_controls
+            )
+            joystick_button.pack(side="left", padx=10)
+
+            # Add save buttons
+            global_button = ctk.CTkButton(
+                button_frame,
+                text="Save Global",
+                command=self.save_global_positions
+            )
+            global_button.pack(side="left", padx=10)
+
+            rom_button = ctk.CTkButton(
+                button_frame,
+                text="Save ROM",
+                command=self.save_rom_positions
+            )
+            rom_button.pack(side="left", padx=10)
+            
+            def toggle_texts():
+                self.toggle_texts_visibility()
+                self.toggle_texts_button.configure(text="Hide Texts" if self.show_texts else "Show Texts")
+                
+            self.toggle_texts_button = ctk.CTkButton(
+                button_frame,
+                text="Hide Texts",
+                command=toggle_texts
+            )
+            self.toggle_texts_button.pack(side="left", padx=10)
+            
+            # Add toggle screen button if we have multiple monitors
+            if len(monitors) > 1:
+                def toggle_screen():
+                    # Cycle to the next available monitor
+                    current_screen = getattr(self, 'preferred_preview_screen', 2)
+                    self.preferred_preview_screen = (current_screen % len(monitors)) + 1
+                    
+                    # Print the change
+                    print(f"Switching to screen {self.preferred_preview_screen}")
+                    
+                    # Close and reopen the preview window
+                    self.preview_window.destroy()
+                    self.show_preview()
+                    
+                toggle_screen_button = ctk.CTkButton(
+                    button_frame,
+                    text=f"Use Screen {(preferred_screen % len(monitors)) + 1}",
+                    command=toggle_screen
+                )
+                toggle_screen_button.pack(side="left", padx=10)
+            
+            # Bind escape key to close the window
+            self.preview_window.bind("<Escape>", lambda e: self.preview_window.destroy())
+        
+        except ImportError:
+            messagebox.showinfo("Missing Package", "Please install Pillow: pip install pillow")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error displaying image: {str(e)}")
+            import traceback
+            traceback.print_exc()
+    
+    def toggle_joystick_controls(self):
+        """Toggle joystick controls visibility"""
+        # Check if joystick is currently visible
+        joystick_visible = "JOYSTICK" in self.visible_control_types
+        
+        if joystick_visible:
+            # Remove JOYSTICK from visible types
+            self.visible_control_types.remove("JOYSTICK")
+        else:
+            # Add JOYSTICK to visible types
+            self.visible_control_types.append("JOYSTICK")
+        
+        # Update existing controls
+        joystick_visible = not joystick_visible  # New state
+        state = "" if joystick_visible else "hidden"
+        
+        # Update visibility of current controls
+        for control_name, data in self.text_items.items():
+            if "JOYSTICK" in control_name:
+                self.preview_canvas.itemconfigure(data['text'], state=state)
+                self.preview_canvas.itemconfigure(data['shadow'], state=state)
+    
+    
+    def save_global_positions(self):
+        """Save all positions to global file with debugging"""
+        try:
+            # Get all current positions with debugging
+            positions = {}
+            print("\nDEBUG - Saving positions:")
+            for name, data in self.text_items.items():
+                if 'x' not in data or 'y' not in data:
+                    print(f"  ERROR: Missing x/y for {name}: {data}")
+                    continue
+                    
+                x, y = data['x'], data['y']
+                positions[name] = [x, y]  # Use lists instead of tuples
+                print(f"  Saving {name}: position ({x}, {y})")
+                
+            if not positions:
+                print("  ERROR: No positions to save!")
+                messagebox.showinfo("Error", "No valid positions found to save")
+                return
+                
+            # Save to file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            filepath = os.path.join(preview_dir, "global_positions.json")
+            
+            with open(filepath, 'w') as f:
+                json.dump(positions, f)
+                
+            print(f"  Success: Saved {len(positions)} positions to {filepath}")
+            messagebox.showinfo("Success", f"Global positions saved successfully ({len(positions)} items)")
+        except Exception as e:
+            print(f"  ERROR in save_global_positions: {e}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Error", f"Could not save positions: {e}")
+
+    def save_rom_positions(self):
+        """Save positions for current ROM"""
+        if not self.current_game:
+            messagebox.showinfo("Error", "No game selected")
+            return
+            
+        try:
+            # Get all current positions
+            positions = {}
+            for name, data in self.text_items.items():
+                positions[name] = [data['x'], data['y']]  # Use lists instead of tuples
+                
+            # Save to file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            with open(os.path.join(preview_dir, f"{self.current_game}_positions.json"), 'w') as f:
+                json.dump(positions, f)
+                
+            messagebox.showinfo("Success", f"Positions saved for {self.current_game}")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not save positions: {e}")
+    
+    def make_draggable(self, canvas, text_item, shadow_item, control_name):
+        """Make text draggable on the canvas with proper coordinate tracking"""
+        def on_drag_start(event):
+            # Save initial position
+            canvas.drag_data = {
+                'text': text_item,
+                'shadow': shadow_item,
+                'control': control_name,
+                'x': canvas.canvasx(event.x),
+                'y': canvas.canvasy(event.y)
+            }
+        
+        def on_drag_motion(event):
+            if hasattr(canvas, 'drag_data'):
+                try:
+                    control_name = canvas.drag_data['control']
+                    
+                    # Calculate movement
+                    dx = canvas.canvasx(event.x) - canvas.drag_data['x']
+                    dy = canvas.canvasy(event.y) - canvas.drag_data['y']
+                    
+                    # Move the text and shadow
+                    canvas.move(canvas.drag_data['text'], dx, dy)
+                    canvas.move(canvas.drag_data['shadow'], dx, dy)
+                    
+                    # Update saved coordinates
+                    canvas.drag_data['x'] = canvas.canvasx(event.x)
+                    canvas.drag_data['y'] = canvas.canvasy(event.y)
+                    
+                    # Update stored position with explicit values
+                    old_x = self.text_items[control_name]['x']
+                    old_y = self.text_items[control_name]['y']
+                    new_x = old_x + dx
+                    new_y = old_y + dy
+                    
+                    # Print debugging for buttons
+                    if "BUTTON" in control_name:
+                        print(f"Dragging {control_name}: ({old_x},{old_y}) -> ({new_x},{new_y})")
+                        
+                    # Update the dictionary
+                    self.text_items[control_name]['x'] = new_x
+                    self.text_items[control_name]['y'] = new_y
+                except Exception as e:
+                    print(f"Error in drag motion: {e}")
+                    import traceback
+                    traceback.print_exc()
+        
+        def on_drag_end(event):
+            # Clean up
+            if hasattr(canvas, 'drag_data'):
+                try:
+                    # Print final position for debugging
+                    x, y = self.text_items[control_name]['x'], self.text_items[control_name]['y']
+                    print(f"Final position for {control_name}: x={x}, y={y}")
+                except Exception as e:
+                    print(f"Error in drag end: {e}")
+                finally:
+                    delattr(canvas, 'drag_data')
+        
+        # Bind mouse events to the text
+        canvas.tag_bind(text_item, "<ButtonPress-1>", on_drag_start)
+        canvas.tag_bind(text_item, "<B1-Motion>", on_drag_motion)
+        canvas.tag_bind(text_item, "<ButtonRelease-1>", on_drag_end)
+
+    def create_context_menu(self, canvas):
+        """Create right-click menu for text items"""
+        from tkinter import Menu
+        
+        def show_context_menu(event):
+            # Find text item under cursor
+            items = canvas.find_closest(canvas.canvasx(event.x), canvas.canvasy(event.y))
+            if items:
+                for control_name, data in self.text_items.items():
+                    if data['text'] == items[0] or data['shadow'] == items[0]:
+                        self.selected_text = control_name
+                        context_menu.post(event.x_root, event.y_root)
+                        break
+        
+        def remove_text():
+            if hasattr(self, 'selected_text'):
+                control_name = self.selected_text
+                if control_name in self.text_items:
+                    # Remove text from canvas
+                    canvas.delete(self.text_items[control_name]['text'])
+                    canvas.delete(self.text_items[control_name]['shadow'])
+                    del self.text_items[control_name]
+        
+        def reset_text():
+            if hasattr(self, 'selected_text'):
+                self.reset_single_text_position(self.selected_text)
+        
+        # Create menu
+        context_menu = Menu(canvas, tearoff=0)
+        context_menu.add_command(label="Remove Text", command=remove_text)
+        context_menu.add_command(label="Reset Position", command=reset_text)
+        
+        # Bind right-click
+        canvas.bind("<Button-3>", show_context_menu)
+
+    def save_text_positions_global(self):
+        """Save positions globally for all games"""
+        if not self.current_game:
+            messagebox.showinfo("No Game", "No game is selected")
+            return
+            
+        # Define the global file path
+        preview_dir = os.path.join(self.mame_dir, "preview")
+        global_file = os.path.join(preview_dir, "global_positions.json")
+        
+        # Save to this file
+        if self.save_positions_to_file(global_file):
+            messagebox.showinfo("Success", "Positions saved globally for all games")
+    
+    def load_text_positions(self, rom_name):
+        """Load text positions with preference control"""
+        positions = {}
+        
+        # Create preview directory if it doesn't exist
+        preview_dir = os.path.join(self.mame_dir, "preview")
+        if not os.path.exists(preview_dir):
+            os.makedirs(preview_dir)
+        
+        # Check where to load from based on most recent save
+        rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
+        global_positions_file = os.path.join(preview_dir, "global_positions.json")
+        
+        # Load ROM-specific positions if they exist
+        rom_positions = {}
+        if os.path.exists(rom_positions_file):
+            try:
+                with open(rom_positions_file, 'r') as f:
+                    rom_positions = json.load(f)
+                print(f"Loaded {len(rom_positions)} ROM-specific positions for {rom_name}")
+            except Exception as e:
+                print(f"Error loading ROM-specific positions: {e}")
+        
+        # Load global positions if they exist
+        global_positions = {}
+        if os.path.exists(global_positions_file):
+            try:
+                with open(global_positions_file, 'r') as f:
+                    global_positions = json.load(f)
+                print(f"Loaded {len(global_positions)} positions from global file")
+            except Exception as e:
+                print(f"Error loading global positions: {e}")
+        
+        # Choose which positions to use
+        # If both exist, check the last modification time to use the most recent
+        if rom_positions and global_positions:
+            rom_time = os.path.getmtime(rom_positions_file)
+            global_time = os.path.getmtime(global_positions_file)
+            
+            if global_time > rom_time:
+                print(f"Using global positions (more recent)")
+                positions = global_positions
+            else:
+                print(f"Using ROM-specific positions (more recent)")
+                positions = rom_positions
+        else:
+            # Use whichever exists
+            positions = rom_positions if rom_positions else global_positions
+        
+        return positions
+
+    def load_text_positions(self, rom_name):
+        """Load text positions, checking ROM-specific first then falling back to global"""
+        positions = {}
+        
+        # Create preview directory if it doesn't exist
+        preview_dir = os.path.join(self.mame_dir, "preview")
+        if not os.path.exists(preview_dir):
+            os.makedirs(preview_dir)
+        
+        # First try ROM-specific positions
+        rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
+        if os.path.exists(rom_positions_file):
+            try:
+                with open(rom_positions_file, 'r') as f:
+                    positions = json.load(f)
+                print(f"Loaded {len(positions)} ROM-specific positions for {rom_name}")
+                return positions
+            except Exception as e:
+                print(f"Error loading ROM-specific positions: {e}")
+        
+        # Fall back to global positions
+        global_positions_file = os.path.join(preview_dir, "global_positions.json")
+        if os.path.exists(global_positions_file):
+            try:
+                with open(global_positions_file, 'r') as f:
+                    positions = json.load(f)
+                print(f"Loaded {len(positions)} positions from global file")
+            except Exception as e:
+                print(f"Error loading global positions: {e}")
+        
+        return positions
+    
+    def reset_text_positions(self):
+        """Reset all text positions to default"""
+        text_y = self.image_y + 50
+        i = 0
+        
+        for control_name in list(self.text_items.keys()):
+            self.reset_single_text_position(control_name, index=i)
+            i += 1
+
+    def reset_single_text_position(self, control_name, index=None):
+        """Reset a single text to default position"""
+        if index is None:
+            index = list(self.text_items.keys()).index(control_name)
+        
+        # Calculate default position (5 items per row)
+        text_x = self.image_x + 100 + (index % 5) * 150
+        text_y = self.image_y + 50 + (index // 5) * 40
+        
+        # Move text and shadow
+        data = self.text_items[control_name]
+        self.preview_canvas.coords(data['text'], text_x, text_y)
+        self.preview_canvas.coords(data['shadow'], text_x+2, text_y+2)
+        
+        # Update stored position
+        self.text_items[control_name]['x'] = text_x
+        self.text_items[control_name]['y'] = text_y
+
+    def toggle_texts_visibility(self):
+        """Toggle visibility of all text items"""
+        import tkinter as tk  # Add the import here
+        
+        self.show_texts = not self.show_texts
+        
+        # Set visibility state for vanilla tkinter
+        state = tk.NORMAL if self.show_texts else tk.HIDDEN
+        for data in self.text_items.values():
+            self.preview_canvas.itemconfig(data['text'], state=state)
+            self.preview_canvas.itemconfig(data['shadow'], state=state)
+    
     def load_all_data(self):
         """Load all necessary data sources"""
         # Load settings from file
         self.load_settings()
         
-        # Always scan ROM directory
+        # Scan ROMs directory (always needed)
         self.scan_roms_directory()
         
-        # Load data sources based on mode
-        if self.use_fast_mode:
-            # Fast mode - only load gamedata.json
-            self.load_gamedata_json()
-        else:
-            # Normal mode - load all data sources
+        # Load default controls first
+        self.load_default_config()  # Add this line
+        
+        # Load only the enabled data sources
+        if not self.use_fast_mode:
             self.load_controls_data()
+            if self.use_mame_xml:
+                self.load_mame_xml()
+        
+        if self.use_fast_mode or self.use_gamedata_json:
             self.load_gamedata_json()
-            self.load_mame_xml()
         
         # Always load custom configs
         self.load_custom_configs()
@@ -419,25 +1168,96 @@ class MAMEControlConfig(ctk.CTk):
         self.select_first_rom()
 
     def select_first_rom(self):
-        """Select and display the first available ROM"""
+        """Select and display the first available ROM with support for both modes"""
+        print("\n=== Auto-selecting first ROM ===")
+        
         try:
-            # Get first available ROM
-            available_games = sorted(
-                game['romname'] for game in self.controls_data 
-                if game['romname'] in self.available_roms
-            )
+            # Different approach based on mode
+            if self.use_fast_mode:
+                print("Using fast mode ROM selection")
+                # In fast mode, we might need to use a different data source
+                if hasattr(self, 'gamedata_json') and self.gamedata_json:
+                    # Get first ROM that exists in both available_roms and gamedata_json
+                    available_fast_roms = sorted(
+                        rom for rom in self.available_roms 
+                        if rom in self.gamedata_json
+                    )
+                    
+                    if available_fast_roms:
+                        first_rom = available_fast_roms[0]
+                        print(f"Selected first ROM from fast mode: {first_rom}")
+                    else:
+                        print("No matching ROMs found in fast mode")
+                        return
+                else:
+                    print("No gamedata.json loaded for fast mode")
+                    return
+            else:
+                print("Using normal mode ROM selection")
+                # Normal mode - use controls_data
+                available_games = sorted(
+                    game['romname'] for game in self.controls_data 
+                    if game['romname'] in self.available_roms
+                )
+                
+                if available_games:
+                    first_rom = available_games[0]
+                    print(f"Selected first ROM from normal mode: {first_rom}")
+                else:
+                    print("No matching ROMs found in normal mode")
+                    return
             
-            if available_games:
-                first_rom = available_games[0]
-                # Create a mock event with coordinates at the first line
+            # Check if the game list has content
+            list_content = self.game_list.get("1.0", "end-1c")
+            if not list_content.strip():
+                print("Game list appears to be empty")
+                return
+            
+            # Find the line with our ROM
+            lines = list_content.split('\n')
+            target_line = None
+            
+            for i, line in enumerate(lines):
+                if first_rom in line:
+                    target_line = i + 1  # Lines are 1-indexed in Tkinter
+                    print(f"Found ROM on line {target_line}: '{line}'")
+                    break
+                    
+            if target_line is None:
+                print(f"Could not find '{first_rom}' in game list")
+                return
+            
+            # Directly highlight and set current_game
+            self.highlight_selected_game(target_line)
+            self.current_game = first_rom
+            
+            # Get game data
+            game_data = self.get_game_data(first_rom)
+            if game_data:
+                # Update game title
+                self.game_title.configure(text=game_data['gamename'])
+                
+                # Clear existing display
+                for widget in self.control_frame.winfo_children():
+                    widget.destroy()
+                
+                # Force display update by simulating a game selection
+                # Create a mock event targeting the line
                 class MockEvent:
                     def __init__(self):
-                        self.x = 0
-                        self.y = 5  # Small y value to hit first line
+                        self.x = 10
+                        self.y = target_line * 20
                 
                 self.on_game_select(MockEvent())
+                
+                print(f"Auto-selected ROM: {first_rom}")
+            else:
+                print(f"No game data available for {first_rom}")
+                
         except Exception as e:
-            print(f"Error auto-selecting first ROM: {str(e)}")
+            print(f"Error in auto-selection: {e}")
+            import traceback
+            traceback.print_exc()
 
     def toggle_ingame_mode(self):
         """Toggle between normal and in-game display modes"""
@@ -1391,10 +2211,100 @@ class MAMEControlConfig(ctk.CTk):
                 
         return controls
 
+    def load_default_config(self):
+        """Load the default MAME control configuration"""
+        # Look in the cfg directory
+        cfg_dir = os.path.join(self.mame_dir, "cfg")
+        default_cfg_path = os.path.join(cfg_dir, "default.cfg")
+        
+        print(f"Looking for default.cfg at: {default_cfg_path}")
+        if os.path.exists(default_cfg_path):
+            try:
+                print(f"Loading default config from: {default_cfg_path}")
+                # Read file content
+                with open(default_cfg_path, "rb") as f:
+                    content = f.read()
+                
+                # Parse the default mappings
+                self.default_controls = self.parse_default_cfg(content.decode('utf-8-sig'))
+                
+                # Debug output
+                print(f"Loaded {len(self.default_controls)} default control mappings")
+                for i, (k, v) in enumerate(list(self.default_controls.items())[:5]):
+                    print(f"  Sample {i+1}: {k} -> {v}")
+                    
+                return True
+            except Exception as e:
+                print(f"Error loading default config: {e}")
+                import traceback
+                traceback.print_exc()
+                self.default_controls = {}
+                return False
+        else:
+            print("No default.cfg found in cfg directory")
+            self.default_controls = {}
+            return False
+
+    def parse_default_cfg(self, cfg_content):
+        """Special parser just for default.cfg - extract ONLY joystick mappings"""
+        controls = {}
+        try:
+            import xml.etree.ElementTree as ET
+            from io import StringIO
+            import re
+            
+            # Parse the XML content
+            parser = ET.XMLParser(encoding='utf-8')
+            tree = ET.parse(StringIO(cfg_content), parser)
+            root = tree.getroot()
+            
+            # Find the input section
+            input_elem = root.find('.//input')
+            if input_elem is not None:
+                print("Found input element in default.cfg")
+                joycode_count = 0
+                for port in input_elem.findall('port'):
+                    control_type = port.get('type')
+                    if control_type:
+                        # Find the standard sequence
+                        newseq = port.find('./newseq[@type="standard"]')
+                        if newseq is not None and newseq.text:
+                            full_mapping = newseq.text.strip()
+                            
+                            # Extract only JOYCODE parts using regex
+                            joycode_match = re.search(r'(JOYCODE_\d+_[A-Z0-9_]+)', full_mapping)
+                            if joycode_match:
+                                joycode = joycode_match.group(1)
+                                controls[control_type] = joycode
+                                joycode_count += 1
+            
+            print(f"Parsed {len(controls)} joystick controls from default.cfg (found {joycode_count} JOYCODE entries)")
+        except Exception as e:
+            print(f"Error parsing default.cfg: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return controls
+
     def compare_controls(self, game_data: Dict, cfg_controls: Dict) -> List[Tuple[str, str, str, bool]]:
-        """Compare default controls with cfg controls
-        Returns list of (control_name, default_label, current_mapping, is_different)"""
+        """Compare controls with game-specific and default mappings"""
         comparisons = []
+        
+        # Debug output
+        has_defaults = hasattr(self, 'default_controls') and self.default_controls
+        print(f"Compare controls: ROM={game_data['romname']}, " 
+            f"Custom CFG={len(cfg_controls)}, "
+            f"Default Controls Available={has_defaults and len(self.default_controls)}, "
+            f"XInput={self.use_xinput}")
+        
+        # Convert default controls to XInput if needed
+        default_controls = {}
+        if has_defaults:
+            for control, mapping in self.default_controls.items():
+                if self.use_xinput:
+                    default_controls[control] = self.convert_mapping(mapping, True)
+                else:
+                    default_controls[control] = mapping
         
         # Get default controls from game data
         for player in game_data.get('players', []):
@@ -1402,9 +2312,27 @@ class MAMEControlConfig(ctk.CTk):
             for label in player.get('labels', []):
                 control_name = label['name']
                 default_label = label['value']
-                current_mapping = cfg_controls.get(control_name, "Not mapped")
-                is_different = control_name in cfg_controls  # Consider it different if it's mapped in cfg
+                
+                # Game-specific cfg has highest priority
+                if control_name in cfg_controls:
+                    current_mapping = cfg_controls[control_name]
+                    is_different = True  # Custom mapping
+                # Default.cfg has second priority - already converted to XInput if needed
+                elif control_name in default_controls:
+                    current_mapping = default_controls[control_name]
+                    is_different = False  # Default mapping from default.cfg
+                else:
+                    current_mapping = "Not mapped"
+                    is_different = False
+                    
                 comparisons.append((control_name, default_label, current_mapping, is_different))
+        
+        # Debug - print a few samples
+        if comparisons:
+            print(f"Generated {len(comparisons)} control comparisons. Samples:")
+            for i, (name, label, mapping, diff) in enumerate(comparisons[:3]):
+                src = "Custom" if diff else ("Default" if mapping != "Not mapped" else "None")
+                print(f"  {name}: {label} -> {mapping} ({src})")
         
         return comparisons
 
@@ -1590,7 +2518,7 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error loading template: {e}")
             return None
-
+    
     def generate_game_config(self, game_data: dict) -> str:
         """Generate config file content for a specific game"""
         template = self.load_default_template()
@@ -1744,6 +2672,120 @@ class MAMEControlConfig(ctk.CTk):
         print(report)
         messagebox.showinfo("Config Generation Report", report)
 
+    def show_preview_standalone(self, rom_name):
+        """Show the preview for a specific ROM without running the main app"""
+        print(f"Starting standalone preview for ROM: {rom_name}")
+        
+        # Find the MAME directory (already in __init__)
+        if not hasattr(self, 'mame_dir') or not self.mame_dir:
+            self.mame_dir = self.find_mame_directory()
+            if not self.mame_dir:
+                print("Error: MAME directory not found!")
+                return
+        
+        # Minimal data loading required for preview
+        # We need these for the preview to work
+        if not hasattr(self, 'default_controls') or not self.default_controls:
+            self.load_default_config()
+        
+        # Scan ROMs directory if needed
+        if not self.available_roms:
+            self.scan_roms_directory()
+        
+        # Load control data if needed
+        if not self.controls_data:
+            if self.use_fast_mode:
+                self.load_gamedata_json()
+            else:
+                self.load_controls_data()
+                if self.use_mame_xml:
+                    self.load_mame_xml()
+        
+        # Set the current game
+        self.current_game = rom_name
+        
+        # Load game data
+        game_data = self.get_game_data(rom_name)
+        if not game_data:
+            print(f"Error: No control data found for {rom_name}")
+            return
+            
+        # Start MAME process monitoring
+        self.monitor_mame_process()
+        
+        # Show the preview window
+        self.show_preview()
+        
+        # Add a handler to quit the application when the preview is closed
+        if hasattr(self, 'preview_window'):
+            self.preview_window.protocol("WM_DELETE_WINDOW", lambda: self.quit_application())
+        
+        # Start the mainloop
+        self.mainloop()
+        
+    def quit_application(self):
+        """Properly exit the application when preview window is closed"""
+        if hasattr(self, 'preview_window'):
+            self.preview_window.destroy()
+        self.quit()
+        self.destroy()
+        import sys
+        sys.exit(0)  # Force exit the Python script
+
+    def monitor_mame_process(self):
+        """Monitor MAME process and close preview when MAME closes"""
+        import threading
+        import time
+        import subprocess
+        import sys
+        import os
+        
+        def check_mame():
+            mame_running = True
+            while mame_running:
+                time.sleep(2)  # Check every 2 seconds
+                
+                # Check if any MAME process is running
+                mame_running = False
+                try:
+                    # Different ways to detect MAME
+                    if sys.platform == 'win32':
+                        # Windows - check process list
+                        output = subprocess.check_output('tasklist /FI "IMAGENAME eq mame*"', shell=True)
+                        mame_running = b'mame' in output
+                    else:
+                        # Linux/Mac - use ps
+                        output = subprocess.check_output(['ps', 'aux'])
+                        mame_running = b'mame' in output
+                except:
+                    # Error checking processes, assume MAME still running
+                    mame_running = True
+                
+            # MAME is no longer running - close preview
+            print("MAME closed, shutting down preview")
+            if hasattr(self, 'preview_window') and self.preview_window:
+                self.preview_window.after(100, self.quit_application)
+        
+        # Start monitoring in a background thread
+        monitor_thread = threading.Thread(target=check_mame, daemon=True)
+        monitor_thread.start()
+
 if __name__ == "__main__":
-    app = MAMEControlConfig()
-    app.mainloop()
+    import argparse
+    
+    # Create argument parser
+    parser = argparse.ArgumentParser(description='MAME Control Configuration')
+    parser.add_argument('--preview-only', action='store_true', help='Show only the preview window')
+    parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
+    parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
+    args = parser.parse_args()
+    
+    if args.preview_only and args.game:
+        # Preview-only mode: just show the preview for the specified game
+        app = MAMEControlConfig(preview_only=True)
+        app.preferred_preview_screen = args.screen
+        app.show_preview_standalone(args.game)
+    else:
+        # Normal mode: start the full application
+        app = MAMEControlConfig()
+        app.mainloop()
