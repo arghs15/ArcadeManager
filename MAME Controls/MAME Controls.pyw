@@ -2672,9 +2672,17 @@ class MAMEControlConfig(ctk.CTk):
         print(report)
         messagebox.showinfo("Config Generation Report", report)
 
-    def show_preview_standalone(self, rom_name):
+    def show_preview_standalone(self, rom_name, auto_close=False):
         """Show the preview for a specific ROM without running the main app"""
         print(f"Starting standalone preview for ROM: {rom_name}")
+        
+        # Set fast mode explicitly for preview-only mode
+        self.use_fast_mode = True
+        
+        # Update related flags for consistency
+        self.use_controls_json = False
+        self.use_gamedata_json = True
+        self.use_mame_xml = False
         
         # Find the MAME directory (already in __init__)
         if not hasattr(self, 'mame_dir') or not self.mame_dir:
@@ -2692,14 +2700,9 @@ class MAMEControlConfig(ctk.CTk):
         if not self.available_roms:
             self.scan_roms_directory()
         
-        # Load control data if needed
+        # Load control data for fast mode
         if not self.controls_data:
-            if self.use_fast_mode:
-                self.load_gamedata_json()
-            else:
-                self.load_controls_data()
-                if self.use_mame_xml:
-                    self.load_mame_xml()
+            self.load_gamedata_json()
         
         # Set the current game
         self.current_game = rom_name
@@ -2709,18 +2712,18 @@ class MAMEControlConfig(ctk.CTk):
         if not game_data:
             print(f"Error: No control data found for {rom_name}")
             return
-            
-        # Start MAME process monitoring
-        self.monitor_mame_process()
+        
+        # Start MAME process monitoring only if auto_close is enabled
+        if auto_close:
+            print("Auto-close enabled - preview will close when MAME exits")
+            self.monitor_mame_process(check_interval=0.5)
+        else:
+            print("Auto-close disabled - preview will stay open until manually closed")
         
         # Show the preview window
         self.show_preview()
         
-        # Add a handler to quit the application when the preview is closed
-        if hasattr(self, 'preview_window'):
-            self.preview_window.protocol("WM_DELETE_WINDOW", lambda: self.quit_application())
-        
-        # Start the mainloop
+        # Start mainloop for just this window
         self.mainloop()
         
     def quit_application(self):
@@ -2732,7 +2735,7 @@ class MAMEControlConfig(ctk.CTk):
         import sys
         sys.exit(0)  # Force exit the Python script
 
-    def monitor_mame_process(self):
+    def monitor_mame_process(self, check_interval=2.0):
         """Monitor MAME process and close preview when MAME closes"""
         import threading
         import time
@@ -2743,7 +2746,7 @@ class MAMEControlConfig(ctk.CTk):
         def check_mame():
             mame_running = True
             while mame_running:
-                time.sleep(2)  # Check every 2 seconds
+                time.sleep(check_interval)  # Use the specified check interval
                 
                 # Check if any MAME process is running
                 mame_running = False
@@ -2778,13 +2781,14 @@ if __name__ == "__main__":
     parser.add_argument('--preview-only', action='store_true', help='Show only the preview window')
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
     parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
+    parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     args = parser.parse_args()
     
     if args.preview_only and args.game:
         # Preview-only mode: just show the preview for the specified game
         app = MAMEControlConfig(preview_only=True)
         app.preferred_preview_screen = args.screen
-        app.show_preview_standalone(args.game)
+        app.show_preview_standalone(args.game, auto_close=args.auto_close)
     else:
         # Normal mode: start the full application
         app = MAMEControlConfig()
