@@ -571,6 +571,17 @@ class MAMEControlConfig(ctk.CTk):
                 })
                 print(f"Detected probable second monitor at x=1920 (simple method)")
         
+        # Force at least two monitors for button functionality
+        if len(monitors) < 2:
+            monitors.append({
+                'left': monitors[0]['width'], 
+                'top': 0, 
+                'width': monitors[0]['width'], 
+                'height': monitors[0]['height'],
+                'index': 1
+            })
+            print(f"Added virtual second monitor for button functionality")
+        
         # Use selected monitor or fall back to primary
         target_monitor = None
         if 0 <= preferred_screen - 1 < len(monitors):
@@ -728,87 +739,103 @@ class MAMEControlConfig(ctk.CTk):
             # Add right-click menu for text removal
             self.create_context_menu(canvas)
             
-            # Create a transparent frame for buttons
-            frame_bg = tk.Frame(self.preview_window, bg="black")  # Same as canvas background
-            frame_bg.place(relx=0.5, rely=0.95, anchor="center", width=800, height=50)
-
+            # Create a transparent frame for buttons with fixed width
+            frame_bg = tk.Frame(self.preview_window, bg="black")
+            frame_bg.place(relx=0.5, rely=0.95, anchor="center", width=min(800, window_width-20), height=50)
+            
             # Create ctk frame with default color
-            button_frame = ctk.CTkFrame(frame_bg)  # Default styling
+            button_frame = ctk.CTkFrame(frame_bg)
             button_frame.pack(expand=True, fill="both")
-
+            
+            # Calculate button width to fit all buttons
+            num_buttons = 7  # Close, Reset, Joystick, Global, ROM, Texts, Screen
+            button_width = 100  # Default width
+            padx = 5  # Reduced padding
+            
             # Close button
             close_button = ctk.CTkButton(
                 button_frame,
-                text="Close Preview",
-                command=self.preview_window.destroy
+                text="Close",
+                command=self.preview_window.destroy,
+                width=button_width
             )
-            close_button.pack(side="left", padx=10)
+            close_button.pack(side="left", padx=padx)
             
             # Reset positions button
             reset_button = ctk.CTkButton(
                 button_frame,
-                text="Reset Positions",
-                command=self.reset_text_positions
+                text="Reset",
+                command=self.reset_text_positions,
+                width=button_width
             )
-            reset_button.pack(side="left", padx=10)
+            reset_button.pack(side="left", padx=padx)
             
-            # Hide/Show text button
+            # Set initial state for toggle buttons
             self.show_texts = True
             
             # Add toggle joystick button
             joystick_button = ctk.CTkButton(
                 button_frame,
-                text="Toggle Joystick",
-                command=self.toggle_joystick_controls
+                text="Joystick",
+                command=self.toggle_joystick_controls,
+                width=button_width
             )
-            joystick_button.pack(side="left", padx=10)
-
+            joystick_button.pack(side="left", padx=padx)
+            
             # Add save buttons
             global_button = ctk.CTkButton(
                 button_frame,
-                text="Save Global",
-                command=self.save_global_positions
+                text="Global",
+                command=self.save_global_positions,
+                width=button_width
             )
-            global_button.pack(side="left", padx=10)
-
+            global_button.pack(side="left", padx=padx)
+            
             rom_button = ctk.CTkButton(
                 button_frame,
-                text="Save ROM",
-                command=self.save_rom_positions
+                text="ROM",
+                command=self.save_rom_positions,
+                width=button_width
             )
-            rom_button.pack(side="left", padx=10)
+            rom_button.pack(side="left", padx=padx)
             
+            # Toggle texts button
             def toggle_texts():
                 self.toggle_texts_visibility()
-                self.toggle_texts_button.configure(text="Hide Texts" if self.show_texts else "Show Texts")
+                texts_button.configure(text="Hide Texts" if self.show_texts else "Show Texts")
                 
-            self.toggle_texts_button = ctk.CTkButton(
+            texts_button = ctk.CTkButton(
                 button_frame,
                 text="Hide Texts",
-                command=toggle_texts
+                command=toggle_texts,
+                width=button_width
             )
-            self.toggle_texts_button.pack(side="left", padx=10)
+            texts_button.pack(side="left", padx=padx)
             
-            # Add toggle screen button if we have multiple monitors
-            if len(monitors) > 1:
-                def toggle_screen():
-                    # Cycle to the next available monitor
-                    current_screen = getattr(self, 'preferred_preview_screen', 2)
-                    self.preferred_preview_screen = (current_screen % len(monitors)) + 1
-                    
-                    # Print the change
-                    print(f"Switching to screen {self.preferred_preview_screen}")
-                    
-                    # Close and reopen the preview window
-                    self.preview_window.destroy()
-                    self.show_preview()
-                    
-                toggle_screen_button = ctk.CTkButton(
-                    button_frame,
-                    text=f"Use Screen {(preferred_screen % len(monitors)) + 1}",
-                    command=toggle_screen
-                )
-                toggle_screen_button.pack(side="left", padx=10)
+            # Toggle screen button
+            def toggle_screen():
+                # Cycle to the next available monitor
+                current_screen = getattr(self, 'preferred_preview_screen', 2)
+                next_screen = (current_screen % len(monitors)) + 1
+                
+                # Set the preference and print
+                self.preferred_preview_screen = next_screen
+                print(f"Switching to screen {next_screen}")
+                
+                # Close and reopen the preview window
+                self.preview_window.destroy()
+                self.show_preview()
+                
+            screen_button = ctk.CTkButton(
+                button_frame,
+                text=f"Screen {preferred_screen}",
+                command=toggle_screen,
+                width=button_width
+            )
+            screen_button.pack(side="left", padx=padx)
+            
+            # Force update the frame
+            button_frame.update()
             
             # Bind escape key to close the window
             self.preview_window.bind("<Escape>", lambda e: self.preview_window.destroy())
@@ -2772,7 +2799,7 @@ class MAMEControlConfig(ctk.CTk):
         # Start monitoring in a background thread
         monitor_thread = threading.Thread(target=check_mame, daemon=True)
         monitor_thread.start()
-
+    
 if __name__ == "__main__":
     import argparse
     
