@@ -945,7 +945,7 @@ class MAMEControlConfig(ctk.CTk):
             close_button = ctk.CTkButton(
                 top_row,
                 text="Close",
-                command=self.quit_application,  # Use quit_application for proper termination
+                command=self.close_preview,  # Use quit_application for proper termination
                 width=button_width
             )
             close_button.pack(side="left", padx=button_padx)
@@ -1011,6 +1011,15 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             save_button.pack(side="left", padx=button_padx)
+
+            # Add exact preview button
+            exact_preview_button = ctk.CTkButton(
+                top_row,
+                text="Exact Preview",
+                command=self.show_image_preview,
+                width=button_width
+            )
+            exact_preview_button.pack(side="left", padx=button_padx)
 
             # Add toggle screen button to bottom row
             def toggle_screen():
@@ -4064,6 +4073,188 @@ class MAMEControlConfig(ctk.CTk):
         
         return result
 
+    def show_image_preview(self):
+        """Show a window with an exact preview of how the image will be generated"""
+        if not hasattr(self, 'current_game') or not self.current_game:
+            messagebox.showerror("Error", "No game is currently selected")
+            return
+        
+        import os
+        from tkinter import messagebox
+        from PIL import Image, ImageDraw, ImageTk
+        import traceback
+        
+        try:
+            # Create a temporary preview image using the exact same code as save_current_preview
+            # but display it in a window instead of saving to file
+            
+            # Load text appearance settings
+            settings = self.load_text_appearance_settings()
+            
+            # Find the background image
+            background_path = None
+            preview_dir = self.ensure_preview_folder()
+            
+            for ext in ['.png', '.jpg', '.jpeg']:
+                # First check for ROM-specific background
+                test_path = os.path.join(preview_dir, f"{self.current_game}{ext}")
+                if os.path.exists(test_path):
+                    background_path = test_path
+                    print(f"Using ROM-specific background: {background_path}")
+                    break
+                    
+                # Then check for default background
+                test_path = os.path.join(preview_dir, f"default{ext}")
+                if os.path.exists(test_path):
+                    background_path = test_path
+                    print(f"Using default background: {background_path}")
+                    break
+            
+            # Create the image (with size matching the preview)
+            target_width, target_height = 1920, 1080  # Standard full HD size
+            
+            if background_path:
+                try:
+                    bg_img = Image.open(background_path)
+                    # Resize if needed
+                    if bg_img.size != (target_width, target_height):
+                        bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
+                except Exception as e:
+                    print(f"Error loading background: {e}")
+                    bg_img = Image.new('RGB', (target_width, target_height), 'black')
+            else:
+                # Create a blank black image
+                bg_img = Image.new('RGB', (target_width, target_height), 'black')
+            
+            # Create draw object
+            draw = ImageDraw.Draw(bg_img)
+            
+            # Get fonts based on settings
+            font, title_font = self.get_fonts_from_settings(settings)
+            
+            # Get game data
+            game_data = self.get_game_data(self.current_game)
+            
+            if game_data:
+                # Draw title
+                game_title = game_data['gamename']
+                draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
+                draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill="gray", anchor="mt", font=font)
+                
+                # Add any details if available
+                if 'miscDetails' in game_data:
+                    draw.text((target_width//2, 150), game_data['miscDetails'], 
+                            fill="gray", anchor="mt", font=font)
+            
+            # Draw all currently visible text items using their exact positions
+            if hasattr(self, 'text_items'):
+                print(f"Found {len(self.text_items)} text items to render")
+                
+                for control_name, data in self.text_items.items():
+                    # Skip hidden items if we're in the preview window
+                    try:
+                        if (hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists() and
+                            'text' in data and
+                            self.preview_canvas.itemcget(data['text'], 'state') == 'hidden'):
+                            continue
+                    except Exception as e:
+                        print(f"Error checking visibility for {control_name}: {e}")
+                    
+                    # Get position and text (with error handling)
+                    try:
+                        text_x = data['x']
+                        text_y = data['y']
+                        action = data['action']
+                        print(f"Drawing {control_name} at ({text_x}, {text_y}): {action}")
+                        
+                        # Use the apply_text_settings helper to draw text with current settings
+                        self.apply_text_settings(draw, action, text_x, text_y, font, settings)
+                    except Exception as e:
+                        print(f"Error drawing text for {control_name}: {e}")
+                        continue
+            else:
+                print("No text_items attribute found!")
+            
+            # Add a footer
+            draw.text((target_width//2, target_height-30), 
+                    "Generated by MAME Control Configuration", 
+                    fill="gray", anchor="ms", font=font)
+            
+            # Now display this image in a window
+            preview_window = ctk.CTkToplevel(self)
+            preview_window.title(f"Exact Image Preview: {self.current_game}")
+            preview_window.attributes('-topmost', True)
+            
+            # Resize the image to fit on screen (maintaining aspect ratio)
+            screen_width = preview_window.winfo_screenwidth()
+            screen_height = preview_window.winfo_screenheight()
+            
+            # Maximum size for preview (80% of screen)
+            max_width = int(screen_width * 0.8)
+            max_height = int(screen_height * 0.8)
+            
+            # Calculate scale factor
+            scale_factor = min(max_width / target_width, max_height / target_height)
+            
+            # Calculate new dimensions
+            display_width = int(target_width * scale_factor)
+            display_height = int(target_height * scale_factor)
+            
+            # Resize for display
+            display_img = bg_img.resize((display_width, display_height), Image.LANCZOS)
+            
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(display_img)
+            
+            # Create canvas for the image
+            canvas = ctk.CTkCanvas(preview_window, width=display_width, height=display_height)
+            canvas.pack(padx=10, pady=10)
+            
+            # Display the image
+            canvas.create_image(0, 0, anchor="nw", image=photo)
+            canvas.image = photo  # Keep a reference
+            
+            # Button frame
+            button_frame = ctk.CTkFrame(preview_window)
+            button_frame.pack(padx=10, pady=10, fill="x")
+            
+            # Save button
+            save_button = ctk.CTkButton(
+                button_frame, 
+                text="Save Image", 
+                command=lambda: self.save_current_preview()
+            )
+            save_button.pack(side="left", padx=10)
+            
+            # Settings button
+            settings_button = ctk.CTkButton(
+                button_frame,
+                text="Text Settings",
+                command=lambda: self.show_text_appearance_settings(update_preview=True)
+            )
+            settings_button.pack(side="left", padx=10)
+            
+            # Close button
+            close_button = ctk.CTkButton(
+                button_frame,
+                text="Close",
+                command=preview_window.destroy
+            )
+            close_button.pack(side="right", padx=10)
+            
+            # Set window size based on image dimensions plus padding
+            preview_window.geometry(f"{display_width + 40}x{display_height + 100}")
+            
+            # Center window on screen
+            x = (screen_width - (display_width + 40)) // 2
+            y = (screen_height - (display_height + 100)) // 2
+            preview_window.geometry(f"+{x}+{y}")
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to create preview: {str(e)}")
+            print(f"Error creating preview: {e}")
+            traceback.print_exc()
+    
     def apply_preview_update_hook(self):
         """Apply the hook to update preview window when show_preview is called"""
         # Store the original method
