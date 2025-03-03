@@ -1,4 +1,4 @@
-# import sys
+import sys
 from PIL import ImageFont
 import customtkinter as ctk
 import json
@@ -4076,7 +4076,7 @@ class MAMEControlConfig(ctk.CTk):
         """Show dialog to configure text appearance for images"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Text Appearance Settings")
-        dialog.geometry("700x700")
+        dialog.geometry("800x800")
         dialog.transient(self)
         dialog.grab_set()
         
