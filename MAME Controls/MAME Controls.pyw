@@ -1,3 +1,4 @@
+import sys
 import customtkinter as ctk
 import json
 import os
@@ -6,18 +7,24 @@ from tkinter import messagebox
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
 
+def get_application_path():
+    """Get the base path for the application (handles PyInstaller bundling)"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.abspath(__file__))
+        
 class MAMEControlConfig(ctk.CTk):
     def __init__(self, preview_only=False):
         super().__init__()
 
         # Initialize core attributes needed for both modes
         self.visible_control_types = ["BUTTON", "JOYSTICK"]
-        self.use_fast_mode = False
-        self.use_controls_json = True
-        self.use_gamedata_json = True
-        self.use_mame_xml = True
         self.default_controls = {}
-        self.controls_data = []
+        self.gamedata_json = {}
         self.available_roms = set()
         self.custom_configs = {}
         self.current_game = None
@@ -62,38 +69,106 @@ class MAMEControlConfig(ctk.CTk):
             # Hide the main window completely
             self.withdraw()
 
-    def toggle_fast_mode(self):
-        """Toggle between full mode and fast mode"""
-        self.use_fast_mode = self.fast_mode_toggle.get()
+    def find_mame_directory(self) -> Optional[str]:
+        """Find the MAME directory containing necessary files"""
+        # First check in the application directory
+        app_dir = get_application_path()
+        app_gamedata = os.path.join(app_dir, "gamedata.json")
         
-        # Update the backward compatibility flags
-        if self.use_fast_mode:
-            # Fast mode - use only gamedata.json
-            self.use_controls_json = False
-            self.use_gamedata_json = True
-            self.use_mame_xml = False
-            messagebox.showinfo("Fast Mode Enabled", 
-                            "Fast Mode enabled. Only gamedata.json will be used.\n"
-                            "The application will restart to apply this change.")
-        else:
-            # Normal mode - use controls.json and mame.xml, but NO gamedata.json fallback
-            self.use_controls_json = True
-            self.use_gamedata_json = False  # Set to False to indicate no fallback
-            self.use_mame_xml = True
-            messagebox.showinfo("Normal Mode Enabled", 
-                            "Normal Mode enabled. Using controls.json and mame.xml only (no gamedata.json).\n"
-                            "The application will restart to apply this change.")
+        if os.path.exists(app_gamedata):
+            print(f"Using bundled gamedata.json: {app_dir}")
+            return app_dir
+            
+        # Then check in the current directory
+        current_dir = os.path.abspath(os.path.dirname(__file__))
+        current_gamedata = os.path.join(current_dir, "gamedata.json")
         
-        # Save settings for next start
-        self.save_settings()
+        if os.path.exists(current_gamedata):
+            print(f"Found MAME directory: {current_dir}")
+            return current_dir
+            
+        # Then check common MAME paths
+        common_paths = [
+            os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
+            os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
+            "C:\\MAME",
+            "D:\\MAME"
+        ]
         
-        # Restart the app to apply changes
-        self.restart_application()
-
+        for path in common_paths:
+            gamedata_path = os.path.join(path, "gamedata.json")
+            if os.path.exists(gamedata_path):
+                print(f"Found MAME directory: {path}")
+                return path
+                
+        print("Error: gamedata.json not found in known locations")
+        return None
+    
+    def ensure_preview_folder(self):
+        """Create preview directory if it doesn't exist"""
+        preview_dir = os.path.join(self.mame_dir, "preview")  # Keep as "preview" here
+        if not os.path.exists(preview_dir):
+            print(f"Creating preview directory: {preview_dir}")
+            os.makedirs(preview_dir)
+            
+            # Copy any bundled preview images if running as executable
+            if getattr(sys, 'frozen', False):
+                bundled_preview = os.path.join(get_application_path(), "preview2")  # Use "preview2" here
+                if os.path.exists(bundled_preview):
+                    import shutil
+                    for item in os.listdir(bundled_preview):
+                        source = os.path.join(bundled_preview, item)
+                        dest = os.path.join(preview_dir, item)
+                        if os.path.isfile(source):
+                            shutil.copy2(source, dest)
+                            print(f"Copied: {item} to preview folder")
+        return preview_dir
+    
+    def create_default_image(output_dir=None):
+        """Create a default image if none exists"""
+        if output_dir is None:
+            output_dir = os.getcwd()  # Default to current directory
+        
+        # Check if default image already exists
+        default_png_path = os.path.join(output_dir, "default.png")
+        default_jpg_path = os.path.join(output_dir, "default.jpg")
+        
+        if os.path.exists(default_png_path) or os.path.exists(default_jpg_path):
+            print("Default image already exists, skipping creation")
+            return None
+        
+        # No default image found, create one
+        from PIL import Image, ImageDraw, ImageFont
+        
+        # Create a new black image
+        img = Image.new('RGB', (1280, 720), color='black')
+        
+        # Get a drawing context
+        draw = ImageDraw.Draw(img)
+        
+        # Draw some text
+        try:
+            font = ImageFont.truetype("arial.ttf", 32)
+        except:
+            font = ImageFont.load_default()
+        
+        draw.text((640, 300), "MAME Controls Preview", fill="white", anchor="mm", font=font)
+        draw.text((640, 360), "Place game screenshots in preview folder", fill="gray", anchor="mm", font=font)
+        draw.text((640, 420), "with rom name (e.g., pacman.png)", fill="gray", anchor="mm", font=font)
+        
+        # Save the image
+        created_path = os.path.join(output_dir, "default.png")
+        img.save(created_path)
+        print(f"Created default image at: {created_path}")
+        
+        return created_path
+    
     def save_settings(self):
         """Save current settings to a JSON file"""
         settings = {
-            "use_fast_mode": self.use_fast_mode
+            "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 2),
+            "visible_control_types": self.visible_control_types,
+            "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
         }
         
         settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
@@ -111,12 +186,6 @@ class MAMEControlConfig(ctk.CTk):
                 with open(settings_path, 'r') as f:
                     settings = json.load(f)
                     
-                # Load the flags
-                self.use_fast_mode = settings.get("use_fast_mode", False)
-                self.use_controls_json = settings.get("use_controls_json", True)
-                self.use_gamedata_json = settings.get("use_gamedata_json", True)
-                self.use_mame_xml = settings.get("use_mame_xml", True)
-                
                 # Load screen preference
                 if 'preferred_preview_screen' in settings:
                     self.preferred_preview_screen = settings['preferred_preview_screen']
@@ -126,13 +195,6 @@ class MAMEControlConfig(ctk.CTk):
                 if 'visible_control_types' in settings:
                     self.visible_control_types = settings['visible_control_types']
                     print(f"Loaded visible control types: {self.visible_control_types}")
-                
-                # Update toggle state
-                if hasattr(self, 'fast_mode_toggle'):
-                    if self.use_fast_mode:
-                        self.fast_mode_toggle.select()
-                    else:
-                        self.fast_mode_toggle.deselect()
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
@@ -157,7 +219,7 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'visible_control_types') or self.visible_control_types is None:
             self.visible_control_types = ["BUTTON", "JOYSTICK"]
     
-    # 5. Add show/hide methods
+     # Show/hide methods for preview buttons
     def show_button_frame(self):
         """Show the button frame"""
         if hasattr(self, 'frame_bg'):
@@ -173,19 +235,6 @@ class MAMEControlConfig(ctk.CTk):
         """Hide the button frame"""
         if hasattr(self, 'frame_bg'):
             self.frame_bg.place_forget()
-    
-    def restart_application(self):
-        """Restart the application to apply new settings"""
-        # Get the command used to run this script
-        import sys
-        script_path = sys.argv[0]
-        
-        # Close the current instance
-        self.destroy()
-        
-        # Start a new instance
-        import subprocess
-        subprocess.Popen([sys.executable, script_path])
     
     def convert_mapping(self, mapping: str, to_xinput: bool) -> str:
         """Convert between JOYCODE and XInput mappings"""
@@ -347,13 +396,20 @@ class MAMEControlConfig(ctk.CTk):
     def find_mame_directory(self) -> Optional[str]:
         """Find the MAME directory containing necessary files"""
         current_dir = os.path.abspath(os.path.dirname(__file__))
-        controls_json = os.path.join(current_dir, "controls.json")
         
-        if os.path.exists(controls_json):
-            print(f"Found MAME directory: {current_dir}")
-            return current_dir
+        # Look for gamedata.json instead of controls.json
+        gamedata_paths = [
+            os.path.join(current_dir, "gamedata.json"),
+            os.path.join(current_dir, "metadata", "gamedata.json"),
+            os.path.join(current_dir, "data", "gamedata.json")
+        ]
+        
+        for path in gamedata_paths:
+            if os.path.exists(path):
+                print(f"Found MAME directory: {current_dir}")
+                return current_dir
             
-        print("Error: controls.json not found in:", current_dir)
+        print("Error: gamedata.json not found in:", current_dir)
         return None
 
     def toggle_xinput(self):
@@ -487,17 +543,6 @@ class MAMEControlConfig(ctk.CTk):
             command=self.toggle_ingame_mode
         )
         self.ingame_toggle.grid(row=1, column=1, padx=5, pady=5, sticky="e")
-        
-        # In create_layout, add this near your other toggles
-        self.fast_mode_frame = ctk.CTkFrame(self.right_panel)
-        self.fast_mode_frame.grid(row=1, column=2, padx=5, pady=5, sticky="e")
-
-        self.fast_mode_toggle = ctk.CTkSwitch(
-            self.fast_mode_frame,
-            text="Fast Mode (gamedata.json only)",
-            command=self.toggle_fast_mode
-        )
-        self.fast_mode_toggle.grid(row=0, column=0, padx=5, pady=5)
 
         # Controls display
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
@@ -509,10 +554,8 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
             
-        # Create preview directory if it doesn't exist
-        preview_dir = os.path.join(self.mame_dir, "preview")
-        if not os.path.exists(preview_dir):
-            os.makedirs(preview_dir)
+        # Create preview directory and handle bundled images if needed
+        preview_dir = self.ensure_preview_folder()
 
         # Check for a ROM-specific image (PNG or JPG)
         image_extensions = [".png", ".jpg", ".jpeg"]
@@ -730,7 +773,6 @@ class MAMEControlConfig(ctk.CTk):
             # Add control text overlays - track them for movement
             self.text_items = {}
             
-            # Try to load saved positions first (from global file)
             # Try to load saved positions, checking ROM-specific first then global
             positions = self.load_text_positions(self.current_game)
             print(f"Loaded {len(positions)} positions from global file")
@@ -795,8 +837,7 @@ class MAMEControlConfig(ctk.CTk):
             
             # Add right-click menu for text removal
             self.create_context_menu(canvas)
-            
-            # Create a transparent frame for buttons with fixed width
+
             self.frame_bg = tk.Frame(self.preview_window, bg="black")  # Changed to self.frame_bg
 
             # Only show if setting allows
@@ -1278,20 +1319,14 @@ class MAMEControlConfig(ctk.CTk):
         # Load settings from file
         self.load_settings()
         
-        # Scan ROMs directory (always needed)
+        # Scan ROMs directory
         self.scan_roms_directory()
         
-        # Load default controls first
-        self.load_default_config()  # Add this line
+        # Load default controls
+        self.load_default_config()
         
-        # Load only the enabled data sources
-        if not self.use_fast_mode:
-            self.load_controls_data()
-            if self.use_mame_xml:
-                self.load_mame_xml()
-        
-        if self.use_fast_mode or self.use_gamedata_json:
-            self.load_gamedata_json()
+        # Load gamedata.json
+        self.load_gamedata_json()
         
         # Always load custom configs
         self.load_custom_configs()
@@ -1304,44 +1339,19 @@ class MAMEControlConfig(ctk.CTk):
         self.select_first_rom()
 
     def select_first_rom(self):
-        """Select and display the first available ROM with support for both modes"""
+        """Select and display the first available ROM"""
         print("\n=== Auto-selecting first ROM ===")
         
         try:
-            # Different approach based on mode
-            if self.use_fast_mode:
-                print("Using fast mode ROM selection")
-                # In fast mode, we might need to use a different data source
-                if hasattr(self, 'gamedata_json') and self.gamedata_json:
-                    # Get first ROM that exists in both available_roms and gamedata_json
-                    available_fast_roms = sorted(
-                        rom for rom in self.available_roms 
-                        if rom in self.gamedata_json
-                    )
-                    
-                    if available_fast_roms:
-                        first_rom = available_fast_roms[0]
-                        print(f"Selected first ROM from fast mode: {first_rom}")
-                    else:
-                        print("No matching ROMs found in fast mode")
-                        return
-                else:
-                    print("No gamedata.json loaded for fast mode")
-                    return
-            else:
-                print("Using normal mode ROM selection")
-                # Normal mode - use controls_data
-                available_games = sorted(
-                    game['romname'] for game in self.controls_data 
-                    if game['romname'] in self.available_roms
-                )
+            # Get the first available ROM that has game data
+            available_games = sorted([rom for rom in self.available_roms if self.get_game_data(rom)])
+            
+            if not available_games:
+                print("No ROMs with game data found")
+                return
                 
-                if available_games:
-                    first_rom = available_games[0]
-                    print(f"Selected first ROM from normal mode: {first_rom}")
-                else:
-                    print("No matching ROMs found in normal mode")
-                    return
+            first_rom = available_games[0]
+            print(f"Selected first ROM: {first_rom}")
             
             # Check if the game list has content
             list_content = self.game_list.get("1.0", "end-1c")
@@ -1363,7 +1373,7 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Could not find '{first_rom}' in game list")
                 return
             
-            # Directly highlight and set current_game
+            # Highlight the selected line
             self.highlight_selected_game(target_line)
             self.current_game = first_rom
             
@@ -1493,58 +1503,10 @@ class MAMEControlConfig(ctk.CTk):
                     mapping_label.grid(row=2, column=0, columnspan=2, padx=20, pady=2, sticky="w")
                 
                 row += 1
-    
-    def load_controls_data(self):
-        """Load the controls.json data with variant matching"""
-        controls_path = os.path.join(self.mame_dir, "controls.json")
-        try:
-            print(f"\nLoading controls from: {controls_path}")
-            with open(controls_path, "r", encoding='utf-8') as f:
-                data = json.load(f)
-                base_controls = data.get('games', [])
-                
-            print(f"Loaded base control data for {len(base_controls)} games")
-            
-            # Keep original controls data
-            self.controls_data = base_controls
-            
-            # Create variant mapping
-            self.control_variants = {}
-            for game in base_controls:
-                romname = game['romname']
-                # Strip region suffixes for variant matching
-                base_name = re.sub(r'[jubew]$', '', romname)
-                self.control_variants[base_name] = game
-                
-            # Check for matches
-            matched = set()
-            for rom in self.available_roms:
-                # Direct match
-                if any(game['romname'] == rom for game in self.controls_data):
-                    matched.add(rom)
-                    continue
-                
-                # Try variant match
-                base_name = re.sub(r'[jubew]$', '', rom)
-                if base_name in self.control_variants:
-                    matched.add(rom)
-            
-            print(f"\nMatching results:")
-            print(f"- Direct or variant matches: {len(matched)}")
-            print(f"- Unmatched ROMs: {len(self.available_roms - matched)}")
-            
-            if len(matched) > 0:
-                print("\nSample matches:")
-                for rom in list(matched)[:5]:
-                    print(f"Found match for: {rom}")
-            
-        except Exception as e:
-            print(f"ERROR loading controls.json: {str(e)}")
-            messagebox.showerror("Error", f"Error loading controls.json: {str(e)}")
 
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for additional control data"""
-        if hasattr(self, 'gamedata_json'):
+        """Load and parse the gamedata.json file for control data"""
+        if hasattr(self, 'gamedata_json') and self.gamedata_json:
             # Already loaded
             return self.gamedata_json
             
@@ -1593,63 +1555,7 @@ class MAMEControlConfig(ctk.CTk):
             return {}
     
     def get_game_data(self, romname):
-        """Get control data for a ROM, based on current mode"""
-        if self.use_fast_mode:
-            # Fast mode - only check gamedata.json
-            return self.get_game_data_from_gamedata_only(romname)
-        else:
-            # Normal mode - check all data sources with original algorithm
-            return self.get_game_data_from_all_sources(romname)
-
-    def get_game_data_from_all_sources(self, romname):
-        """Get control data from controls.json and mame.xml only (no gamedata.json fallback)"""
-        # Try direct match in controls.json
-        game_data = next((game for game in self.controls_data if game['romname'] == romname), None)
-        if game_data:
-            return game_data.copy()
-                
-        # Try variant match by stripping region code
-        base_name = re.sub(r'[jubew]$', '', romname)
-        for game in self.controls_data:
-            control_base = re.sub(r'[jubew]$', '', game['romname'])
-            if base_name == control_base:
-                # Copy the data and modify for this ROM
-                variant_data = game.copy()
-                variant_data['romname'] = romname
-                variant_data['gamename'] = f"{game['gamename']} (Variant)"
-                return variant_data
-        
-        # If we have mame.xml data, try to find parent/clone relationships
-        if hasattr(self, 'mame_xml_data') and romname in self.mame_xml_data:
-            # Check if this ROM is a clone of another ROM
-            parent_rom = self.mame_xml_data[romname].get('cloneof')
-            if parent_rom:
-                # Try to find the parent ROM in controls.json
-                parent_data = next((game for game in self.controls_data if game['romname'] == parent_rom), None)
-                if parent_data:
-                    # Copy the parent data and modify for this ROM
-                    clone_data = parent_data.copy()
-                    clone_data['romname'] = romname
-                    clone_data['gamename'] = f"{self.mame_xml_data[romname]['name']} (Clone)"
-                    return clone_data
-            
-            # Also check the romof relationship
-            rom_of = self.mame_xml_data[romname].get('romof')
-            if rom_of and rom_of != parent_rom:  # Avoid checking the same ROM twice
-                # Try to find the source ROM in controls.json
-                source_data = next((game for game in self.controls_data if game['romname'] == rom_of), None)
-                if source_data:
-                    # Copy the source data and modify for this ROM
-                    derived_data = source_data.copy()
-                    derived_data['romname'] = romname
-                    derived_data['gamename'] = f"{self.mame_xml_data[romname]['name']} (Derived)"
-                    return derived_data
-        
-        # No fallback to gamedata.json - just return None if not found
-        return None
-
-    def get_game_data_from_gamedata_only(self, romname):
-        """Get control data only from gamedata.json"""
+        """Get control data for a ROM from gamedata.json"""
         if not hasattr(self, 'gamedata_json'):
             self.load_gamedata_json()
             
@@ -1681,7 +1587,7 @@ class MAMEControlConfig(ctk.CTk):
                 'P2_BUTTON6': 'RB Button',
             }
             
-            # Basic structure conversion - DEFINE THIS FIRST
+            # Basic structure conversion
             converted_data = {
                 'romname': romname,
                 'gamename': game_data.get('description', romname),
@@ -1826,18 +1732,17 @@ class MAMEControlConfig(ctk.CTk):
             # Mark as gamedata source
             converted_data['source'] = 'gamedata.json'
             return converted_data
-        
-        # Try clone lookup if direct lookup failed
-        if hasattr(self, 'mame_xml_data') and romname in self.mame_xml_data:
-            # See if it's a clone of another game
-            parent_rom = self.mame_xml_data[romname].get('cloneof')
-            if parent_rom and parent_rom in self.gamedata_json:
+            
+        # Try parent lookup if direct lookup failed
+        if romname in self.gamedata_json and 'parent' in self.gamedata_json[romname]:
+            parent_rom = self.gamedata_json[romname]['parent']
+            if parent_rom:
                 # Recursive call to get parent data
-                parent_data = self.get_game_data_from_gamedata_only(parent_rom)
+                parent_data = self.get_game_data(parent_rom)
                 if parent_data:
                     # Update with this ROM's info
                     parent_data['romname'] = romname
-                    parent_data['gamename'] = f"{self.mame_xml_data[romname]['name']} (Clone)"
+                    parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
                     return parent_data
         
         # Not found
@@ -1893,16 +1798,9 @@ class MAMEControlConfig(ctk.CTk):
 
     def update_stats_label(self):
         """Update the statistics label"""
-        # Show current mode
-        if self.use_fast_mode:
-            mode_text = "Fast Mode (gamedata.json only)"
-        else:
-            mode_text = "Normal Mode (controls.json + mame.xml only)"
-        
         unmatched = len(self.find_unmatched_roms())
         matched = len(self.available_roms) - unmatched
         stats = (
-            f"Mode: {mode_text}\n"
             f"Available ROMs: {len(self.available_roms)} ({matched} with controls, {unmatched} without)\n"
             f"Custom configs: {len(self.custom_configs)}"
         )
@@ -1910,153 +1808,25 @@ class MAMEControlConfig(ctk.CTk):
     
     def find_unmatched_roms(self) -> Set[str]:
         """Find ROMs that don't have matching control data"""
-        control_roms = {game['romname'] for game in self.controls_data}
-        return self.available_roms - control_roms
-
-    def load_mame_xml(self):
-        """Load and parse the mame.xml file for ROM metadata including clones"""
-        if hasattr(self, 'mame_xml_data'):
-            # Already loaded
-            return self.mame_xml_data
-            
-        self.mame_xml_data = {}
-        
-        # Look for mame.xml in common locations
-        xml_paths = [
-            os.path.join(self.mame_dir, "mame.xml"),
-            os.path.join(self.mame_dir, "metadata", "mame.xml"),
-            os.path.join(self.mame_dir, "hash", "mame.xml")
-        ]
-        
-        xml_path = None
-        for path in xml_paths:
-            if os.path.exists(path):
-                xml_path = path
-                break
-        
-        if not xml_path:
-            print("mame.xml not found")
-            return {}
-            
-        try:
-            print(f"Loading mame.xml from: {xml_path}")
-            
-            # Simplified approach without progress tracking
-            # For large files, this might take a moment
-            for event, elem in ET.iterparse(xml_path, events=('end',)):
-                # Process both main entries and clones/variants
-                if elem.tag == 'machine':
-                    rom_name = elem.get('name')
-                    if rom_name:
-                        # Get description (game name)
-                        description = elem.findtext('description')
-                        
-                        # Store the data if we have at least a name and description
-                        if description:
-                            # Also capture clone/romof relationships for reference
-                            clone_of = elem.get('cloneof')
-                            rom_of = elem.get('romof')
-                            
-                            self.mame_xml_data[rom_name] = {
-                                'name': description,
-                                'year': elem.findtext('year'),
-                                'manufacturer': elem.findtext('manufacturer'),
-                                'cloneof': clone_of,
-                                'romof': rom_of
-                            }
-                    
-                    # Clear element to save memory
-                    elem.clear()
-            
-            print(f"Loaded {len(self.mame_xml_data)} games from mame.xml")
-            return self.mame_xml_data
-            
-        except Exception as e:
-            print(f"Error loading mame.xml: {str(e)}")
-            import traceback
-            traceback.print_exc()  # Print the full error traceback
-            return {}
-    
-        # Add a helper method to look for game names from other sources
-    def get_game_name_from_other_sources(self, rom_name):
-        """Try to find a game name for unmatched ROMs from mame.xml or other sources"""
-        # Check mame.xml data
-        if not hasattr(self, 'mame_xml_data'):
-            self.load_mame_xml()
-        
-        print(f"Looking for ROM name: {rom_name}")
-        
-        # Check directly for exact match
-        if rom_name in self.mame_xml_data:
-            print(f"Found exact match for {rom_name}: {self.mame_xml_data[rom_name]['name']}")
-            return self.mame_xml_data[rom_name]['name']
-        
-        # Try alternative approaches for close matches
-        for xml_rom, xml_data in self.mame_xml_data.items():
-            # Check if this ROM is a direct parent or clone
-            if xml_data.get('cloneof') == rom_name or xml_data.get('romof') == rom_name:
-                print(f"Found as parent/source of {xml_rom}: {xml_data['name']}")
-                return xml_data['name']
-            
-            # Check if ROM name is a substring with high confidence
-            if (rom_name in xml_rom and len(rom_name) >= 3) or (xml_rom in rom_name and len(xml_rom) >= 3):
-                # Make sure it's not just a coincidental short string match
-                if abs(len(xml_rom) - len(rom_name)) <= 2:
-                    print(f"Found close match: {rom_name} ≈ {xml_rom}: {xml_data['name']}")
-                    return xml_data['name']
-        
-        print(f"No match found for {rom_name}")
-        return None
+        matched_roms = set()
+        for rom in self.available_roms:
+            if self.get_game_data(rom):
+                matched_roms.add(rom)
+        return self.available_roms - matched_roms
     
     def show_unmatched_roms(self):
         """Display ROMs that don't have matching control data"""
-        # Load mame.xml data if not already loaded
-        if not hasattr(self, 'mame_xml_data'):
-            self.load_mame_xml()
-        
-        # Categorize ROMs using the same get_game_data logic
-        unmatched = []
-        direct_matches = []
-        variant_matches = []
-        clone_matches = []  # New category for clone-derived matches
+        # Categorize ROMs
+        matched_roms = []
+        unmatched_roms = []
 
         for rom in sorted(self.available_roms):
             game_data = self.get_game_data(rom)
-            if not game_data:
-                unmatched.append(rom)
+            if game_data:
+                game_name = game_data['gamename']
+                matched_roms.append((rom, game_name))
             else:
-                # Check if it's a direct match
-                if any(game['romname'] == rom for game in self.controls_data):
-                    game_name = next((game['gamename'] for game in self.controls_data 
-                                    if game['romname'] == rom), "Unknown")
-                    direct_matches.append((rom, game_name))
-                else:
-                    # Check if it's a variant match (region code)
-                    try:
-                        base_name_matched = False
-                        for game in self.controls_data:
-                            if re.sub(r'[jubew]$', '', game['romname']) == re.sub(r'[jubew]$', '', rom):
-                                variant_matches.append((rom, game['romname'], game['gamename']))
-                                base_name_matched = True
-                                break
-                                
-                        # If not a variant match, must be a clone/romof match
-                        if not base_name_matched:
-                            # Use the game_data's gamename which already has the (Clone) or (Derived) suffix
-                            clone_matches.append((rom, game_data['gamename']))
-                    except Exception as e:
-                        print(f"Error processing {rom}: {str(e)}")
-                        # Add to unmatched if there's an error during processing
-                        unmatched.append(rom)
-
-        # Get unmatched ROMs with names from mame.xml
-        unmatched_with_names = []
-        for rom in unmatched:
-            game_name = self.get_game_name_from_other_sources(rom)
-            if game_name:
-                unmatched_with_names.append((rom, game_name))
-            else:
-                unmatched_with_names.append((rom, "Unknown"))
+                unmatched_roms.append(rom)
 
         # Create new window
         self.unmatched_dialog = ctk.CTkToplevel(self)
@@ -2075,11 +1845,9 @@ class MAMEControlConfig(ctk.CTk):
         summary_tab = tabview.add("Summary")
         stats_text = (
             f"Total ROMs: {len(self.available_roms)}\n"
-            f"Direct matches: {len(direct_matches)}\n"
-            f"Variant matches: {len(variant_matches)}\n"
-            f"Clone/Parent matches: {len(clone_matches)}\n"
-            f"Unmatched ROMs: {len(unmatched)}\n\n"
-            f"Control data coverage: {((len(direct_matches) + len(variant_matches) + len(clone_matches)) / len(self.available_roms) * 100):.1f}%"
+            f"Matched ROMs: {len(matched_roms)}\n"
+            f"Unmatched ROMs: {len(unmatched_roms)}\n\n"
+            f"Control data coverage: {(len(matched_roms) / max(len(self.available_roms), 1) * 100):.1f}%"
         )
         stats_label = ctk.CTkLabel(
             summary_tab,
@@ -2091,16 +1859,12 @@ class MAMEControlConfig(ctk.CTk):
         
         # Unmatched ROMs tab
         unmatched_tab = tabview.add("Unmatched ROMs")
-        if unmatched_with_names:
+        if unmatched_roms:
             unmatched_text = ctk.CTkTextbox(unmatched_tab)
             unmatched_text.pack(expand=True, fill="both", padx=10, pady=10)
             
-            # Format each entry with ROM name and game name (if available)
-            for rom, game_name in sorted(unmatched_with_names):
-                if game_name != "Unknown":
-                    unmatched_text.insert("end", f"{rom} - {game_name}\n")
-                else:
-                    unmatched_text.insert("end", f"{rom}\n")
+            for rom in sorted(unmatched_roms):
+                unmatched_text.insert("end", f"{rom}\n")
                     
             unmatched_text.configure(state="disabled")
         else:
@@ -2110,58 +1874,27 @@ class MAMEControlConfig(ctk.CTk):
                 font=("Arial", 14)
             ).pack(expand=True)
         
-        # Direct matches tab 
-        direct_tab = tabview.add("Direct Matches")
-        if direct_matches:
-            direct_text = ctk.CTkTextbox(direct_tab)
-            direct_text.pack(expand=True, fill="both", padx=10, pady=10)
+        # Matched ROMs tab 
+        matched_tab = tabview.add("Matched ROMs")
+        if matched_roms:
+            matched_text = ctk.CTkTextbox(matched_tab)
+            matched_text.pack(expand=True, fill="both", padx=10, pady=10)
             
-            # Display both ROM name and game name for direct matches
-            for rom, game_name in sorted(direct_matches):
-                direct_text.insert("end", f"{rom} - {game_name}\n")
+            for rom, game_name in sorted(matched_roms):
+                matched_text.insert("end", f"{rom} - {game_name}\n")
                 
-            direct_text.configure(state="disabled")
+            matched_text.configure(state="disabled")
         else:
             ctk.CTkLabel(
-                direct_tab,
-                text="No direct matches found!",
-                font=("Arial", 14)
-            ).pack(expand=True)
-            
-        # Variant matches tab
-        variants_tab = tabview.add("Variant Matches")
-        if variant_matches:
-            variants_text = ctk.CTkTextbox(variants_tab)
-            variants_text.pack(expand=True, fill="both", padx=10, pady=10)
-            for rom, control_rom, game_name in sorted(variant_matches):
-                variants_text.insert("end", f"{rom} → {control_rom} - {game_name}\n")
-            variants_text.configure(state="disabled")
-        else:
-            ctk.CTkLabel(
-                variants_tab,
-                text="No variant matches found!",
-                font=("Arial", 14)
-            ).pack(expand=True)
-        
-        # Clone matches tab (new)
-        clones_tab = tabview.add("Clone Matches")
-        if clone_matches:
-            clones_text = ctk.CTkTextbox(clones_tab)
-            clones_text.pack(expand=True, fill="both", padx=10, pady=10)
-            for rom, game_name in sorted(clone_matches):
-                clones_text.insert("end", f"{rom} - {game_name}\n")
-            clones_text.configure(state="disabled")
-        else:
-            ctk.CTkLabel(
-                clones_tab,
-                text="No clone matches found!",
+                matched_tab,
+                text="No matched ROMs found!",
                 font=("Arial", 14)
             ).pack(expand=True)
         
         # Select Summary tab by default
         tabview.set("Summary")
         
-        # Add export button
+        # Add export button with embedded export function
         def export_analysis():
             try:
                 file_path = os.path.join(self.mame_dir, "control_analysis.txt")
@@ -2170,37 +1903,23 @@ class MAMEControlConfig(ctk.CTk):
                     f.write("=========================\n\n")
                     f.write(stats_text + "\n\n")
                     
-                    f.write("Direct Matches:\n")
-                    f.write("===============\n")
-                    for rom, game_name in sorted(direct_matches):
-                        f.write(f"{rom} - {game_name}\n")
-                    f.write("\n")
-                    
-                    f.write("Variant Matches:\n")
-                    f.write("===============\n")
-                    for rom, control_rom, game_name in sorted(variant_matches):
-                        f.write(f"{rom} → {control_rom} - {game_name}\n")
-                    f.write("\n")
-                    
-                    f.write("Clone Matches:\n")
-                    f.write("=============\n")
-                    for rom, game_name in sorted(clone_matches):
+                    f.write("Matched ROMs:\n")
+                    f.write("============\n")
+                    for rom, game_name in sorted(matched_roms):
                         f.write(f"{rom} - {game_name}\n")
                     f.write("\n")
                     
                     f.write("Unmatched ROMs:\n")
                     f.write("==============\n")
-                    for rom, game_name in sorted(unmatched_with_names):
-                        if game_name != "Unknown":
-                            f.write(f"{rom} - {game_name}\n")
-                        else:
-                            f.write(f"{rom}\n")
+                    for rom in sorted(unmatched_roms):
+                        f.write(f"{rom}\n")
                         
                 messagebox.showinfo("Export Complete", 
                                 f"Analysis exported to:\n{file_path}")
             except Exception as e:
                 messagebox.showerror("Export Error", str(e))
         
+        # Export button using the locally defined function
         export_button = ctk.CTkButton(
             self.unmatched_dialog,
             text="Export Analysis",
@@ -2215,7 +1934,7 @@ class MAMEControlConfig(ctk.CTk):
             command=self.unmatched_dialog.destroy
         )
         close_button.pack(pady=10)
-    
+        
     def update_game_list(self):
         """Update the game list to show all available ROMs with visual enhancements"""
         self.game_list.delete("1.0", "end")
@@ -2227,7 +1946,7 @@ class MAMEControlConfig(ctk.CTk):
         row_count = 0
         
         for romname in available_roms:
-            # Get game data including variants
+            # Get game data
             game_data = self.get_game_data(romname)
             has_config = romname in self.custom_configs
             
@@ -2738,7 +2457,7 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error saving config for {romname}: {e}")
 
     def generate_all_configs(self):
-        """Generate config files for all available ROMs from any data source"""
+        """Generate config files for all available ROMs from gamedata.json"""
         info_dir = self.create_info_directory()
         print(f"Created/Found info directory at: {info_dir}")
         
@@ -2753,19 +2472,8 @@ class MAMEControlConfig(ctk.CTk):
         errors = []
         skipped = 0
         
-        # Process all ROMs with control data, regardless of source
-        roms_to_process = []
-        
-        # If in normal mode, use controls_data
-        if not self.use_fast_mode and self.controls_data:
-            # Get available ROMs with control data from controls.json
-            for game in self.controls_data:
-                if game['romname'] in self.available_roms:
-                    roms_to_process.append(game['romname'])
-        # If in fast mode or as a fallback, process all available ROMs
-        else:
-            # We'll check each ROM individually
-            roms_to_process = list(self.available_roms)
+        # Process all ROMs with control data
+        roms_to_process = list(self.available_roms)
         
         total_roms = len(roms_to_process)
         print(f"Found {total_roms} ROMs to process")
@@ -2773,7 +2481,7 @@ class MAMEControlConfig(ctk.CTk):
         # Process each ROM
         for rom_name in roms_to_process:
             try:
-                # Get game data from appropriate source
+                # Get game data
                 game_data = self.get_game_data(rom_name)
                 
                 if game_data:
@@ -2807,8 +2515,6 @@ class MAMEControlConfig(ctk.CTk):
         
         print(report)
         messagebox.showinfo("Config Generation Report", report)
-
-    # Add these methods to your class to enable text alignment
 
     def add_alignment_guides(self):
         """Add horizontal and vertical alignment guides to the canvas"""
@@ -3089,8 +2795,8 @@ class MAMEControlConfig(ctk.CTk):
                 text_x = image_x + 100 + (column * 150)
                 text_y = image_y + 50 + (row * 50)
                 
-            # Check visibility based on control type
-            is_visible = True  # Always visible in "show all" mode
+            # Always visible in "show all" mode
+            is_visible = True
             
             # Create text with shadow for better visibility
             shadow = self.preview_canvas.create_text(text_x+2, text_y+2, text=action, 
@@ -3121,11 +2827,6 @@ class MAMEControlConfig(ctk.CTk):
         # Re-apply the alignment drag handlers
         self.update_draggable_for_alignment()
         
-        # Update alignment mode if it's active
-        if hasattr(self, 'alignment_mode') and self.alignment_mode:
-            # Force update of alignment button text
-            self.alignment_button.configure(text="Align ON")
-        
         print(f"Showing all {len(self.text_items)} standard controls")
 
     def restore_game_controls(self):
@@ -3139,21 +2840,10 @@ class MAMEControlConfig(ctk.CTk):
             self.preview_canvas.delete(data['text'])
             self.preview_canvas.delete(data['shadow'])
         
-        # Restore original controls
+        # Restore original controls dictionary
         self.text_items = self.original_text_items
-        self.original_text_items = None
         
-        # Update alignment snap points
-        self.snap_points = {}
-        for control_name, data in self.text_items.items():
-            self.snap_points[control_name] = (data['x'], data['y'])
-
-        # Re-apply the alignment drag handlers
-        self.update_draggable_for_alignment()
-
-        print(f"Restored {len(self.text_items)} game-specific controls")
-
-        # Important: Recreate the text items on the canvas
+        # Important: We need to recreate the text items on the canvas since they were deleted
         for control_name, data in self.text_items.items():
             # Extract coordinates and text
             text_x, text_y = data['x'], data['y']
@@ -3184,15 +2874,15 @@ class MAMEControlConfig(ctk.CTk):
         # Clear the original reference
         self.original_text_items = None
         
-        # Update alignment guides if that feature is enabled
-        if hasattr(self, 'update_draggable_for_alignment'):
-            self.update_draggable_for_alignment()
-            
         # Update snap points for alignment
         if hasattr(self, 'snap_points'):
             self.snap_points = {}
             for control_name, data in self.text_items.items():
                 self.snap_points[control_name] = (data['x'], data['y'])
+        
+        # Re-apply the alignment drag handlers
+        if hasattr(self, 'update_draggable_for_alignment'):
+            self.update_draggable_for_alignment()
         
         print(f"Restored {len(self.text_items)} game-specific controls")
 
@@ -3236,14 +2926,6 @@ class MAMEControlConfig(ctk.CTk):
         """Show the preview for a specific ROM without running the main app"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         
-        # Set fast mode explicitly for preview-only mode
-        self.use_fast_mode = True
-        
-        # Update related flags for consistency
-        self.use_controls_json = False
-        self.use_gamedata_json = True
-        self.use_mame_xml = False
-        
         # Find the MAME directory (already in __init__)
         if not hasattr(self, 'mame_dir') or not self.mame_dir:
             self.mame_dir = self.find_mame_directory()
@@ -3251,17 +2933,30 @@ class MAMEControlConfig(ctk.CTk):
                 print("Error: MAME directory not found!")
                 return
         
+        print(f"Using MAME directory: {self.mame_dir}")
+        
+        # Load settings (for screen preference and button visibility)
+        self.load_settings()
+        
+        # Ensure preview folder exists
+        if hasattr(self, 'ensure_preview_folder'):
+            preview_dir = self.ensure_preview_folder()
+        else:
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            if not os.path.exists(preview_dir):
+                os.makedirs(preview_dir)
+        
         # Minimal data loading required for preview
         # We need these for the preview to work
         if not hasattr(self, 'default_controls') or not self.default_controls:
             self.load_default_config()
         
         # Scan ROMs directory if needed
-        if not self.available_roms:
+        if not hasattr(self, 'available_roms') or not self.available_roms:
             self.scan_roms_directory()
         
-        # Load control data for fast mode
-        if not self.controls_data:
+        # Load gamedata.json if not already loaded
+        if not hasattr(self, 'gamedata_json') or not self.gamedata_json:
             self.load_gamedata_json()
         
         # Set the current game
@@ -3271,7 +2966,10 @@ class MAMEControlConfig(ctk.CTk):
         game_data = self.get_game_data(rom_name)
         if not game_data:
             print(f"Error: No control data found for {rom_name}")
+            messagebox.showerror("Error", f"No control data found for {rom_name}")
             return
+        
+        print(f"Successfully loaded game data for {rom_name}")
         
         # Start MAME process monitoring only if auto_close is enabled
         if auto_close:
@@ -3281,20 +2979,24 @@ class MAMEControlConfig(ctk.CTk):
             print("Auto-close disabled - preview will stay open until manually closed")
         
         # Show the preview window
-        self.show_preview()
+        try:
+            self.show_preview()
+            print("Preview window displayed successfully")
+        except Exception as e:
+            print(f"Error showing preview: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("Error", f"Failed to show preview: {str(e)}")
+            return
         
         # Start mainloop for just this window
-        self.mainloop()
+        try:
+            self.mainloop()
+        except Exception as e:
+            print(f"Error in mainloop: {str(e)}")
+            import traceback
+            traceback.print_exc()
         
-    def quit_application(self):
-        """Properly exit the application when preview window is closed"""
-        if hasattr(self, 'preview_window'):
-            self.preview_window.destroy()
-        self.quit()
-        self.destroy()
-        import sys
-        sys.exit(0)  # Force exit the Python script
-
     def monitor_mame_process(self, check_interval=2.0):
         """Monitor MAME process and close preview when MAME closes"""
         import threading
@@ -3327,11 +3029,30 @@ class MAMEControlConfig(ctk.CTk):
             # MAME is no longer running - close preview
             print("MAME closed, shutting down preview")
             if hasattr(self, 'preview_window') and self.preview_window:
-                self.preview_window.after(100, self.quit_application)
+                try:
+                    self.preview_window.after(100, self.quit_application)
+                except Exception as e:
+                    print(f"Error closing preview: {e}")
+                    # Fallback to direct quit
+                    self.quit_application()
         
         # Start monitoring in a background thread
         monitor_thread = threading.Thread(target=check_mame, daemon=True)
         monitor_thread.start()
+        
+    def quit_application(self):
+        """Properly exit the application when preview window is closed"""
+        try:
+            if hasattr(self, 'preview_window'):
+                self.preview_window.destroy()
+            self.quit()
+            self.destroy()
+        except Exception as e:
+            print(f"Error during application quit: {e}")
+        finally:
+            # Force exit the Python script
+            import sys
+            sys.exit(0)
     
 if __name__ == "__main__":
     import argparse
@@ -3347,8 +3068,15 @@ if __name__ == "__main__":
     if args.preview_only and args.game:
         # Preview-only mode: just show the preview for the specified game
         app = MAMEControlConfig(preview_only=True)
+        
+        # Set screen preference from command line
         app.preferred_preview_screen = args.screen
-        app.hide_preview_buttons = True  # Always hide buttons in preview-only mode
+        print(f"Using screen {args.screen} from command line")
+        
+        # Hide buttons in preview-only mode
+        app.hide_preview_buttons = True
+        
+        # Show the standalone preview
         app.show_preview_standalone(args.game, auto_close=args.auto_close)
     else:
         # Normal mode: start the full application
