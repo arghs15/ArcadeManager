@@ -133,14 +133,47 @@ class MAMEControlConfig(ctk.CTk):
                         self.fast_mode_toggle.select()
                     else:
                         self.fast_mode_toggle.deselect()
-                        
+
+                # Load hide preview buttons setting
+                if 'hide_preview_buttons' in settings:
+                    self.hide_preview_buttons = settings['hide_preview_buttons']
+                    # Update toggle if it exists
+                    if hasattr(self, 'hide_buttons_toggle'):
+                        if self.hide_preview_buttons:
+                            self.hide_buttons_toggle.select()
+                        else:
+                            self.hide_buttons_toggle.deselect()
+                else:
+                    self.hide_preview_buttons = False
+                    
             except Exception as e:
                 print(f"Error loading settings: {e}")
+                self.hide_preview_buttons = False
+        else:
+            # Default setting
+            self.hide_preview_buttons = False
         
         # Ensure the visible_control_types is initialized even if no settings file exists
         if not hasattr(self, 'visible_control_types') or self.visible_control_types is None:
             self.visible_control_types = ["BUTTON", "JOYSTICK"]
+    
+    # 5. Add show/hide methods
+    def show_button_frame(self):
+        """Show the button frame"""
+        if hasattr(self, 'frame_bg'):
+            self.frame_bg.place(
+                relx=0.5, 
+                rely=0.95, 
+                anchor="center", 
+                width=min(1000, self.preview_window.winfo_width()-20), 
+                height=80
+            )
 
+    def hide_button_frame(self):
+        """Hide the button frame"""
+        if hasattr(self, 'frame_bg'):
+            self.frame_bg.place_forget()
+    
     def restart_application(self):
         """Restart the application to apply new settings"""
         # Get the command used to run this script
@@ -431,6 +464,13 @@ class MAMEControlConfig(ctk.CTk):
         )
         self.preview_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
 
+        self.hide_buttons_toggle = ctk.CTkSwitch(
+            self.right_panel,
+            text="Hide Preview Buttons",
+            command=self.toggle_hide_preview_buttons
+        )
+        self.hide_buttons_toggle.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+
         # Add XInput toggle switch
         self.xinput_toggle = ctk.CTkSwitch(
             self.right_panel,
@@ -462,7 +502,6 @@ class MAMEControlConfig(ctk.CTk):
         # Controls display
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
         self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
-
 
     def show_preview(self):
         """Show a preview of the control layout for the current game on the second screen"""
@@ -626,6 +665,12 @@ class MAMEControlConfig(ctk.CTk):
         
         # Ensure it stays on top
         self.preview_window.attributes('-topmost', True)
+
+        # Bind ESC to close the window
+        self.preview_window.bind("<Escape>", lambda event: self.preview_window.destroy())
+
+        # Make the window visible
+        self.preview_window.deiconify()
         
         # Load and display the image
         try:
@@ -752,79 +797,96 @@ class MAMEControlConfig(ctk.CTk):
             self.create_context_menu(canvas)
             
             # Create a transparent frame for buttons with fixed width
-            frame_bg = tk.Frame(self.preview_window, bg="black")
-            frame_bg.place(relx=0.5, rely=0.95, anchor="center", width=min(800, window_width-20), height=50)
-            
+            self.frame_bg = tk.Frame(self.preview_window, bg="black")  # Changed to self.frame_bg
+
+            # Only show if setting allows
+            if not hasattr(self, 'hide_preview_buttons') or not self.hide_preview_buttons:
+                self.frame_bg.place(relx=0.5, rely=0.95, anchor="center", width=min(1000, window_width-20), height=80)
+
             # Create ctk frame with default color
-            button_frame = ctk.CTkFrame(frame_bg)
+            button_frame = ctk.CTkFrame(self.frame_bg)  # Changed from frame_bg to self.frame_bg
             button_frame.pack(expand=True, fill="both")
-            
+            self.button_frame = button_frame  # Store reference to button frame
+
+            # Create two rows of buttons using frames
+            top_row = ctk.CTkFrame(button_frame)
+            top_row.pack(side="top", fill="x", expand=True, pady=2)
+
+            bottom_row = ctk.CTkFrame(button_frame)
+            bottom_row.pack(side="bottom", fill="x", expand=True, pady=2)
+
+            # Store row references for the feature buttons
+            self.button_row1 = top_row
+            self.button_row2 = bottom_row
+
             # Calculate button width to fit all buttons
-            num_buttons = 7  # Close, Reset, Joystick, Global, ROM, Texts, Screen
-            button_width = 100  # Default width
-            padx = 5  # Reduced padding
-            
+            button_width = 90  # Slightly smaller width
+            button_padx = 3    # Smaller padding
+
+            # Top row buttons (4 buttons)
             # Close button
             close_button = ctk.CTkButton(
-                button_frame,
+                top_row,
                 text="Close",
                 command=self.preview_window.destroy,
                 width=button_width
             )
-            close_button.pack(side="left", padx=padx)
-            
+            close_button.pack(side="left", padx=button_padx)
+
             # Reset positions button
             reset_button = ctk.CTkButton(
-                button_frame,
+                top_row,
                 text="Reset",
                 command=self.reset_text_positions,
                 width=button_width
             )
-            reset_button.pack(side="left", padx=padx)
-            
-            # Set initial state for toggle buttons
-            self.show_texts = True
-            
-            # Add toggle joystick button
-            joystick_button = ctk.CTkButton(
-                button_frame,
-                text="Joystick",
-                command=self.toggle_joystick_controls,
-                width=button_width
-            )
-            joystick_button.pack(side="left", padx=padx)
-            
+            reset_button.pack(side="left", padx=button_padx)
+
             # Add save buttons
             global_button = ctk.CTkButton(
-                button_frame,
+                top_row,
                 text="Global",
                 command=self.save_global_positions,
                 width=button_width
             )
-            global_button.pack(side="left", padx=padx)
-            
+            global_button.pack(side="left", padx=button_padx)
+
+            # ROM button
             rom_button = ctk.CTkButton(
-                button_frame,
+                top_row,
                 text="ROM",
                 command=self.save_rom_positions,
                 width=button_width
             )
-            rom_button.pack(side="left", padx=padx)
-            
-            # Toggle texts button
+            rom_button.pack(side="left", padx=button_padx)
+
+            # Bottom row buttons
+            # Set initial state for toggle buttons
+            self.show_texts = True
+
+            # Add toggle joystick button
+            joystick_button = ctk.CTkButton(
+                bottom_row,
+                text="Joystick",
+                command=self.toggle_joystick_controls,
+                width=button_width
+            )
+            joystick_button.pack(side="left", padx=button_padx)
+
+            # Add toggle texts button to bottom row
             def toggle_texts():
                 self.toggle_texts_visibility()
                 texts_button.configure(text="Hide Texts" if self.show_texts else "Show Texts")
                 
             texts_button = ctk.CTkButton(
-                button_frame,
+                bottom_row,
                 text="Hide Texts",
                 command=toggle_texts,
                 width=button_width
             )
-            texts_button.pack(side="left", padx=padx)
-            
-            # Toggle screen button
+            texts_button.pack(side="left", padx=button_padx)
+
+            # Add toggle screen button to bottom row
             def toggle_screen():
                 # Cycle to the next available monitor
                 current_screen = getattr(self, 'preferred_preview_screen', 2)
@@ -839,18 +901,16 @@ class MAMEControlConfig(ctk.CTk):
                 self.show_preview()
                 
             screen_button = ctk.CTkButton(
-                button_frame,
+                bottom_row,
                 text=f"Screen {preferred_screen}",
                 command=toggle_screen,
                 width=button_width
             )
-            screen_button.pack(side="left", padx=padx)
-            
-            # Force update the frame
-            button_frame.update()
-            
-            # Bind escape key to close the window
-            self.preview_window.bind("<Escape>", lambda e: self.preview_window.destroy())
+            screen_button.pack(side="left", padx=button_padx)
+
+            # Add the feature functions
+            self.add_alignment_guides()
+            self.add_show_all_buttons_feature()
         
         except ImportError:
             messagebox.showinfo("Missing Package", "Please install Pillow: pip install pillow")
@@ -858,6 +918,45 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Error displaying image: {str(e)}")
             import traceback
             traceback.print_exc()
+    
+    # 2. Add the toggle handler method
+    def toggle_hide_preview_buttons(self):
+        """Toggle whether preview buttons should be hidden"""
+        self.hide_preview_buttons = self.hide_buttons_toggle.get()
+        
+        # Save setting to config file
+        self.save_preview_button_setting()
+        
+        # Update any open preview windows
+        if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
+            if self.hide_preview_buttons:
+                self.hide_button_frame()
+            else:
+                self.show_button_frame()
+
+    # 3. Add methods to save and load the setting
+    def save_preview_button_setting(self):
+        """Save the preview buttons visibility setting"""
+        try:
+            # Get the settings file path
+            settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+            
+            # Load existing settings if available
+            settings = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+            
+            # Add hide buttons setting
+            settings['hide_preview_buttons'] = self.hide_preview_buttons
+            
+            # Save back to file
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f)
+                
+            print(f"Saved hide_preview_buttons setting: {self.hide_preview_buttons}")
+        except Exception as e:
+            print(f"Error saving setting: {e}")
     
     def save_visibility_settings(self):
         """Save joystick visibility and other display settings"""
@@ -912,6 +1011,9 @@ class MAMEControlConfig(ctk.CTk):
     
     def save_global_positions(self):
         """Save all positions to global file"""
+        if hasattr(self, 'showing_all_controls') and self.showing_all_controls:
+            return self.save_all_controls_positions()
+        
         try:
             # Get all current positions 
             positions = {}
@@ -2706,6 +2808,430 @@ class MAMEControlConfig(ctk.CTk):
         print(report)
         messagebox.showinfo("Config Generation Report", report)
 
+    # Add these methods to your class to enable text alignment
+
+    def add_alignment_guides(self):
+        """Add horizontal and vertical alignment guides to the canvas"""
+        # Create guide lines (initially hidden)
+        self.h_guide = self.preview_canvas.create_line(0, 0, 0, 0, fill="yellow", width=1, dash=(4, 4), state="hidden")
+        self.v_guide = self.preview_canvas.create_line(0, 0, 0, 0, fill="yellow", width=1, dash=(4, 4), state="hidden")
+        
+        # Create snap points for each text item (invisible - just for snapping)
+        self.snap_points = {}
+        for control_name, data in self.text_items.items():
+            text_x, text_y = data['x'], data['y']
+            self.snap_points[control_name] = (text_x, text_y)
+        
+        # Track which item is being dragged
+        self.dragged_item = None
+        
+        # Update draggable method to use guides
+        self.update_draggable_for_alignment()
+        
+        # Add a button to toggle alignment guides (using the bottom row)
+        self.alignment_button = ctk.CTkButton(
+            self.button_row2,  # Use bottom row frame
+            text="Alignment",
+            command=self.toggle_alignment_mode,
+            width=90  # Match other buttons
+        )
+        self.alignment_button.pack(side="left", padx=3)
+        
+        # Set initial alignment mode
+        self.alignment_mode = False
+        
+        print("Alignment guides added")
+
+    def update_draggable_for_alignment(self):
+        """Update the drag handlers to use alignment guides"""
+        # Store original drag motion method
+        self.original_drag_motion = self.preview_canvas.tag_bind
+
+        # Unbind existing motion handlers for all text items
+        for control_name, data in self.text_items.items():
+            self.preview_canvas.tag_unbind(data['text'], "<B1-Motion>")
+            
+            # Rebind with alignment-aware version
+            self.preview_canvas.tag_bind(data['text'], "<B1-Motion>", 
+                                lambda e, name=control_name: self.on_drag_with_alignment(e, name))
+            
+            # Add binding to start drag
+            self.preview_canvas.tag_bind(data['text'], "<ButtonPress-1>", 
+                                lambda e, name=control_name: self.on_drag_start_with_alignment(e, name))
+            
+            # Add binding to end drag
+            self.preview_canvas.tag_bind(data['text'], "<ButtonRelease-1>", 
+                                lambda e, name=control_name: self.on_drag_end_with_alignment(e, name))
+
+    def on_drag_start_with_alignment(self, event, control_name):
+        """Start dragging with alignment guides"""
+        # Store which item is being dragged
+        self.dragged_item = control_name
+        
+        # Store initial position
+        self.drag_start_x = self.preview_canvas.canvasx(event.x)
+        self.drag_start_y = self.preview_canvas.canvasy(event.y)
+        
+        # If alignment mode is on, show guides
+        if self.alignment_mode:
+            # Position guides at current item position
+            text_x, text_y = self.text_items[control_name]['x'], self.text_items[control_name]['y']
+            
+            # Set guide lines to span the canvas
+            canvas_width = self.preview_canvas.winfo_width()
+            canvas_height = self.preview_canvas.winfo_height()
+            
+            self.preview_canvas.coords(self.h_guide, 0, text_y, canvas_width, text_y)
+            self.preview_canvas.coords(self.v_guide, text_x, 0, text_x, canvas_height)
+            
+            # Show guides
+            self.preview_canvas.itemconfigure(self.h_guide, state="normal")
+            self.preview_canvas.itemconfigure(self.v_guide, state="normal")
+
+    def on_drag_with_alignment(self, event, control_name):
+        """Handle dragging with alignment guides"""
+        if not control_name == self.dragged_item:
+            return
+        
+        # Calculate movement
+        new_x = self.preview_canvas.canvasx(event.x)
+        new_y = self.preview_canvas.canvasy(event.y)
+        
+        dx = new_x - self.drag_start_x
+        dy = new_y - self.drag_start_y
+        
+        # Update start position
+        self.drag_start_x = new_x
+        self.drag_start_y = new_y
+        
+        # Get current position
+        data = self.text_items[control_name]
+        old_x, old_y = data['x'], data['y']
+        new_x, new_y = old_x + dx, old_y + dy
+        
+        # Check for snapping if alignment mode is on
+        if self.alignment_mode:
+            # Snap threshold in pixels
+            threshold = 10
+            
+            # Check for snapping to other items
+            snap_x, snap_y = None, None
+            for name, (x, y) in self.snap_points.items():
+                if name == control_name:
+                    continue
+                    
+                # Check horizontal alignment
+                if abs(new_y - y) < threshold:
+                    snap_y = y
+                    
+                # Check vertical alignment
+                if abs(new_x - x) < threshold:
+                    snap_x = x
+            
+            # Apply snapping
+            if snap_y is not None:
+                new_y = snap_y
+                # Update horizontal guide
+                canvas_width = self.preview_canvas.winfo_width()
+                self.preview_canvas.coords(self.h_guide, 0, snap_y, canvas_width, snap_y)
+                
+            if snap_x is not None:
+                new_x = snap_x
+                # Update vertical guide
+                canvas_height = self.preview_canvas.winfo_height()
+                self.preview_canvas.coords(self.v_guide, snap_x, 0, snap_x, canvas_height)
+        
+        # Move the text and shadow
+        self.preview_canvas.move(data['text'], new_x - old_x, new_y - old_y)
+        self.preview_canvas.move(data['shadow'], new_x - old_x, new_y - old_y)
+        
+        # Update stored coordinates
+        data['x'] = new_x
+        data['y'] = new_y
+        
+        # Update snap points
+        self.snap_points[control_name] = (new_x, new_y)
+        
+        # Update guides
+        if self.alignment_mode:
+            canvas_width = self.preview_canvas.winfo_width()
+            canvas_height = self.preview_canvas.winfo_height()
+            self.preview_canvas.coords(self.h_guide, 0, new_y, canvas_width, new_y)
+            self.preview_canvas.coords(self.v_guide, new_x, 0, new_x, canvas_height)
+
+    def on_drag_end_with_alignment(self, event, control_name):
+        """End dragging with alignment guides"""
+        if not control_name == self.dragged_item:
+            return
+            
+        # Hide guides
+        self.preview_canvas.itemconfigure(self.h_guide, state="hidden")
+        self.preview_canvas.itemconfigure(self.v_guide, state="hidden")
+        
+        # Clear dragged item
+        self.dragged_item = None
+
+    def toggle_alignment_mode(self):
+        """Toggle alignment mode on/off"""
+        self.alignment_mode = not self.alignment_mode
+        if self.alignment_mode:
+            self.alignment_button.configure(text="Alignment ON")
+        else:
+            self.alignment_button.configure(text="Alignment OFF")
+            # Hide guides
+            self.preview_canvas.itemconfigure(self.h_guide, state="hidden")
+            self.preview_canvas.itemconfigure(self.v_guide, state="hidden")
+    
+    # Add these methods to implement the "Show All Buttons" feature
+
+    def add_show_all_buttons_feature(self):
+        """Add button and functionality to show all possible controls"""
+        # Add button to the button frame (using the bottom row)
+        self.show_all_button = ctk.CTkButton(
+            self.button_row2,  # Use bottom row
+            text="Show All",
+            command=self.toggle_show_all_controls,
+            width=90  # Match other buttons
+        )
+        self.show_all_button.pack(side="left", padx=3)
+        
+        # Initialize flag
+        self.showing_all_controls = False
+        
+        # Store original controls when showing all
+        self.original_text_items = None
+        
+        print("Show All Buttons feature added")
+
+    def toggle_show_all_controls(self):
+        """Toggle between showing all possible controls and just the game controls"""
+        if not self.showing_all_controls:
+            # Switch to showing all controls
+            self.show_all_possible_controls()
+            self.show_all_button.configure(text="Game Only")
+            self.showing_all_controls = True
+        else:
+            # Switch back to game-specific controls
+            self.restore_game_controls()
+            self.show_all_button.configure(text="Show All")
+            self.showing_all_controls = False
+
+    def show_all_possible_controls(self):
+        """Show all possible controls for positioning"""
+        # Store current controls to restore later
+        self.original_text_items = self.text_items.copy()
+        
+        # Clear existing controls
+        for data in self.text_items.values():
+            self.preview_canvas.delete(data['text'])
+            self.preview_canvas.delete(data['shadow'])
+        
+        # Define all standard controls
+        standard_controls = {
+            # Directional controls
+            "P1_JOYSTICK_UP": "Up",
+            "P1_JOYSTICK_DOWN": "Down",
+            "P1_JOYSTICK_LEFT": "Left",
+            "P1_JOYSTICK_RIGHT": "Right",
+            
+            # Buttons 1-10
+            "P1_BUTTON1": "A Button",
+            "P1_BUTTON2": "B Button",
+            "P1_BUTTON3": "X Button",
+            "P1_BUTTON4": "Y Button",
+            "P1_BUTTON5": "L Button",
+            "P1_BUTTON6": "R Button",
+            "P1_BUTTON7": "L2 Button",
+            "P1_BUTTON8": "R2 Button",
+            "P1_BUTTON9": "Select",
+            "P1_BUTTON10": "Start",
+            
+            # Additional controls for completeness
+            "P1_COIN": "Insert Coin",
+            "P1_START": "1P Start",
+        }
+        
+        # Create new text items dictionary
+        self.text_items = {}
+        
+        # Get image dimensions for positioning
+        image_x = self.image_x
+        image_y = self.image_y
+        
+        # Calculate image size safely
+        canvas_bbox = self.preview_canvas.bbox(self.preview_canvas.find_withtag("all"))
+        if canvas_bbox:
+            image_width = canvas_bbox[2] - image_x
+            image_height = canvas_bbox[3] - image_y
+        else:
+            # Use canvas size as fallback
+            image_width = self.preview_canvas.winfo_width()
+            image_height = self.preview_canvas.winfo_height()
+        
+        # Load any saved positions
+        positions = self.load_text_positions("all_controls")
+        if not positions and os.path.exists(os.path.join(self.mame_dir, "preview", "global_positions.json")):
+            # Fall back to global positions if all_controls doesn't exist
+            positions = self.load_text_positions("global")
+        
+        # Add all controls as text
+        control_count = 0
+        for control_name, action in standard_controls.items():
+            # Position text (use saved positions if available, otherwise use a grid layout)
+            if control_name in positions:
+                text_x, text_y = positions[control_name]
+            else:
+                # Arrange in a grid: 4 columns
+                column = control_count % 4
+                row = control_count // 4
+                
+                # Calculate position
+                text_x = image_x + 100 + (column * 150)
+                text_y = image_y + 50 + (row * 50)
+                
+            # Check visibility based on control type
+            is_visible = True  # Always visible in "show all" mode
+            
+            # Create text with shadow for better visibility
+            shadow = self.preview_canvas.create_text(text_x+2, text_y+2, text=action, 
+                                        font=("Arial", 20, "bold"), fill="black",
+                                        anchor="sw", state="" if is_visible else "hidden")
+            text_item = self.preview_canvas.create_text(text_x, text_y, text=action, 
+                                        font=("Arial", 20, "bold"), fill="white",
+                                        anchor="sw", state="" if is_visible else "hidden")
+            
+            # Store the text items
+            self.text_items[control_name] = {
+                'text': text_item,
+                'shadow': shadow,
+                'action': action,
+                'x': text_x, 
+                'y': text_y
+            }
+            
+            # Make the text draggable
+            self.make_draggable(self.preview_canvas, text_item, shadow, control_name)
+            control_count += 1
+        
+        # Update snap points for alignment
+        self.snap_points = {}
+        for control_name, data in self.text_items.items():
+            self.snap_points[control_name] = (data['x'], data['y'])
+        
+        # Re-apply the alignment drag handlers
+        self.update_draggable_for_alignment()
+        
+        # Update alignment mode if it's active
+        if hasattr(self, 'alignment_mode') and self.alignment_mode:
+            # Force update of alignment button text
+            self.alignment_button.configure(text="Align ON")
+        
+        print(f"Showing all {len(self.text_items)} standard controls")
+
+    def restore_game_controls(self):
+        """Restore the game-specific controls"""
+        if not self.original_text_items:
+            print("No original controls to restore")
+            return
+        
+        # Remove all current controls
+        for data in self.text_items.values():
+            self.preview_canvas.delete(data['text'])
+            self.preview_canvas.delete(data['shadow'])
+        
+        # Restore original controls
+        self.text_items = self.original_text_items
+        self.original_text_items = None
+        
+        # Update alignment snap points
+        self.snap_points = {}
+        for control_name, data in self.text_items.items():
+            self.snap_points[control_name] = (data['x'], data['y'])
+
+        # Re-apply the alignment drag handlers
+        self.update_draggable_for_alignment()
+
+        print(f"Restored {len(self.text_items)} game-specific controls")
+
+        # Important: Recreate the text items on the canvas
+        for control_name, data in self.text_items.items():
+            # Extract coordinates and text
+            text_x, text_y = data['x'], data['y']
+            action = data['action']
+            
+            # Check visibility based on control type
+            is_visible = False
+            for control_type in self.visible_control_types:
+                if control_type in control_name:
+                    is_visible = True
+                    break
+            
+            # Create text with shadow for better visibility
+            shadow = self.preview_canvas.create_text(text_x+2, text_y+2, text=action, 
+                                    font=("Arial", 20, "bold"), fill="black",
+                                    anchor="sw", state="" if is_visible else "hidden")
+            text_item = self.preview_canvas.create_text(text_x, text_y, text=action, 
+                                    font=("Arial", 20, "bold"), fill="white",
+                                    anchor="sw", state="" if is_visible else "hidden")
+            
+            # Update the data with new canvas items
+            data['text'] = text_item
+            data['shadow'] = shadow
+            
+            # Make the text draggable
+            self.make_draggable(self.preview_canvas, text_item, shadow, control_name)
+        
+        # Clear the original reference
+        self.original_text_items = None
+        
+        # Update alignment guides if that feature is enabled
+        if hasattr(self, 'update_draggable_for_alignment'):
+            self.update_draggable_for_alignment()
+            
+        # Update snap points for alignment
+        if hasattr(self, 'snap_points'):
+            self.snap_points = {}
+            for control_name, data in self.text_items.items():
+                self.snap_points[control_name] = (data['x'], data['y'])
+        
+        print(f"Restored {len(self.text_items)} game-specific controls")
+
+    def save_all_controls_positions(self):
+        """Save positions for all standard controls"""
+        try:
+            # Get all current positions
+            positions = {}
+            for name, data in self.text_items.items():
+                if 'x' not in data or 'y' not in data:
+                    print(f"  Warning: Missing x/y for {name}")
+                    continue
+                    
+                x, y = data['x'], data['y']
+                positions[name] = [x, y]  # Use lists instead of tuples
+                
+            if not positions:
+                print("  Warning: No positions to save!")
+                messagebox.showinfo("Error", "No valid positions found to save")
+                return False
+                
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Save to special file
+            filepath = os.path.join(preview_dir, "all_controls_positions.json")
+            
+            with open(filepath, 'w') as f:
+                json.dump(positions, f)
+                
+            print(f"Saved {len(positions)} positions for all controls to: {filepath}")
+            messagebox.showinfo("Success", f"All controls positions saved ({len(positions)} items)")
+            return True
+        except Exception as e:
+            print(f"Error saving all controls positions: {e}")
+            messagebox.showerror("Error", f"Could not save positions: {e}")
+            return False
+    
     def show_preview_standalone(self, rom_name, auto_close=False):
         """Show the preview for a specific ROM without running the main app"""
         print(f"Starting standalone preview for ROM: {rom_name}")
@@ -2822,6 +3348,7 @@ if __name__ == "__main__":
         # Preview-only mode: just show the preview for the specified game
         app = MAMEControlConfig(preview_only=True)
         app.preferred_preview_screen = args.screen
+        app.hide_preview_buttons = True  # Always hide buttons in preview-only mode
         app.show_preview_standalone(args.game, auto_close=args.auto_close)
     else:
         # Normal mode: start the full application
