@@ -6,6 +6,9 @@ import re
 from tkinter import messagebox
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
+import subprocess
+import threading
+import time
 
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
@@ -605,6 +608,17 @@ class MAMEControlConfig(ctk.CTk):
         # Hide window initially and prevent flashing
         self.preview_window.withdraw()
         
+        # Configure the window to properly exit when closed
+        self.preview_window.protocol("WM_DELETE_WINDOW", self.quit_application)
+        
+        # Define a proper ESC key handler that will fully terminate the application
+        def force_quit(event):
+            print("ESC pressed, forcing exit")
+            self.quit_application()
+        
+        # Bind ESC to the force_quit function
+        self.preview_window.bind("<Escape>", force_quit)
+        
         # Get information about monitors through direct Windows API if possible
         monitors = []
         try:
@@ -709,12 +723,6 @@ class MAMEControlConfig(ctk.CTk):
         # Ensure it stays on top
         self.preview_window.attributes('-topmost', True)
 
-        # Bind ESC to close the window
-        self.preview_window.bind("<Escape>", lambda event: self.preview_window.destroy())
-
-        # Make the window visible
-        self.preview_window.deiconify()
-        
         # Load and display the image
         try:
             # Load the image
@@ -865,11 +873,11 @@ class MAMEControlConfig(ctk.CTk):
             button_padx = 3    # Smaller padding
 
             # Top row buttons (4 buttons)
-            # Close button
+            # Close button - use the force_quit function to ensure proper termination
             close_button = ctk.CTkButton(
                 top_row,
                 text="Close",
-                command=self.preview_window.destroy,
+                command=self.quit_application,  # Use quit_application for proper termination
                 width=button_width
             )
             close_button.pack(side="left", padx=button_padx)
@@ -2996,14 +3004,9 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error in mainloop: {str(e)}")
             import traceback
             traceback.print_exc()
-        
+
     def monitor_mame_process(self, check_interval=2.0):
         """Monitor MAME process and close preview when MAME closes"""
-        import threading
-        import time
-        import subprocess
-        import sys
-        import os
         
         def check_mame():
             mame_running = True
@@ -3039,20 +3042,21 @@ class MAMEControlConfig(ctk.CTk):
         # Start monitoring in a background thread
         monitor_thread = threading.Thread(target=check_mame, daemon=True)
         monitor_thread.start()
-        
+
     def quit_application(self):
         """Properly exit the application when preview window is closed"""
+        print("Quit application called")
         try:
-            if hasattr(self, 'preview_window'):
+            if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
                 self.preview_window.destroy()
             self.quit()
             self.destroy()
         except Exception as e:
             print(f"Error during application quit: {e}")
         finally:
-            # Force exit the Python script
-            import sys
-            sys.exit(0)
+            # Force exit the Python script completely - this stops all threads
+            print("Forcing immediate exit")
+            os._exit(0)  # This is important - it terminates the entire process
     
 if __name__ == "__main__":
     import argparse
