@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 import subprocess
 import threading
 import time
+from PIL import Image, ImageTk
 
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
@@ -34,6 +35,10 @@ class MAMEControlConfig(ctk.CTk):
         self.current_game = None
         self.use_xinput = True
         
+         # Logo size settings (as percentages)
+        self.logo_width_percentage = 15
+        self.logo_height_percentage = 15
+
         # Skip main window setup if in preview-only mode
         if not preview_only:
             # Configure the window
@@ -2681,24 +2686,44 @@ class MAMEControlConfig(ctk.CTk):
 
     def update_draggable_for_alignment(self):
         """Update the drag handlers to use alignment guides"""
+        # Import tkinter for error handling
+        import tkinter as tk
+        
         # Store original drag motion method
         self.original_drag_motion = self.preview_canvas.tag_bind
 
         # Unbind existing motion handlers for all text items
         for control_name, data in self.text_items.items():
-            self.preview_canvas.tag_unbind(data['text'], "<B1-Motion>")
+            try:
+                # Check if the text item still exists before trying to unbind
+                if 'text' in data and self.preview_canvas.winfo_exists():
+                    # Try to get info about the item to check if it exists
+                    try:
+                        self.preview_canvas.itemcget(data['text'], 'text')  # Test if item exists
+                        self.preview_canvas.tag_unbind(data['text'], "<B1-Motion>")
+                    except (tk.TclError, Exception):
+                        # Item doesn't exist, skip it
+                        continue
+            except Exception as e:
+                print(f"Error unbinding from {control_name}: {e}")
+                continue
             
             # Rebind with alignment-aware version
-            self.preview_canvas.tag_bind(data['text'], "<B1-Motion>", 
-                                lambda e, name=control_name: self.on_drag_with_alignment(e, name))
-            
-            # Add binding to start drag
-            self.preview_canvas.tag_bind(data['text'], "<ButtonPress-1>", 
-                                lambda e, name=control_name: self.on_drag_start_with_alignment(e, name))
-            
-            # Add binding to end drag
-            self.preview_canvas.tag_bind(data['text'], "<ButtonRelease-1>", 
-                                lambda e, name=control_name: self.on_drag_end_with_alignment(e, name))
+            try:
+                if 'text' in data:
+                    self.preview_canvas.tag_bind(data['text'], "<B1-Motion>", 
+                                        lambda e, name=control_name: self.on_drag_with_alignment(e, name))
+                    
+                    # Add binding to start drag
+                    self.preview_canvas.tag_bind(data['text'], "<ButtonPress-1>", 
+                                        lambda e, name=control_name: self.on_drag_start_with_alignment(e, name))
+                    
+                    # Add binding to end drag
+                    self.preview_canvas.tag_bind(data['text'], "<ButtonRelease-1>", 
+                                        lambda e, name=control_name: self.on_drag_end_with_alignment(e, name))
+            except Exception as e:
+                print(f"Error binding new handlers for {control_name}: {e}")
+                continue
 
     def on_drag_start_with_alignment(self, event, control_name):
         """Start dragging with alignment guides"""
@@ -4416,12 +4441,15 @@ class MAMEControlConfig(ctk.CTk):
     
     def apply_preview_update_hook(self):
         """Apply hooks to update preview window for text appearance and logos"""
+        print("\n=== Applying preview hooks ===")
         # Store the original method
         self.show_preview_original = self.show_preview
         
         # Replace with the new method that includes both text settings and logo
         self.show_preview = self.show_preview_with_logo
-        print("Applied preview update hook - replaced show_preview with show_preview_with_logo")
+        
+        print("Replaced show_preview with show_preview_with_logo")
+        print("=== Preview hooks applied ===\n")
 
     def show_text_appearance_settings(self, update_preview=False):
         """Show dialog to configure text appearance for images with improved preview"""
@@ -4863,9 +4891,7 @@ class MAMEControlConfig(ctk.CTk):
     def toggle_logo_visibility(self):
         """Toggle the visibility of the logo in preview"""
         # Toggle the state
-        print(f"Before toggle: logo_visible = {self.logo_visible}")
         self.logo_visible = not self.logo_visible
-        print(f"After toggle: logo_visible = {self.logo_visible}")
         
         # Update the button text
         toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
@@ -4875,7 +4901,7 @@ class MAMEControlConfig(ctk.CTk):
         # Update canvas logo
         if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
             if self.logo_visible:
-                # Add logo
+                # Force add logo
                 self.add_logo_to_preview_canvas()
             else:
                 # Remove logo if it exists
@@ -4982,10 +5008,10 @@ class MAMEControlConfig(ctk.CTk):
         """Load logo settings from config file"""
         settings_path = os.path.join(self.mame_dir, "logo_settings.json")
         
-        # Default settings
+        # Default settings - set logo_visible to True by default
         settings = {
             'logo_visible': True,
-            'logo_position': 'top-center',  # Options: top-left, top-center, top-right
+            'logo_position': 'top-left',  # Or whatever default position you prefer
         }
         
         try:
@@ -4993,6 +5019,10 @@ class MAMEControlConfig(ctk.CTk):
                 with open(settings_path, 'r') as f:
                     saved_settings = json.load(f)
                     settings.update(saved_settings)
+            else:
+                # If no settings file exists, create one with defaults
+                with open(settings_path, 'w') as f:
+                    json.dump(settings, f)
         except Exception as e:
             print(f"Error loading logo settings: {e}")
         
@@ -5024,17 +5054,16 @@ class MAMEControlConfig(ctk.CTk):
             return image  # Return original image if no logo found
         
         try:
-            # Rest of your existing code...
             # Open logo image
             print(f"Opening logo file: {logo_path}")
             logo_img = Image.open(logo_path)
             print(f"Logo image opened successfully: {logo_img.size} {logo_img.mode}")
             
-            # Default max dimensions if not specified
+            # Default max dimensions if not specified - use consistent class variables
             if max_width is None:
-                max_width = image.width // 3  # 33% of image width
+                max_width = int(image.width * (self.logo_width_percentage / 100))
             if max_height is None:
-                max_height = image.height // 5  # 20% of image height
+                max_height = int(image.height * (self.logo_height_percentage / 100))
             
             # Calculate scale to fit within max dimensions while maintaining aspect ratio
             logo_width, logo_height = logo_img.size
@@ -5128,23 +5157,30 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
             self.load_logo_settings()
         
+        # Force logo to be visible initially
+        old_value = self.logo_visible
+        self.logo_visible = True
+        
         # Now add the logo to the canvas if it exists
         if hasattr(self, 'preview_canvas') and self.current_game:
             try:
-                # Store references to help us manage the logo
-                self.preview_logo_item = None
-                self.preview_logo_photo = None
-                
-                # Add the logo if visibility is on
-                if self.logo_visible:
-                    self.add_logo_to_preview_canvas()
+                # Add the logo to the canvas
+                self.add_logo_to_preview_canvas()
             except Exception as e:
-                print(f"Error setting up logo in preview: {e}")
-                import traceback
-                traceback.print_exc()
+                print(f"Error adding logo to preview: {e}")
         
         # Add logo controls directly to the button rows
         self.add_logo_controls_directly()
+        
+        # VERY IMPORTANT: Prevent any automatic toggling after adding controls
+        if self.logo_visible != old_value:
+            print(f"Logo visibility changed from {old_value} to {self.logo_visible} - restoring!")
+            self.logo_visible = True
+            # Ensure the button text is correct
+            if hasattr(self, 'logo_toggle_button'):
+                self.logo_toggle_button.configure(text="Hide Logo")
+        
+        return result
     
     def add_logo_controls_directly(self):
         """Add logo controls directly to the preview window button rows"""
@@ -5207,8 +5243,11 @@ class MAMEControlConfig(ctk.CTk):
 
     def add_logo_to_preview_canvas(self):
         """Add logo to the preview canvas based on current settings"""
+        print("\n=== Starting add_logo_to_preview_canvas ===")
+        
         # First remove any existing logo
         if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+            print("Removing existing logo item")
             self.preview_canvas.delete(self.preview_logo_item)
             self.preview_logo_item = None
             self.preview_logo_photo = None
@@ -5219,17 +5258,18 @@ class MAMEControlConfig(ctk.CTk):
             print(f"No logo found for {self.current_game}")
             return
             
-        from PIL import Image, ImageTk
+        print(f"Found logo path: {logo_path}")
         
         # Load and resize the logo
         logo_img = Image.open(logo_path)
         
-        # Calculate appropriate size (25% of canvas width)
+        # Calculate appropriate size using the consistent class variables
         canvas_width = self.preview_canvas.winfo_width()
         canvas_height = self.preview_canvas.winfo_height()
         
-        max_width = canvas_width // 4
-        max_height = canvas_height // 5
+        # Use the class-level settings
+        max_width = int(canvas_width * (self.logo_width_percentage / 100))
+        max_height = int(canvas_height * (self.logo_height_percentage / 100))
         
         # Calculate scale factor
         logo_width, logo_height = logo_img.size
