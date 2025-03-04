@@ -4,7 +4,7 @@ import customtkinter as ctk
 import json
 import os
 import re
-from tkinter import messagebox
+from tkinter import Image, messagebox
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
 import subprocess
@@ -1002,6 +1002,15 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             texts_button.pack(side="left", padx=button_padx)
+
+            # Add this somewhere in your show_preview method after creating button_row2
+            debug_button = ctk.CTkButton(
+                self.button_row2,
+                text="Add Logo Controls",
+                command=self.manually_add_logo_controls,
+                width=90
+            )
+            debug_button.pack(side="left", padx=3)
 
             # Add the "Save Image" button
             save_button = ctk.CTkButton(
@@ -3181,8 +3190,14 @@ class MAMEControlConfig(ctk.CTk):
         # Ensure preview directory exists
         preview_dir = self.ensure_preview_folder()
         
-        # Load text appearance settings
+        # Load text appearance settings explicitly
         settings = self.load_text_appearance_settings()
+        use_uppercase = settings.get("use_uppercase", False)
+        print(f"Batch generation - Uppercase setting: {use_uppercase}")
+        
+        # Get visibility settings
+        visible_control_types = self.visible_control_types
+        print(f"Visible control types: {visible_control_types}")
         
         # Find default background image
         default_bg_path = None
@@ -3355,6 +3370,18 @@ class MAMEControlConfig(ctk.CTk):
                             control_name = label['name']
                             action = label['value']
                             
+                            # Check if this control type should be visible
+                            is_visible = False
+                            for control_type in visible_control_types:
+                                if control_type in control_name:
+                                    is_visible = True
+                                    break
+                                    
+                            # Skip if not visible
+                            if not is_visible:
+                                print(f"  Skipping hidden control: {control_name}")
+                                continue
+                            
                             # Use position from saved layout
                             if control_name in positions:
                                 # The positions are already in the correct scale (1920x1080)
@@ -3374,7 +3401,11 @@ class MAMEControlConfig(ctk.CTk):
                             #fill="gray", anchor="ms", font=font)
                     
                     # Save the image
-                    img.save(image_path)
+                    # Add logo to the image
+                    img = self.add_logo_to_image(img, rom_name)
+
+                    # Then save the image
+                    img.save(image_path, format="PNG")
                     print(f"Created preview image for {rom_name}: {image_path}")
                     created += 1
                     
@@ -3534,7 +3565,6 @@ class MAMEControlConfig(ctk.CTk):
         from tkinter import messagebox
         from PIL import Image, ImageDraw, ImageFont
         import traceback
-        import sys
         
         if not hasattr(self, 'current_game') or not self.current_game:
             messagebox.showerror("Error", "No game is currently selected")
@@ -3551,8 +3581,10 @@ class MAMEControlConfig(ctk.CTk):
                 return
         
         try:
-            # Load text appearance settings
+            # Load text appearance settings explicitly
             settings = self.load_text_appearance_settings()
+            use_uppercase = settings.get("use_uppercase", False)
+            print(f"Save preview - Uppercase setting: {use_uppercase}")
             
             # Find the background image
             background_path = None
@@ -3596,16 +3628,16 @@ class MAMEControlConfig(ctk.CTk):
             # Get game data
             game_data = self.get_game_data(self.current_game)
             
-            #if game_data:
+            if game_data:
                 # Draw title
-               # game_title = game_data['gamename']
-                #draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
-               # draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill="gray", anchor="mt", font=font)
+                game_title = game_data['gamename']
+                draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
+                draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill="gray", anchor="mt", font=font)
                 
                 # Add any details if available
-                #if 'miscDetails' in game_data:
-                    #draw.text((target_width//2, 150), game_data['miscDetails'], 
-                            #fill="gray", anchor="mt", font=font)
+                if 'miscDetails' in game_data:
+                    draw.text((target_width//2, 150), game_data['miscDetails'], 
+                            fill="gray", anchor="mt", font=font)
             
             # Draw all currently visible text items using their exact positions
             if hasattr(self, 'text_items'):
@@ -3629,6 +3661,7 @@ class MAMEControlConfig(ctk.CTk):
                         print(f"Drawing {control_name} at ({text_x}, {text_y}): {action}")
                         
                         # Use the apply_text_settings helper to draw text with current settings
+                        # Pass settings explicitly to ensure uppercase setting is used
                         self.apply_text_settings(draw, action, text_x, text_y, font, settings)
                     except Exception as e:
                         print(f"Error drawing text for {control_name}: {e}")
@@ -3636,13 +3669,11 @@ class MAMEControlConfig(ctk.CTk):
             else:
                 print("No text_items attribute found!")
             
-            # Add a footer
-            #draw.text((target_width//2, target_height-30), 
-                    #"Generated by MAME Control Configuration", 
-                    #fill="gray", anchor="ms", font=font)
+            # Add logo to the image
+            bg_img = self.add_logo_to_image(bg_img, self.current_game)
             
             # Save the image
-            bg_img.save(output_path)
+            bg_img.save(output_path, format="PNG")
             
             # Show success message
             messagebox.showinfo("Success", f"Image saved to:\n{output_path}")
@@ -3811,6 +3842,14 @@ class MAMEControlConfig(ctk.CTk):
         if settings is None:
             settings = self.load_text_appearance_settings()
         
+        # Convert text to uppercase only if the setting is enabled
+        use_uppercase = settings.get("use_uppercase", False)
+        if use_uppercase:
+            text = text.upper()
+        else:
+            # Ensure we use the original case if uppercase is disabled
+            text = text
+        
         # Apply Y offset adjustment
         text_y = text_y + settings.get("y_offset", -40)
         
@@ -3840,6 +3879,7 @@ class MAMEControlConfig(ctk.CTk):
             
             # Draw main text
             draw.text((text_x, text_y), text, fill="white", font=font)
+
     
     def get_fonts_from_settings(self, settings=None):
         """Get font objects based on settings with enhanced font finding capability"""
@@ -3973,6 +4013,10 @@ class MAMEControlConfig(ctk.CTk):
         # Load current text appearance settings
         settings = self.load_text_appearance_settings()
         
+        # Check if uppercase is enabled
+        use_uppercase = settings.get("use_uppercase", False)
+        print(f"Uppercase setting: {use_uppercase}")
+        
         # Get font family and size
         font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
@@ -3994,7 +4038,7 @@ class MAMEControlConfig(ctk.CTk):
         scale = scaling_factors.get(font_family, 1.0)
         adjusted_font_size = int(font_size * scale)
         
-        print(f"Updating preview text: Font={font_family}, Size={adjusted_font_size}, Y-offset={settings.get('y_offset', -40)}")
+        print(f"Updating preview text: Font={font_family}, Size={adjusted_font_size}, Uppercase={use_uppercase}")
         
         # Create canvas font (TkFont)
         try:
@@ -4004,25 +4048,53 @@ class MAMEControlConfig(ctk.CTk):
             # Fallback to default font specification
             preview_font = (font_family, adjusted_font_size, "bold")
         
+        # Apply corrections for preview canvas
+        y_offset = settings.get('y_offset', -40)
+        preview_correction = -5  # Default correction
+        
+        # Scale correction based on font size
+        size_factor = adjusted_font_size / 28.0  # Relative to default size
+        preview_correction = int(preview_correction * size_factor)
+        
+        # Store original positions if not already stored
+        if not hasattr(self, 'original_positions'):
+            self.original_positions = {}
+            for control_name, data in self.text_items.items():
+                if 'x' in data and 'y' in data:
+                    self.original_positions[control_name] = (data['x'], data['y'])
+        
         # Update each text item in the preview
         for control_name, data in self.text_items.items():
             try:
-                # Update font for text
-                if 'text' in data:
-                    self.preview_canvas.itemconfigure(data['text'], font=preview_font)
-                
-                # Update font for shadow (if it exists)
-                if 'shadow' in data:
-                    self.preview_canvas.itemconfigure(data['shadow'], font=preview_font)
+                # Get the original action text
+                if 'action' in data:
+                    action = data['action']
                     
-                # Apply Y offset if needed
-                y_offset = settings.get('y_offset', -40)
-                if y_offset != 0 and hasattr(self, 'original_positions') and control_name in self.original_positions:
+                    # Convert to uppercase if enabled
+                    if use_uppercase:
+                        display_text = action.upper()
+                        print(f"Converting {action} to {display_text}")
+                    else:
+                        display_text = action
+                    
+                    # Update text for items
+                    if 'text' in data:
+                        self.preview_canvas.itemconfigure(data['text'], text=display_text, font=preview_font)
+                    
+                    # Update shadow text
+                    if 'shadow' in data:
+                        self.preview_canvas.itemconfigure(data['shadow'], text=display_text, font=preview_font)
+                
+                # Apply position updates if needed
+                if control_name in self.original_positions:
                     # Get original position
                     orig_x, orig_y = self.original_positions[control_name]
                     
+                    # Apply total offset
+                    total_offset = y_offset + preview_correction
+                    
                     # Calculate new position
-                    new_x, new_y = orig_x, orig_y + y_offset
+                    new_x, new_y = orig_x, orig_y + total_offset
                     
                     # Update position
                     if 'text' in data:
@@ -4036,17 +4108,20 @@ class MAMEControlConfig(ctk.CTk):
                     
             except Exception as e:
                 print(f"Error updating text for {control_name}: {e}")
+                import traceback
+                traceback.print_exc()
         
         # Force canvas update
         self.preview_canvas.update()
         print("Preview text appearance updated")
+
 
     def show_preview_original(self):
         """Store the original show_preview method to be called from the modified version"""
         pass  # This will be replaced with the original show_preview method
 
     def show_preview_with_settings(self):
-        """Modified show_preview that applies text appearance settings"""
+        """Modified show_preview that applies text appearance settings and adds logo controls"""
         # Call the original method first to create the preview window
         result = self.show_preview_original()
         
@@ -4071,6 +4146,9 @@ class MAMEControlConfig(ctk.CTk):
             )
             settings_button.pack(side="left", padx=3)
         
+        # Add logo controls to the preview window
+        self.add_logo_controls_to_preview()
+        
         return result
 
     def show_image_preview(self):
@@ -4085,11 +4163,15 @@ class MAMEControlConfig(ctk.CTk):
         import traceback
         
         try:
+            print("\n--- STARTING EXACT PREVIEW ---")
+            
+            # Load text appearance settings - Explicitly load settings here
+            settings = self.load_text_appearance_settings()
+            use_uppercase = settings.get("use_uppercase", False)
+            print(f"Exact preview - Uppercase setting: {use_uppercase}")
+            
             # Create a temporary preview image using the exact same code as save_current_preview
             # but display it in a window instead of saving to file
-            
-            # Load text appearance settings
-            settings = self.load_text_appearance_settings()
             
             # Find the background image
             background_path = None
@@ -4110,27 +4192,34 @@ class MAMEControlConfig(ctk.CTk):
                     print(f"Using default background: {background_path}")
                     break
             
+            print(f"Background path: {background_path}")
+            
             # Create the image (with size matching the preview)
             target_width, target_height = 1920, 1080  # Standard full HD size
             
             if background_path:
                 try:
                     bg_img = Image.open(background_path)
+                    print(f"Opened background image: {bg_img.size}")
                     # Resize if needed
                     if bg_img.size != (target_width, target_height):
                         bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
+                        print(f"Resized to: {bg_img.size}")
                 except Exception as e:
                     print(f"Error loading background: {e}")
                     bg_img = Image.new('RGB', (target_width, target_height), 'black')
+                    print("Created new black image")
             else:
                 # Create a blank black image
                 bg_img = Image.new('RGB', (target_width, target_height), 'black')
+                print("No background found, created new black image")
             
             # Create draw object
             draw = ImageDraw.Draw(bg_img)
             
             # Get fonts based on settings
             font, title_font = self.get_fonts_from_settings(settings)
+            print(f"Got fonts: {font}, {title_font}")
             
             # Get game data
             game_data = self.get_game_data(self.current_game)
@@ -4138,6 +4227,7 @@ class MAMEControlConfig(ctk.CTk):
             if game_data:
                 # Draw title
                 game_title = game_data['gamename']
+                print(f"Drawing title: {game_title}")
                 draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
                 draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill="gray", anchor="mt", font=font)
                 
@@ -4156,6 +4246,7 @@ class MAMEControlConfig(ctk.CTk):
                         if (hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists() and
                             'text' in data and
                             self.preview_canvas.itemcget(data['text'], 'state') == 'hidden'):
+                            print(f"Skipping hidden item: {control_name}")
                             continue
                     except Exception as e:
                         print(f"Error checking visibility for {control_name}: {e}")
@@ -4168,6 +4259,7 @@ class MAMEControlConfig(ctk.CTk):
                         print(f"Drawing {control_name} at ({text_x}, {text_y}): {action}")
                         
                         # Use the apply_text_settings helper to draw text with current settings
+                        # Pass the explicit settings object to ensure uppercase setting is used
                         self.apply_text_settings(draw, action, text_x, text_y, font, settings)
                     except Exception as e:
                         print(f"Error drawing text for {control_name}: {e}")
@@ -4175,10 +4267,11 @@ class MAMEControlConfig(ctk.CTk):
             else:
                 print("No text_items attribute found!")
             
-            # Add a footer
-            draw.text((target_width//2, target_height-30), 
-                    "Generated by MAME Control Configuration", 
-                    fill="gray", anchor="ms", font=font)
+            # Add logo to the image (after drawing text, before display)
+            print("Adding logo to image")
+            bg_img = self.add_logo_to_image(bg_img, self.current_game)
+            
+            print("Image preparation complete, creating display window")
             
             # Now display this image in a window
             preview_window = ctk.CTkToplevel(self)
@@ -4188,6 +4281,7 @@ class MAMEControlConfig(ctk.CTk):
             # Resize the image to fit on screen (maintaining aspect ratio)
             screen_width = preview_window.winfo_screenwidth()
             screen_height = preview_window.winfo_screenheight()
+            print(f"Screen dimensions: {screen_width}x{screen_height}")
             
             # Maximum size for preview (80% of screen)
             max_width = int(screen_width * 0.8)
@@ -4199,11 +4293,13 @@ class MAMEControlConfig(ctk.CTk):
             # Calculate new dimensions
             display_width = int(target_width * scale_factor)
             display_height = int(target_height * scale_factor)
+            print(f"Displaying at size: {display_width}x{display_height}")
             
             # Resize for display
             display_img = bg_img.resize((display_width, display_height), Image.LANCZOS)
             
             # Convert to PhotoImage
+            print("Converting to PhotoImage")
             photo = ImageTk.PhotoImage(display_img)
             
             # Create canvas for the image
@@ -4211,10 +4307,11 @@ class MAMEControlConfig(ctk.CTk):
             canvas.pack(padx=10, pady=10)
             
             # Display the image
+            print("Creating image on canvas")
             canvas.create_image(0, 0, anchor="nw", image=photo)
             canvas.image = photo  # Keep a reference
             
-            # Button frame
+           # Button frame
             button_frame = ctk.CTkFrame(preview_window)
             button_frame.pack(padx=10, pady=10, fill="x")
             
@@ -4225,14 +4322,6 @@ class MAMEControlConfig(ctk.CTk):
                 command=lambda: self.save_current_preview()
             )
             save_button.pack(side="left", padx=10)
-            
-            # Settings button
-            settings_button = ctk.CTkButton(
-                button_frame,
-                text="Text Settings",
-                command=lambda: self.show_text_appearance_settings(update_preview=True)
-            )
-            settings_button.pack(side="left", padx=10)
             
             # Close button
             close_button = ctk.CTkButton(
@@ -4250,24 +4339,67 @@ class MAMEControlConfig(ctk.CTk):
             y = (screen_height - (display_height + 100)) // 2
             preview_window.geometry(f"+{x}+{y}")
             
+            print("--- EXACT PREVIEW COMPLETED ---\n")
+            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create preview: {str(e)}")
             print(f"Error creating preview: {e}")
             traceback.print_exc()
+
+    def toggle_logo_and_refresh(self, preview_window, canvas, photo, original_img, display_width, display_height):
+        """Toggle logo visibility and refresh the exact preview image"""
+        from PIL import ImageTk
+        
+        # Toggle the visibility state
+        self.logo_visible = not self.logo_visible
+        
+        # Update logo visibility state in settings
+        self.save_logo_settings()
+        
+        try:
+            # Create a new image with/without logo based on current visibility
+            new_img = original_img.copy()
+            
+            # Add logo if visible
+            if self.logo_visible:
+                new_img = self.add_logo_to_image(new_img, self.current_game)
+            
+            # Resize for display
+            display_img = new_img.resize((display_width, display_height), Image.LANCZOS)
+            
+            # Update the photo
+            new_photo = ImageTk.PhotoImage(display_img)
+            
+            # Update canvas
+            canvas.delete("all")  # Remove existing image
+            canvas.create_image(0, 0, anchor="nw", image=new_photo)
+            canvas.image = new_photo  # Keep a reference
+            
+            # Update button text
+            for widget in preview_window.winfo_children():
+                if isinstance(widget, ctk.CTkFrame):
+                    for child in widget.winfo_children():
+                        if isinstance(child, ctk.CTkButton) and child.cget("text") in ["Show Logo", "Hide Logo"]:
+                            child.configure(text="Hide Logo" if self.logo_visible else "Show Logo")
+            
+            print(f"Updated logo visibility in exact preview: {'visible' if self.logo_visible else 'hidden'}")
+        except Exception as e:
+            print(f"Error updating logo in exact preview: {e}")
     
     def apply_preview_update_hook(self):
-        """Apply the hook to update preview window when show_preview is called"""
+        """Apply hooks to update preview window for text appearance and logos"""
         # Store the original method
         self.show_preview_original = self.show_preview
         
-        # Replace with the new method
-        self.show_preview = self.show_preview_with_settings
+        # Replace with the new method that includes both text settings and logo
+        self.show_preview = self.show_preview_with_logo
+        print("Applied preview update hook - replaced show_preview with show_preview_with_logo")
 
     def show_text_appearance_settings(self, update_preview=False):
-        """Show dialog to configure text appearance for images"""
+        """Show dialog to configure text appearance for images with improved preview"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Text Appearance Settings")
-        dialog.geometry("800x800")
+        dialog.geometry("500x600")  # Increased height for the new option
         dialog.transient(self)
         dialog.grab_set()
         
@@ -4280,6 +4412,20 @@ class MAMEControlConfig(ctk.CTk):
         
         # Create settings widgets
         ctk.CTkLabel(main_frame, text="Text Appearance Settings", font=("Arial", 16, "bold")).pack(pady=(0, 20))
+        
+        # Add uppercase option
+        uppercase_frame = ctk.CTkFrame(main_frame)
+        uppercase_frame.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(uppercase_frame, text="Text Case", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+        
+        uppercase_var = ctk.IntVar(value=settings.get("use_uppercase", False))
+        uppercase_checkbox = ctk.CTkCheckBox(
+            uppercase_frame,
+            text="Use UPPERCASE for all text",
+            variable=uppercase_var
+        )
+        uppercase_checkbox.pack(anchor="w", padx=20, pady=5)
         
         # Font section
         font_frame = ctk.CTkFrame(main_frame)
@@ -4330,6 +4476,7 @@ class MAMEControlConfig(ctk.CTk):
         # Update size label when slider changes
         def update_size_label(val):
             size_label.configure(text=str(int(val)))
+            update_preview()  # Update preview when size changes
         
         size_slider.configure(command=update_size_label)
         
@@ -4349,6 +4496,7 @@ class MAMEControlConfig(ctk.CTk):
         # Update title size label when slider changes
         def update_title_size_label(val):
             title_size_label.configure(text=str(int(val)))
+            update_preview()  # Update preview when size changes
         
         title_size_slider.configure(command=update_title_size_label)
         
@@ -4377,6 +4525,7 @@ class MAMEControlConfig(ctk.CTk):
             idx = int(val)
             if 0 <= idx < len(bold_strength_labels):
                 bold_label.configure(text=bold_strength_labels[idx])
+            update_preview()  # Update preview when bold changes
         
         bold_slider.configure(command=update_bold_label)
         
@@ -4402,6 +4551,7 @@ class MAMEControlConfig(ctk.CTk):
         # Update y offset label when slider changes
         def update_y_offset_label(val):
             y_offset_label.configure(text=str(int(val)))
+            update_preview()  # Update preview when offset changes
         
         y_offset_slider.configure(command=update_y_offset_label)
         
@@ -4415,23 +4565,34 @@ class MAMEControlConfig(ctk.CTk):
         preview_canvas = ctk.CTkCanvas(preview_frame, width=450, height=100, bg="black", highlightthickness=0)
         preview_canvas.pack(padx=10, pady=10)
         
+        # Connect uppercase toggle to update preview automatically
+        def on_uppercase_toggle():
+            update_preview()
+            
+        uppercase_checkbox.configure(command=on_uppercase_toggle)
+        
         # Function to update preview
         def update_preview():
             preview_canvas.delete("all")
             
-            # Draw preview text
+            # Get current settings
             font_family = font_var.get()
             font_size = size_var.get()
             bold_strength = bold_var.get()
+            use_uppercase = bool(uppercase_var.get())
+            
+            # Text to show (apply uppercase if enabled)
+            preview_text = "Preview Text"
+            if use_uppercase:
+                preview_text = preview_text.upper()
             
             # Use the canvas text with our simulated bold effect
             text_x, text_y = 225, 50  # Center of canvas
-            text = "Preview Text"
             
             # Draw with different bold strengths
             if bold_strength == 0:
                 # No bold - just draw the text
-                preview_canvas.create_text(text_x, text_y, text=text, fill="white", font=(font_family, font_size))
+                preview_canvas.create_text(text_x, text_y, text=preview_text, fill="white", font=(font_family, font_size))
             else:
                 # Apply bold effect based on strength
                 offsets = []
@@ -4448,15 +4609,10 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # Draw shadows
                 for dx, dy in offsets:
-                    preview_canvas.create_text(text_x+dx, text_y+dy, text=text, fill="black", font=(font_family, font_size))
+                    preview_canvas.create_text(text_x+dx, text_y+dy, text=preview_text, fill="black", font=(font_family, font_size))
                 
                 # Draw main text
-                preview_canvas.create_text(text_x, text_y, text=text, fill="white", font=(font_family, font_size))
-        
-        # Connect all controls to update preview
-        font_var.trace_add("write", lambda *args: update_preview())
-        size_var.trace_add("write", lambda *args: update_preview())
-        bold_var.trace_add("write", lambda *args: update_preview())
+                preview_canvas.create_text(text_x, text_y, text=preview_text, fill="white", font=(font_family, font_size))
         
         # Initial preview update
         update_preview()
@@ -4475,16 +4631,35 @@ class MAMEControlConfig(ctk.CTk):
         button_frame = ctk.CTkFrame(dialog)
         button_frame.pack(fill="x", padx=20, pady=10)
         
-        def save_settings():
-            # Save settings
-            settings = {
+        def get_current_settings():
+            """Get the current settings from UI controls"""
+            return {
                 "font_family": font_var.get(),
                 "font_size": size_var.get(),
                 "title_font_size": title_size_var.get(),
                 "bold_strength": bold_var.get(),
-                "y_offset": y_offset_var.get()
+                "y_offset": y_offset_var.get(),
+                "use_uppercase": bool(uppercase_var.get())
             }
-            self.save_text_appearance_settings(settings)
+        
+        def apply_settings():
+            """Apply the current settings without closing dialog"""
+            # Save settings temporarily
+            current_settings = get_current_settings()
+            self.save_text_appearance_settings(current_settings)
+            
+            # Update preview window if it exists
+            if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+                self.update_preview_text_appearance()
+                print("Applied settings to preview window")
+        
+        def save_settings():
+            """Save settings and close dialog"""
+            # Get current settings
+            current_settings = get_current_settings()
+            
+            # Save settings
+            self.save_text_appearance_settings(current_settings)
             
             # Update preview window if requested
             if update_preview and hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
@@ -4492,31 +4667,576 @@ class MAMEControlConfig(ctk.CTk):
             
             dialog.destroy()
         
-        def apply_settings():
-            # Save settings
-            settings = {
-                "font_family": font_var.get(),
-                "font_size": size_var.get(),
-                "title_font_size": title_size_var.get(),
-                "bold_strength": bold_var.get(),
-                "y_offset": y_offset_var.get()
-            }
-            self.save_text_appearance_settings(settings)
-            
-            # Update preview window if it exists
-            if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
-                self.update_preview_text_appearance()
-        
         # Apply button for live preview
-        if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
-            apply_button = ctk.CTkButton(button_frame, text="Apply", command=apply_settings)
-            apply_button.pack(side="left", padx=10, pady=10)
+        apply_button = ctk.CTkButton(button_frame, text="Apply", command=apply_settings)
+        apply_button.pack(side="left", padx=10, pady=10)
         
         save_button = ctk.CTkButton(button_frame, text="Save", command=save_settings)
         save_button.pack(side="left", padx=10, pady=10)
         
         cancel_button = ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy)
         cancel_button.pack(side="right", padx=10, pady=10)
+
+
+    def get_logo_path(self, rom_name):
+        """Find logo path for a given ROM name with extensive debugging"""
+        import os
+        
+        # Force logging to file to ensure we capture everything
+        log_path = os.path.join(self.mame_dir, "logo_debug.log")
+        with open(log_path, 'a') as log_file:
+            log_file.write(f"\n\n--- LOGO DEBUG for ROM: {rom_name} ---\n")
+            
+            # Use the correct path for the logo directory
+            logo_dir = os.path.join("F:", "Deluxe Universe", "collections", "Arcades", "medium_artwork", "logo")
+            
+            log_file.write(f"Looking for logo in: {logo_dir}\n")
+            print(f"Looking for logo in: {logo_dir}")
+            
+            # Check if directory exists
+            if not os.path.exists(logo_dir):
+                message = f"ERROR: Logo directory not found: {logo_dir}"
+                log_file.write(message + "\n")
+                print(message)
+                return None
+            
+            # List all files in the directory
+            try:
+                dir_files = os.listdir(logo_dir)
+                log_file.write(f"Found {len(dir_files)} files in logo directory.\n")
+                if dir_files:
+                    log_file.write(f"Sample files: {dir_files[:5]}\n")
+            except Exception as e:
+                log_file.write(f"ERROR listing directory contents: {e}\n")
+                dir_files = []
+            
+            # Check for direct match first
+            for ext in ['.png', '.jpg', '.jpeg']:
+                logo_path = os.path.join(logo_dir, f"{rom_name}{ext}")
+                log_file.write(f"Checking for: {logo_path}\n")
+                if os.path.exists(logo_path):
+                    log_file.write(f"SUCCESS: Found direct match logo: {logo_path}\n")
+                    return logo_path
+            
+            # Check for case-insensitive match
+            log_file.write("No direct match, trying case-insensitive match...\n")
+            for filename in dir_files:
+                base_name, ext = os.path.splitext(filename.lower())
+                if base_name == rom_name.lower() and ext.lower() in ['.png', '.jpg', '.jpeg']:
+                    logo_path = os.path.join(logo_dir, filename)
+                    log_file.write(f"SUCCESS: Found case-insensitive match: {logo_path}\n")
+                    return logo_path
+            
+            # Try partial match as fallback
+            log_file.write("No case-insensitive match, trying partial match...\n")
+            potential_matches = []
+            for filename in dir_files:
+                base_name, ext = os.path.splitext(filename.lower())
+                if (rom_name.lower() in base_name or base_name in rom_name.lower()) and ext.lower() in ['.png', '.jpg', '.jpeg']:
+                    potential_matches.append(filename)
+            
+            if potential_matches:
+                # Use the shortest match (likely the closest)
+                match = min(potential_matches, key=len)
+                logo_path = os.path.join(logo_dir, match)
+                log_file.write(f"SUCCESS: Found partial match: {logo_path}\n")
+                return logo_path
+            
+            log_file.write(f"ERROR: No logo found for {rom_name}\n")
+            return None
+
+    def add_logo_controls_to_preview(self):
+        """Add controls for logo visibility and positioning in the preview window with detailed debugging"""
+        print("\n--- ADDING LOGO CONTROLS TO PREVIEW ---")
+        
+        if not hasattr(self, 'button_row2'):
+            print("ERROR: button_row2 attribute does not exist")
+            return
+            
+        if not self.button_row2.winfo_exists():
+            print("ERROR: button_row2 widget does not exist")
+            return
+        
+        print("Found button_row2, adding logo controls")
+        
+        # Add Logo visibility toggle button
+        self.logo_visible = True  # Default to visible
+        try:
+            self.logo_toggle_button = ctk.CTkButton(
+                self.button_row2,
+                text="Hide Logo",
+                command=self.toggle_logo_visibility,
+                width=90  # Match other buttons
+            )
+            self.logo_toggle_button.pack(side="left", padx=3)
+            print("Successfully added logo toggle button")
+        except Exception as e:
+            print(f"ERROR creating logo toggle button: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Add Logo position button (opens position dialog)
+        try:
+            self.logo_position_button = ctk.CTkButton(
+                self.button_row2,
+                text="Logo Pos",
+                command=self.show_logo_position_dialog,
+                width=90  # Match other buttons
+            )
+            self.logo_position_button.pack(side="left", padx=3)
+            print("Successfully added logo position button")
+        except Exception as e:
+            print(f"ERROR creating logo position button: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print("--- LOGO CONTROLS ADDED ---\n")
+
+    # Direct method to manually add the logo controls - can be called from anywhere
+    def manually_add_logo_controls(self):
+        """Method that can be manually called to add logo controls"""
+        print("Manually adding logo controls")
+        
+        # Make sure button_row2 exists
+        if hasattr(self, 'button_row2') and self.button_row2.winfo_exists():
+            print("Found button_row2, adding logo controls")
+            
+            # Clear existing logo controls if they exist
+            if hasattr(self, 'logo_toggle_button') and self.logo_toggle_button.winfo_exists():
+                self.logo_toggle_button.destroy()
+            if hasattr(self, 'logo_position_button') and self.logo_position_button.winfo_exists():
+                self.logo_position_button.destroy()
+            
+            # Load logo settings
+            self.load_logo_settings()
+            
+            # Create the toggle button
+            self.logo_toggle_button = ctk.CTkButton(
+                self.button_row2,
+                text="Hide Logo" if self.logo_visible else "Show Logo",
+                command=self.toggle_logo_visibility,
+                width=90
+            )
+            self.logo_toggle_button.pack(side="left", padx=3)
+            
+            # Create the position button
+            self.logo_position_button = ctk.CTkButton(
+                self.button_row2,
+                text="Logo Pos",
+                command=self.show_logo_position_dialog,
+                width=90
+            )
+            self.logo_position_button.pack(side="left", padx=3)
+            
+            print("Logo controls added successfully")
+        else:
+            print("button_row2 not found!")
+
+    def toggle_logo_visibility(self):
+        """Toggle the visibility of the logo in preview"""
+        # Toggle the state
+        self.logo_visible = not self.logo_visible
+        
+        # Update the button text
+        toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
+        if hasattr(self, 'logo_toggle_button') and self.logo_toggle_button.winfo_exists():
+            self.logo_toggle_button.configure(text=toggle_text)
+        
+        # Update canvas logo
+        if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+            if self.logo_visible:
+                # Add logo
+                self.add_logo_to_preview_canvas()
+            else:
+                # Remove logo if it exists
+                if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+                    self.preview_canvas.delete(self.preview_logo_item)
+                    self.preview_logo_item = None
+                    self.preview_logo_photo = None
+        
+        # Save the setting
+        self.save_logo_settings()
+        print(f"Logo visibility toggled to: {self.logo_visible}")
+
+    def show_logo_position_dialog(self):
+        """Show dialog to configure logo position"""
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Logo Position")
+        dialog.geometry("300x200")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Load current settings
+        if not hasattr(self, 'logo_position'):
+            self.load_logo_settings()
+        
+        # Create position options
+        position_var = ctk.StringVar(value=self.logo_position)
+        
+        # Create radio buttons for position options
+        ctk.CTkLabel(dialog, text="Logo Position:", font=("Arial", 14, "bold")).pack(pady=(20, 10))
+        
+        positions = [
+            ("Top Left", "top-left"),
+            ("Top Center", "top-center"),
+            ("Top Right", "top-right"),
+            ("Bottom Left", "bottom-left"),
+            ("Bottom Center", "bottom-center"),
+            ("Bottom Right", "bottom-right")
+        ]
+        
+        for text, value in positions:
+            radio = ctk.CTkRadioButton(
+                dialog,
+                text=text,
+                variable=position_var,
+                value=value
+            )
+            radio.pack(anchor="w", padx=30, pady=5)
+        
+        # Buttons frame
+        button_frame = ctk.CTkFrame(dialog)
+        button_frame.pack(pady=20, fill="x")
+        
+        def apply_position():
+            old_position = self.logo_position
+            self.logo_position = position_var.get()
+            print(f"Changed logo position from {old_position} to {self.logo_position}")
+            
+            # Update logo on canvas immediately
+            if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+                self.add_logo_to_preview_canvas()
+            
+            self.save_logo_settings()
+            dialog.destroy()
+        
+        apply_button = ctk.CTkButton(
+            button_frame,
+            text="Apply",
+            command=apply_position
+        )
+        apply_button.pack(side="left", padx=20)
+        
+        cancel_button = ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy
+        )
+        cancel_button.pack(side="right", padx=20)
+
+    def save_logo_settings(self):
+        """Save logo settings to config file"""
+        settings_path = os.path.join(self.mame_dir, "logo_settings.json")
+        
+        try:
+            # Load existing settings if available
+            settings = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+            
+            # Update with current settings
+            settings['logo_visible'] = self.logo_visible
+            if hasattr(self, 'logo_position'):
+                settings['logo_position'] = self.logo_position
+            
+            # Save back to file
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f)
+            
+            print(f"Saved logo settings: {settings}")
+        except Exception as e:
+            print(f"Error saving logo settings: {e}")
+
+    def load_logo_settings(self):
+        """Load logo settings from config file"""
+        settings_path = os.path.join(self.mame_dir, "logo_settings.json")
+        
+        # Default settings
+        settings = {
+            'logo_visible': True,
+            'logo_position': 'top-center',  # Options: top-left, top-center, top-right
+        }
+        
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    saved_settings = json.load(f)
+                    settings.update(saved_settings)
+        except Exception as e:
+            print(f"Error loading logo settings: {e}")
+        
+        # Store settings as attributes
+        self.logo_visible = settings['logo_visible']
+        self.logo_position = settings['logo_position']
+        
+        print(f"Loaded logo settings: {settings}")
+        return settings
+
+    def add_logo_to_image(self, image, rom_name, max_width=None, max_height=None):
+        """Add logo to the image if available and visible according to settings"""
+        import os
+        from PIL import Image
+        
+        # Load logo settings if not already loaded
+        if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+            self.load_logo_settings()
+        
+        # If logo is set to hidden, return the original image
+        if not self.logo_visible:
+            print(f"Logo visibility is off, skipping logo for {rom_name}")
+            return image
+        
+        # Get logo path
+        logo_path = self.get_logo_path(rom_name)
+        if not logo_path:
+            print(f"No logo found for {rom_name}, returning original image")
+            return image  # Return original image if no logo found
+        
+        try:
+            # Rest of your existing code...
+            # Open logo image
+            print(f"Opening logo file: {logo_path}")
+            logo_img = Image.open(logo_path)
+            print(f"Logo image opened successfully: {logo_img.size} {logo_img.mode}")
+            
+            # Default max dimensions if not specified
+            if max_width is None:
+                max_width = image.width // 3  # 33% of image width
+            if max_height is None:
+                max_height = image.height // 5  # 20% of image height
+            
+            # Calculate scale to fit within max dimensions while maintaining aspect ratio
+            logo_width, logo_height = logo_img.size
+            scale_factor = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
+            
+            # Resize logo
+            new_width = max(int(logo_width * scale_factor), 1)
+            new_height = max(int(logo_height * scale_factor), 1)
+            print(f"Resizing logo from {logo_width}x{logo_height} to {new_width}x{new_height}")
+            logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Make sure logo has alpha channel for transparency
+            if logo_img.mode != 'RGBA':
+                print(f"Converting logo from {logo_img.mode} to RGBA")
+                logo_img = logo_img.convert('RGBA')
+            
+            # Calculate position based on logo_position setting
+            padding = 20  # Padding from edges
+            
+            # Get the image dimensions
+            img_width, img_height = image.size
+            
+            # Calculate position based on setting
+            if self.logo_position == 'top-left':
+                position = (padding, padding)
+            elif self.logo_position == 'top-right':
+                position = (img_width - new_width - padding, padding)
+            elif self.logo_position == 'bottom-left':
+                position = (padding, img_height - new_height - padding)
+            elif self.logo_position == 'bottom-center':
+                position = ((img_width - new_width) // 2, img_height - new_height - padding)
+            elif self.logo_position == 'bottom-right':
+                position = (img_width - new_width - padding, img_height - new_height - padding)
+            else:  # Default to top-center
+                position = ((img_width - new_width) // 2, padding)
+            
+            print(f"Placing logo at position: {position} ({self.logo_position})")
+            
+            # Create a copy of the image to avoid modifying the original
+            result = image.copy()
+            
+            # Paste logo onto image, respecting transparency
+            if logo_img.mode == 'RGBA':
+                result.paste(logo_img, position, logo_img)
+            else:
+                result.paste(logo_img, position)
+            
+            print(f"Logo successfully added to image for {rom_name}")
+            return result
+        
+        except Exception as e:
+            print(f"Error adding logo for {rom_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            return image  # Return original image on error
+
+    def test_logo_functionality(self):
+        """Test function to verify logo loading and display"""
+        import os
+        from PIL import Image
+        
+        print("\n--- LOGO TEST STARTING ---")
+        if not hasattr(self, 'current_game') or not self.current_game:
+            print("No game selected, using test game")
+            test_game = "sf2"  # Example game with likely logo
+        else:
+            test_game = self.current_game
+            
+        print(f"Testing logo functionality for: {test_game}")
+        
+        # Create a test image
+        test_img = Image.new('RGB', (1920, 1080), color='black')
+        
+        # Try to add logo
+        print("Attempting to add logo...")
+        result = self.add_logo_to_image(test_img, test_game)
+        
+        if result is test_img:
+            print("Logo was NOT added (same image returned)")
+        else:
+            print("Logo was potentially added (different image returned)")
+            
+        print("--- LOGO TEST COMPLETE ---\n")
+
+    def show_preview_with_logo(self):
+        """Modified show_preview that adds a logo to the canvas and adds logo controls"""
+        # First call the original method to set up the preview window
+        result = self.show_preview_original()
+        
+        # Make sure settings are loaded before proceeding
+        if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+            self.load_logo_settings()
+        
+        # Now add the logo to the canvas if it exists
+        if hasattr(self, 'preview_canvas') and self.current_game:
+            try:
+                # Store references to help us manage the logo
+                self.preview_logo_item = None
+                self.preview_logo_photo = None
+                
+                # Add the logo if visibility is on
+                if self.logo_visible:
+                    self.add_logo_to_preview_canvas()
+            except Exception as e:
+                print(f"Error setting up logo in preview: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Add logo controls directly to the button rows
+        self.add_logo_controls_directly()
+    
+    def add_logo_controls_directly(self):
+        """Add logo controls directly to the preview window button rows"""
+        # Check if button rows exist
+        if not hasattr(self, 'button_row2') or not self.button_row2.winfo_exists():
+            print("ERROR: button_row2 widget does not exist")
+            return
+        
+        # Add logo visibility toggle button
+        toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
+        self.logo_toggle_button = ctk.CTkButton(
+            self.button_row2,
+            text=toggle_text,
+            command=self.toggle_logo_visibility,
+            width=90
+        )
+        self.logo_toggle_button.pack(side="left", padx=3)
+        
+        # Add logo position button
+        self.logo_position_button = ctk.CTkButton(
+            self.button_row2,
+            text="Logo Pos",
+            command=self.show_logo_position_dialog,
+            width=90
+        )
+        self.logo_position_button.pack(side="left", padx=3)
+        
+        print("Added logo controls directly to preview window")
+
+    def add_logo_position_control_to_preview(self):
+        """Add only the logo position control to preview window"""
+        print("\n--- ADDING LOGO POSITION CONTROL TO PREVIEW ---")
+        
+        if not hasattr(self, 'button_row2'):
+            print("ERROR: button_row2 attribute does not exist")
+            return
+            
+        if not self.button_row2.winfo_exists():
+            print("ERROR: button_row2 widget does not exist")
+            return
+        
+        print("Found button_row2, adding logo position control")
+        
+        # Add Logo position button only
+        try:
+            self.logo_position_button = ctk.CTkButton(
+                self.button_row2,
+                text="Logo Pos",
+                command=self.show_logo_position_dialog,
+                width=90  # Match other buttons
+            )
+            self.logo_position_button.pack(side="left", padx=3)
+            print("Successfully added logo position button")
+        except Exception as e:
+            print(f"ERROR creating logo position button: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        print("--- LOGO POSITION CONTROL ADDED ---\n")
+
+    def add_logo_to_preview_canvas(self):
+        """Add logo to the preview canvas based on current settings"""
+        # First remove any existing logo
+        if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+            self.preview_canvas.delete(self.preview_logo_item)
+            self.preview_logo_item = None
+            self.preview_logo_photo = None
+        
+        # Get the logo path
+        logo_path = self.get_logo_path(self.current_game)
+        if not logo_path:
+            print(f"No logo found for {self.current_game}")
+            return
+            
+        from PIL import Image, ImageTk
+        
+        # Load and resize the logo
+        logo_img = Image.open(logo_path)
+        
+        # Calculate appropriate size (25% of canvas width)
+        canvas_width = self.preview_canvas.winfo_width()
+        canvas_height = self.preview_canvas.winfo_height()
+        
+        max_width = canvas_width // 4
+        max_height = canvas_height // 5
+        
+        # Calculate scale factor
+        logo_width, logo_height = logo_img.size
+        scale = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
+        
+        # Resize the logo
+        new_width = max(int(logo_width * scale), 1)
+        new_height = max(int(logo_height * scale), 1)
+        logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
+        
+        # Convert to PhotoImage for Tkinter
+        photo = ImageTk.PhotoImage(logo_img)
+        
+        # Position the logo based on logo_position setting
+        padding = 20
+        
+        if self.logo_position == 'top-left':
+            x, y = padding, padding
+        elif self.logo_position == 'top-right':
+            x, y = canvas_width - new_width - padding, padding
+        elif self.logo_position == 'bottom-left':
+            x, y = padding, canvas_height - new_height - padding
+        elif self.logo_position == 'bottom-center':
+            x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding
+        elif self.logo_position == 'bottom-right':
+            x, y = canvas_width - new_width - padding, canvas_height - new_height - padding
+        else:  # Default to top-center
+            x, y = (canvas_width - new_width) // 2, padding
+        
+        # Create the image on the canvas
+        img_item = self.preview_canvas.create_image(x, y, image=photo, anchor="nw")
+        
+        # Store references as class attributes
+        self.preview_logo_photo = photo  # Keep a reference to prevent garbage collection
+        self.preview_logo_item = img_item
+        
+        print(f"Added logo to preview canvas for {self.current_game} at position {self.logo_position}")
     
 if __name__ == "__main__":
     import argparse
