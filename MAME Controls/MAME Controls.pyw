@@ -939,7 +939,7 @@ class MAMEControlConfig(ctk.CTk):
             # Calculate button width to fit all buttons
             button_width = 90  # Slightly smaller width
             button_padx = 3    # Smaller padding
-
+            
             # Top row buttons (4 buttons)
             # Close button - use the force_quit function to ensure proper termination
             close_button = ctk.CTkButton(
@@ -1003,14 +1003,42 @@ class MAMEControlConfig(ctk.CTk):
             )
             texts_button.pack(side="left", padx=button_padx)
 
+            if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+                self.load_logo_settings()
+            
+            # Add logo visibility toggle button to bottom row
+            logo_toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
+            logo_toggle_button = ctk.CTkButton(
+                bottom_row,
+                text=logo_toggle_text,
+                command=self.toggle_logo_visibility,
+                width=button_width
+            )
+            logo_toggle_button.pack(side="left", padx=button_padx)
+            self.logo_toggle_button = logo_toggle_button  # Save reference
+            
+            # Add logo position button to bottom row
+            logo_position_button = ctk.CTkButton(
+                bottom_row,
+                text="Logo Pos",
+                command=self.show_logo_position_dialog,
+                width=button_width
+            )
+            logo_position_button.pack(side="left", padx=button_padx)
+            self.logo_position_button = logo_position_button  # Save reference
+            
+            # Now add the logo to the preview canvas if visibility is on
+            if self.logo_visible:
+                self.add_logo_to_preview_canvas()
+            
             # Add this somewhere in your show_preview method after creating button_row2
-            debug_button = ctk.CTkButton(
+            '''debug_button = ctk.CTkButton(
                 self.button_row2,
                 text="Add Logo Controls",
                 command=self.manually_add_logo_controls,
                 width=90
             )
-            debug_button.pack(side="left", padx=3)
+            debug_button.pack(side="left", padx=3)'''
 
             # Add the "Save Image" button
             save_button = ctk.CTkButton(
@@ -4835,7 +4863,9 @@ class MAMEControlConfig(ctk.CTk):
     def toggle_logo_visibility(self):
         """Toggle the visibility of the logo in preview"""
         # Toggle the state
+        print(f"Before toggle: logo_visible = {self.logo_visible}")
         self.logo_visible = not self.logo_visible
+        print(f"After toggle: logo_visible = {self.logo_visible}")
         
         # Update the button text
         toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
