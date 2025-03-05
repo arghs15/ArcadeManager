@@ -856,7 +856,33 @@ class MAMEControlConfig(ctk.CTk):
             
             # Try to load saved positions, checking ROM-specific first then global
             positions = self.load_text_positions(self.current_game)
-            print(f"Loaded {len(positions)} positions from global file")
+            print(f"Loaded {len(positions)} positions from file")
+            
+            # Load text appearance settings BEFORE creating text items
+            text_settings = self.load_text_appearance_settings()
+            use_uppercase = text_settings.get("use_uppercase", False)
+            font_family = text_settings.get("font_family", "Arial")
+            font_size = text_settings.get("font_size", 28)
+            bold_strength = text_settings.get("bold_strength", 2)
+            y_offset = text_settings.get("y_offset", -40)
+            
+            print(f"Loaded text settings: uppercase={use_uppercase}, font={font_family}, size={font_size}, y_offset={y_offset}")
+            
+            # Apply scaling factor for certain fonts
+            scaling_factors = {
+                "Times New Roman": 1.5,
+                "Times": 1.5,
+                "Georgia": 1.4,
+                "Garamond": 1.7,
+                "Baskerville": 1.6,
+                "Palatino": 1.5,
+                "Courier New": 1.3,
+                "Courier": 1.3,
+                "Consolas": 1.2,
+                "Cambria": 1.4
+            }
+            scale = scaling_factors.get(font_family, 1.0)
+            adjusted_font_size = int(font_size * scale)
             
             # Add player controls as text overlays
             text_y = y + 50  # Start 50px from top of image
@@ -875,18 +901,31 @@ class MAMEControlConfig(ctk.CTk):
                     if not control_name.startswith('P1_'):
                         continue
                     
-                    print(f"Adding control: {control_name} = {action}")
+                    # Apply uppercase if enabled
+                    if use_uppercase:
+                        display_text = action.upper()
+                    else:
+                        display_text = action
+                    
+                    print(f"Adding control: {control_name} = {display_text}")
                     
                     # Position text (use saved positions if available, otherwise spread across the top)
                     if control_name in positions:
-                        text_x, text_y = positions[control_name]
-                        print(f"Using saved position for {control_name}: {text_x}, {text_y}")
+                        # Get the saved position (which should already include any past y-offset)
+                        text_x, base_text_y = positions[control_name]
+                        
+                        # Now apply the current y-offset setting correctly
+                        # We're assuming saved positions are "normalized" (without y-offset)
+                        text_y = base_text_y + y_offset
+                        
+                        print(f"Using saved position for {control_name}: base=({text_x}, {base_text_y}), with offset=({text_x}, {text_y})")
                     else:
                         text_x = x + 100 + (control_count * 150) % (new_width - 200)
                         if text_x + 100 > x + new_width:
                             text_x = x + 100
-                            text_y += 40
-                        print(f"Using default position for {control_name}: {text_x}, {text_y}")
+                            base_text_y = y + 50 + (control_count // 5) * 40
+                            text_y = base_text_y + y_offset
+                        print(f"Using default position for {control_name}: ({text_x}, {text_y})")
                     
                     # Check visibility based on control type
                     is_visible = False
@@ -895,21 +934,40 @@ class MAMEControlConfig(ctk.CTk):
                             is_visible = True
                             break
                     
-                    # Create text with shadow for better visibility
-                    shadow = canvas.create_text(text_x+2, text_y+2, text=action, 
-                                            font=("Arial", 20, "bold"), fill="black",
+                    # Create font with correct size and family
+                    try:
+                        import tkinter.font as tkfont
+                        text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+                    except Exception as e:
+                        print(f"Error creating font: {e}")
+                        text_font = (font_family, adjusted_font_size, "bold")
+                    
+                    # Apply bold effect based on strength setting
+                    if bold_strength == 0:
+                        # No shadow/bold effect
+                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
+                                            font=text_font, fill="white",
                                             anchor="sw", state="" if is_visible else "hidden")
-                    text_item = canvas.create_text(text_x, text_y, text=action, 
-                                            font=("Arial", 20, "bold"), fill="white",
+                        shadow = None
+                    else:
+                        # Create text with shadow for better visibility based on bold strength
+                        shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
+                        shadow = canvas.create_text(text_x+shadow_offset, text_y+shadow_offset, text=display_text, 
+                                            font=text_font, fill="black",
+                                            anchor="sw", state="" if is_visible else "hidden")
+                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
+                                            font=text_font, fill="white",
                                             anchor="sw", state="" if is_visible else "hidden")
                     
                     # Store the text items
                     self.text_items[control_name] = {
                         'text': text_item,
                         'shadow': shadow,
-                        'action': action,
+                        'action': action,  # Store original action for reuse
+                        'display_text': display_text,  # Store display text that may be uppercase
                         'x': text_x, 
-                        'y': text_y
+                        'y': text_y,
+                        'base_y': text_y - y_offset  # Store the base y position without offset
                     }
                     
                     # Make the text draggable
@@ -1036,15 +1094,15 @@ class MAMEControlConfig(ctk.CTk):
             if self.logo_visible:
                 self.add_logo_to_preview_canvas()
             
-            # Add this somewhere in your show_preview method after creating button_row2
-            '''debug_button = ctk.CTkButton(
-                self.button_row2,
-                text="Add Logo Controls",
-                command=self.manually_add_logo_controls,
-                width=90
+            # Add text settings button to the top row
+            text_settings_button = ctk.CTkButton(
+                top_row,
+                text="Text Settings",
+                command=lambda: self.show_text_appearance_settings(update_preview=True),
+                width=button_width
             )
-            debug_button.pack(side="left", padx=3)'''
-
+            text_settings_button.pack(side="left", padx=button_padx)
+            
             # Add the "Save Image" button
             save_button = ctk.CTkButton(
                 top_row,
@@ -1095,7 +1153,7 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Error displaying image: {str(e)}")
             import traceback
             traceback.print_exc()
-    
+
     # 2. Add the toggle handler method
     def toggle_hide_preview_buttons(self):
         """Toggle whether preview buttons should be hidden"""
@@ -1187,12 +1245,17 @@ class MAMEControlConfig(ctk.CTk):
     
     
     def save_global_positions(self):
-        """Save all positions to global file"""
+        """Save all positions to global file (with position normalization)"""
         if hasattr(self, 'showing_all_controls') and self.showing_all_controls:
             return self.save_all_controls_positions()
         
         try:
-            # Get all current positions 
+            # Get the current y-offset setting (for normalization)
+            settings = self.load_text_appearance_settings()
+            y_offset = settings.get("y_offset", -40)
+            print(f"Current y_offset for normalization: {y_offset}")
+            
+            # Get all current positions and normalize them (remove the y-offset)
             positions = {}
             for name, data in self.text_items.items():
                 if 'x' not in data or 'y' not in data:
@@ -1200,7 +1263,18 @@ class MAMEControlConfig(ctk.CTk):
                     continue
                     
                 x, y = data['x'], data['y']
-                positions[name] = [x, y]  # Use lists instead of tuples
+                
+                # Use base_y if available, otherwise calculate it
+                if 'base_y' in data:
+                    normalized_y = data['base_y']
+                    print(f"Using stored base_y for {name}: {normalized_y}")
+                else:
+                    # Remove the y-offset to store normalized positions
+                    normalized_y = y - y_offset  # Remove the offset before saving
+                    print(f"Calculating base_y for {name}: {y} - {y_offset} = {normalized_y}")
+                
+                positions[name] = [x, normalized_y]  # Use lists instead of tuples
+                print(f"Saving normalized position for {name}: ({x}, {normalized_y})")
                 
             if not positions:
                 print("  Warning: No positions to save!")
@@ -1226,13 +1300,18 @@ class MAMEControlConfig(ctk.CTk):
             return False
 
     def save_rom_positions(self):
-        """Save positions for current ROM"""
+        """Save positions for current ROM (with position normalization)"""
         if not self.current_game:
             messagebox.showinfo("Error", "No game selected")
             return False
             
         try:
-            # Get all current positions
+            # Get the current y-offset setting (for normalization)
+            settings = self.load_text_appearance_settings()
+            y_offset = settings.get("y_offset", -40)
+            print(f"Current y_offset for normalization: {y_offset}")
+            
+            # Get all current positions and normalize them
             positions = {}
             for name, data in self.text_items.items():
                 if 'x' not in data or 'y' not in data:
@@ -1240,7 +1319,18 @@ class MAMEControlConfig(ctk.CTk):
                     continue
                     
                 x, y = data['x'], data['y']
-                positions[name] = [x, y]  # Use lists instead of tuples
+                
+                # Use base_y if available, otherwise calculate it
+                if 'base_y' in data:
+                    normalized_y = data['base_y']
+                    print(f"Using stored base_y for {name}: {normalized_y}")
+                else:
+                    # Remove the y-offset to store normalized positions
+                    normalized_y = y - y_offset  # Remove the offset before saving
+                    print(f"Calculating base_y for {name}: {y} - {y_offset} = {normalized_y}")
+                
+                positions[name] = [x, normalized_y]  # Use lists instead of tuples
+                print(f"Saving normalized position for {name}: ({x}, {normalized_y})")
                 
             if not positions:
                 print("  Warning: No positions to save!")
@@ -1288,7 +1378,8 @@ class MAMEControlConfig(ctk.CTk):
                     
                     # Move the text and shadow
                     canvas.move(canvas.drag_data['text'], dx, dy)
-                    canvas.move(canvas.drag_data['shadow'], dx, dy)
+                    if canvas.drag_data['shadow'] is not None:
+                        canvas.move(canvas.drag_data['shadow'], dx, dy)
                     
                     # Update saved coordinates
                     canvas.drag_data['x'] = canvas.canvasx(event.x)
@@ -1300,13 +1391,19 @@ class MAMEControlConfig(ctk.CTk):
                     new_x = old_x + dx
                     new_y = old_y + dy
                     
+                    # Calculate the normalized base_y (without y-offset)
+                    settings = self.load_text_appearance_settings()
+                    y_offset = settings.get("y_offset", -40)
+                    new_base_y = new_y - y_offset
+                    
                     # Print debugging for buttons
                     if "BUTTON" in control_name:
-                        print(f"Dragging {control_name}: ({old_x},{old_y}) -> ({new_x},{new_y})")
+                        print(f"Dragging {control_name}: ({old_x},{old_y}) -> ({new_x},{new_y}), base_y={new_base_y}")
                         
                     # Update the dictionary
                     self.text_items[control_name]['x'] = new_x
                     self.text_items[control_name]['y'] = new_y
+                    self.text_items[control_name]['base_y'] = new_base_y  # Update base_y as well
                 except Exception as e:
                     print(f"Error in drag motion: {e}")
                     import traceback
@@ -1318,7 +1415,8 @@ class MAMEControlConfig(ctk.CTk):
                 try:
                     # Print final position for debugging
                     x, y = self.text_items[control_name]['x'], self.text_items[control_name]['y']
-                    print(f"Final position for {control_name}: x={x}, y={y}")
+                    base_y = self.text_items[control_name].get('base_y', y)
+                    print(f"Final position for {control_name}: x={x}, y={y}, base_y={base_y}")
                 except Exception as e:
                     print(f"Error in drag end: {e}")
                 finally:
@@ -3231,386 +3329,6 @@ class MAMEControlConfig(ctk.CTk):
             import os
             print("Forcing exit")
             os._exit(0)
-
-    def generate_preview_images(self, limit=None):
-        """Generate preview images for ROMs using control layout and positions"""
-        import os
-        from tkinter import messagebox
-        from PIL import Image, ImageDraw, ImageFont
-        import traceback
-        import sys
-
-        # Ensure preview directory exists
-        preview_dir = self.ensure_preview_folder()
-        
-        # Load text appearance settings explicitly
-        settings = self.load_text_appearance_settings()
-        use_uppercase = settings.get("use_uppercase", False)
-        print(f"Batch generation - Uppercase setting: {use_uppercase}")
-        
-        # Get visibility settings
-        visible_control_types = self.visible_control_types
-        print(f"Visible control types: {visible_control_types}")
-        
-        # Find default background image
-        default_bg_path = None
-        for ext in ['.png', '.jpg', '.jpeg']:
-            test_path = os.path.join(preview_dir, f"default{ext}")
-            if os.path.exists(test_path):
-                default_bg_path = test_path
-                print(f"Found default background image: {default_bg_path}")
-                break
-                
-        if not default_bg_path:
-            # Create a default background if none exists
-            default_bg_path = self.create_default_image(preview_dir)
-            if not default_bg_path:
-                messagebox.showerror("Error", "No default background image found and couldn't create one.")
-                return
-        
-        # Load global positions for control layouts
-        global_positions = self.load_text_positions("global")
-        if not global_positions and os.path.exists(os.path.join(self.mame_dir, "preview", "all_controls_positions.json")):
-            global_positions = self.load_text_positions("all_controls")
-            
-        if not global_positions:
-            messagebox.showerror("Error", "No global position layout found. Please create and save a global layout first.")
-            return
-
-        print(f"Loaded global positions: {global_positions}")
-
-        # Sort ROMs for processing
-        sorted_roms = sorted(self.available_roms)
-        
-        # Apply limit if specified
-        if limit and limit > 0:
-            print(f"Limiting to {limit} ROMs")
-            sorted_roms = sorted_roms[:limit]
-            
-        # Keep track of stats
-        created = 0
-        skipped = 0
-        errors = 0
-        
-        # Create status window to show progress
-        status_window = ctk.CTkToplevel(self)
-        status_window.title("Generating ROM Preview Images")
-        status_window.geometry("500x300")
-        status_window.transient(self)
-        
-        # Status label
-        status_label = ctk.CTkLabel(
-            status_window,
-            text="Preparing to generate preview images...",
-            font=("Arial", 14)
-        )
-        status_label.pack(pady=20)
-        
-        # Progress display
-        progress_text = ctk.CTkLabel(
-            status_window,
-            text=f"0/{len(sorted_roms)} processed",
-            font=("Arial", 12)
-        )
-        progress_text.pack(pady=10)
-        
-        # Progress bar
-        progress_bar = ctk.CTkProgressBar(status_window)
-        progress_bar.pack(pady=10, padx=20, fill="x")
-        progress_bar.set(0)
-        
-        # Stats display
-        stats_label = ctk.CTkLabel(
-            status_window,
-            text="Created: 0 | Skipped: 0 | Errors: 0",
-            font=("Arial", 12)
-        )
-        stats_label.pack(pady=10)
-        
-        # Cancel button
-        cancel_flag = [False]  # Use list to allow modification in inner function
-        
-        def cancel_generation():
-            cancel_flag[0] = True
-            status_label.configure(text="Cancelling...")
-        
-        cancel_button = ctk.CTkButton(
-            status_window,
-            text="Cancel",
-            command=cancel_generation
-        )
-        cancel_button.pack(pady=10)
-        
-        # Update the window
-        status_window.update()
-        
-        try:
-            # Load the default background image
-            try:
-                bg_img = Image.open(default_bg_path)
-                # Use 1920x1080 for the output size to match your preview window
-                target_width, target_height = 1920, 1080
-                
-                # Resize background if needed
-                if bg_img.size != (target_width, target_height):
-                    bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
-                    
-                print(f"Loaded and prepared background image, size: {target_width}x{target_height}")
-            except Exception as e:
-                print(f"Error loading background image: {e}")
-                # Create a blank black image at 1920x1080
-                target_width, target_height = 1920, 1080
-                bg_img = Image.new('RGB', (target_width, target_height), color='black')
-            
-            # Get fonts based on settings
-            font, title_font = self.get_fonts_from_settings(settings)
-            
-            # Process each ROM
-            for i, rom_name in enumerate(sorted_roms):
-                if cancel_flag[0]:
-                    break
-                    
-                # Update progress
-                progress = (i + 1) / len(sorted_roms)
-                progress_bar.set(progress)
-                progress_text.configure(text=f"{i+1}/{len(sorted_roms)} processed")
-                stats_label.configure(text=f"Created: {created} | Skipped: {skipped} | Errors: {errors}")
-                status_label.configure(text=f"Processing: {rom_name}")
-                status_window.update()
-                
-                # Check if image already exists (skip if it does)
-                image_path = os.path.join(preview_dir, f"{rom_name}.png")
-                if os.path.exists(image_path):
-                    print(f"Image already exists for {rom_name}, skipping")
-                    skipped += 1
-                    continue
-                
-                # Get game data
-                game_data = self.get_game_data(rom_name)
-                if not game_data:
-                    print(f"No game data for {rom_name}, skipping")
-                    skipped += 1
-                    continue
-                    
-                # Try to load ROM-specific positions first
-                rom_positions = self.load_text_positions(rom_name)
-                # Fall back to global positions if ROM-specific not available
-                positions = rom_positions if rom_positions else global_positions
-                
-                print(f"Using positions for {rom_name}: {positions}")
-                
-                try:
-                    # Start with a copy of the background image
-                    img = bg_img.copy()
-                    draw = ImageDraw.Draw(img)
-                    
-                    # Draw title
-                    #game_title = game_data['gamename']
-                    #draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
-                    #draw.text((target_width//2, 110), f"ROM: {rom_name}", fill="gray", anchor="mt", font=font)
-                    
-                    # Draw ROM details
-                    #details = f"Players: {game_data.get('numPlayers', '?')}   Buttons: {game_data.get('miscDetails', '').replace('Buttons: ', '').split(',')[0]}"
-                    #draw.text((target_width//2, 150), details, fill="gray", anchor="mt", font=font)
-                    
-                    # Draw all controls based on positions
-                    drawn_controls = 0
-                    for player in game_data.get('players', []):
-                        if player['number'] != 1:  # Only show P1 controls for now
-                            continue
-                            
-                        for label in player.get('labels', []):
-                            control_name = label['name']
-                            action = label['value']
-                            
-                            # Check if this control type should be visible
-                            is_visible = False
-                            for control_type in visible_control_types:
-                                if control_type in control_name:
-                                    is_visible = True
-                                    break
-                                    
-                            # Skip if not visible
-                            if not is_visible:
-                                print(f"  Skipping hidden control: {control_name}")
-                                continue
-                            
-                            # Use position from saved layout
-                            if control_name in positions:
-                                # The positions are already in the correct scale (1920x1080)
-                                text_x, text_y = positions[control_name]
-                                
-                                # Use the apply_text_settings helper to draw text with current settings
-                                self.apply_text_settings(draw, action, text_x, text_y, font, settings)
-                                drawn_controls += 1
-                            else:
-                                print(f"  Warning: No position for {control_name}")
-                    
-                    print(f"Drew {drawn_controls} controls for {rom_name}")
-                    
-                    # Add a footer
-                    #draw.text((target_width//2, target_height-30), 
-                            #"Generated by MAME Control Configuration", 
-                            #fill="gray", anchor="ms", font=font)
-                    
-                    # Save the image
-                    # Add logo to the image
-                    img = self.add_logo_to_image(img, rom_name)
-
-                    # Then save the image
-                    img.save(image_path, format="PNG")
-                    print(f"Created preview image for {rom_name}: {image_path}")
-                    created += 1
-                    
-                except Exception as e:
-                    print(f"Error creating image for {rom_name}: {e}")
-                    traceback.print_exc()
-                    errors += 1
-                    
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to generate images: {str(e)}")
-            traceback.print_exc()
-        finally:
-            # Update final stats
-            stats_label.configure(text=f"Created: {created} | Skipped: {skipped} | Errors: {errors}")
-            status_label.configure(text="Completed" if not cancel_flag[0] else "Cancelled")
-            progress_text.configure(text=f"Processed {created + skipped + errors} ROMs")
-            
-            # Replace cancel button with close button
-            cancel_button.destroy()
-            close_button = ctk.CTkButton(
-                status_window,
-                text="Close",
-                command=status_window.destroy
-            )
-            close_button.pack(pady=10)
-            
-            # Return stats
-            return {
-                "created": created,
-                "skipped": skipped,
-                "errors": errors,
-                "total": len(sorted_roms)
-            }
-    '''    
-    def save_current_preview(self):
-        """Save the current preview window content as an image file using canvas-based approach"""
-        import os
-        from tkinter import messagebox
-        from PIL import Image, ImageTk
-        import traceback
-        
-        if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists():
-            messagebox.showerror("Error", "No preview window is open")
-            return
-            
-        if not self.current_game:
-            messagebox.showerror("Error", "No game is currently selected")
-            return
-        
-        if not hasattr(self, 'preview_canvas'):
-            messagebox.showerror("Error", "No canvas found in preview window")
-            return
-        
-        # Ensure preview directory exists
-        preview_dir = self.ensure_preview_folder()
-        output_path = os.path.join(preview_dir, f"{self.current_game}.png")
-        
-        # Ask for confirmation if file exists
-        if os.path.exists(output_path):
-            if not messagebox.askyesno("Confirmation", 
-                                f"Image already exists for {self.current_game}.\nDo you want to replace it?"):
-                return
-        
-        try:
-            # Option to hide buttons temporarily
-            hide_buttons = messagebox.askyesno("Options", 
-                                        "Do you want to hide buttons in the saved image?")
-            
-            # Store button frame visibility state
-            buttons_visible = False
-            if hasattr(self, 'frame_bg') and self.frame_bg.winfo_viewable():
-                buttons_visible = True
-            
-            # Hide buttons if requested
-            if buttons_visible and hide_buttons:
-                self.frame_bg.place_forget()
-                self.preview_window.update()
-            
-            # Using canvas-based method - get canvas size
-            canvas = self.preview_canvas
-            canvas_width = canvas.winfo_width()
-            canvas_height = canvas.winfo_height()
-            
-            print(f"Canvas size: {canvas_width}x{canvas_height}")
-            
-            if canvas_width <= 1 or canvas_height <= 1:
-                messagebox.showerror("Error", "Canvas size is invalid")
-                return
-                
-            # Create a new image with the same dimensions
-            img = Image.new('RGB', (canvas_width, canvas_height), 'black')
-            
-            # First, get the background image if it exists
-            if hasattr(canvas, 'image'):
-                print("Using existing canvas image")
-                pil_img = ImageTk.getimage(canvas.image)
-                img.paste(pil_img, (0, 0))
-            
-            # Now add each text item
-            from PIL import ImageDraw, ImageFont
-            draw = ImageDraw.Draw(img)
-            
-            # Try to get similar font
-            try:
-                font = ImageFont.truetype("arial.ttf", 20)
-            except:
-                font = ImageFont.load_default()
-            
-            # Draw the text items
-            for control_name, data in self.text_items.items():
-                if canvas.itemcget(data['text'], 'state') != 'hidden':
-                    text_x, text_y = data['x'], data['y']
-                    action = data['action']
-                    
-                    # Draw text with shadow for visibility
-                    draw.text((text_x+2, text_y+2), action, fill="black", font=font)
-                    draw.text((text_x, text_y), action, fill="white", font=font)
-            
-            # Save the image
-            img.save(output_path)
-            
-            # Show message
-            messagebox.showinfo("Success", f"Image saved to:\n{output_path}")
-            
-            # Restore buttons if they were visible
-            if buttons_visible and hide_buttons:
-                self.frame_bg.place(
-                    relx=0.5, 
-                    rely=0.95, 
-                    anchor="center", 
-                    width=min(1000, self.preview_window.winfo_width()-20), 
-                    height=80
-                )
-                
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to save preview: {str(e)}")
-            print(f"Error saving preview: {e}")
-            traceback.print_exc()
-            
-            # Ensure buttons are restored in case of error
-            if 'buttons_visible' in locals() and buttons_visible and hide_buttons:
-                try:
-                    self.frame_bg.place(
-                        relx=0.5, 
-                        rely=0.95, 
-                        anchor="center", 
-                        width=min(1000, self.preview_window.winfo_width()-20), 
-                        height=80
-                    )
-                except:
-                    pass
-                    '''
     
     def save_current_preview(self):
         """Save the current preview state as an image by generating it directly"""
@@ -3890,6 +3608,7 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error saving text appearance settings: {e}")
 
+    # 1. Fix the apply_text_settings function to ensure uppercase is consistently applied
     def apply_text_settings(self, draw, text, text_x, text_y, font, settings=None):
         """Apply text appearance settings to draw text with appropriate styling"""
         if settings is None:
@@ -3933,7 +3652,374 @@ class MAMEControlConfig(ctk.CTk):
             # Draw main text
             draw.text((text_x, text_y), text, fill="white", font=font)
 
-    
+    def update_preview_text_appearance(self):
+        """Update existing preview window text items to use current text appearance settings"""
+        if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
+            print("No preview window is currently open")
+            return
+            
+        if not hasattr(self, 'text_items') or not self.text_items:
+            print("No text items found in preview window")
+            return
+        
+        # Load current text appearance settings
+        settings = self.load_text_appearance_settings()
+        
+        # Check if uppercase is enabled
+        use_uppercase = settings.get("use_uppercase", False)
+        print(f"Uppercase setting: {use_uppercase}")
+        
+        # Get font family and size
+        font_family = settings.get("font_family", "Arial")
+        font_size = settings.get("font_size", 28)
+        
+        # Apply scaling if needed (similar to image generation)
+        scaling_factors = {
+            "Times New Roman": 1.5,
+            "Times": 1.5,
+            "Georgia": 1.4,
+            "Garamond": 1.7,
+            "Baskerville": 1.6,
+            "Palatino": 1.5,
+            "Courier New": 1.3,
+            "Courier": 1.3,
+            "Consolas": 1.2,
+            "Cambria": 1.4
+        }
+        
+        scale = scaling_factors.get(font_family, 1.0)
+        adjusted_font_size = int(font_size * scale)
+        
+        print(f"Updating preview text: Font={font_family}, Size={adjusted_font_size}, Uppercase={use_uppercase}")
+        
+        # Create canvas font (TkFont)
+        try:
+            import tkinter.font as tkfont
+            preview_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+        except:
+            # Fallback to default font specification
+            preview_font = (font_family, adjusted_font_size, "bold")
+        
+        # Apply corrections for preview canvas
+        y_offset = settings.get('y_offset', -40)
+        preview_correction = -5  # Default correction
+        
+        # Scale correction based on font size
+        size_factor = adjusted_font_size / 28.0  # Relative to default size
+        preview_correction = int(preview_correction * size_factor)
+        
+        # Store original positions if not already stored
+        if not hasattr(self, 'original_positions'):
+            self.original_positions = {}
+            for control_name, data in self.text_items.items():
+                if 'x' in data and 'y' in data:
+                    self.original_positions[control_name] = (data['x'], data['y'])
+        
+        # Update each text item in the preview
+        for control_name, data in self.text_items.items():
+            try:
+                # Get the original action text
+                if 'action' in data:
+                    action = data['action']
+                    
+                    # Convert to uppercase if enabled
+                    if use_uppercase:
+                        display_text = action.upper()
+                        print(f"Converting {action} to {display_text}")
+                    else:
+                        display_text = action
+                    
+                    # Store the updated display text
+                    data['display_text'] = display_text
+                    
+                    # Update text for items
+                    if 'text' in data:
+                        self.preview_canvas.itemconfigure(data['text'], text=display_text, font=preview_font)
+                    
+                    # Update shadow text
+                    if 'shadow' in data and data['shadow'] is not None:
+                        self.preview_canvas.itemconfigure(data['shadow'], text=display_text, font=preview_font)
+                
+                # Apply position updates if needed
+                if control_name in self.original_positions:
+                    # Get original position
+                    orig_x, orig_y = self.original_positions[control_name]
+                    
+                    # Apply total offset
+                    total_offset = y_offset + preview_correction
+                    
+                    # Calculate new position
+                    new_x, new_y = orig_x, orig_y + total_offset
+                    
+                    # Update position
+                    if 'text' in data:
+                        self.preview_canvas.coords(data['text'], new_x, new_y)
+                    if 'shadow' in data and data['shadow'] is not None:
+                        # Shadow should have a small offset
+                        shadow_offset = settings.get('bold_strength', 2)
+                        shadow_offset = max(1, min(shadow_offset, 3))  # Clamp between 1-3 pixels
+                        self.preview_canvas.coords(data['shadow'], new_x+shadow_offset, new_y+shadow_offset)
+                    
+                    # Update stored position
+                    data['x'] = new_x
+                    data['y'] = new_y
+                    
+            except Exception as e:
+                print(f"Error updating text for {control_name}: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        # Force canvas update
+        self.preview_canvas.update()
+        print("Preview text appearance updated")
+
+    # 3. Ensure the generate_preview_images method uses the text settings
+    def generate_preview_images(self, limit=None):
+        """Generate preview images for ROMs using control layout and positions"""
+        import os
+        from tkinter import messagebox
+        from PIL import Image, ImageDraw, ImageFont
+        import traceback
+        import sys
+
+        # Ensure preview directory exists
+        preview_dir = self.ensure_preview_folder()
+        
+        # Load text appearance settings explicitly
+        settings = self.load_text_appearance_settings()
+        use_uppercase = settings.get("use_uppercase", False)
+        print(f"Batch generation - Uppercase setting: {use_uppercase}")
+        
+        # Get visibility settings
+        visible_control_types = self.visible_control_types
+        print(f"Visible control types: {visible_control_types}")
+        
+        # Find default background image
+        default_bg_path = None
+        for ext in ['.png', '.jpg', '.jpeg']:
+            test_path = os.path.join(preview_dir, f"default{ext}")
+            if os.path.exists(test_path):
+                default_bg_path = test_path
+                print(f"Found default background image: {default_bg_path}")
+                break
+                
+        if not default_bg_path:
+            # Create a default background if none exists
+            default_bg_path = self.create_default_image(preview_dir)
+            if not default_bg_path:
+                messagebox.showerror("Error", "No default background image found and couldn't create one.")
+                return
+        
+        # Load global positions for control layouts
+        global_positions = self.load_text_positions("global")
+        if not global_positions and os.path.exists(os.path.join(self.mame_dir, "preview", "all_controls_positions.json")):
+            global_positions = self.load_text_positions("all_controls")
+            
+        if not global_positions:
+            messagebox.showerror("Error", "No global position layout found. Please create and save a global layout first.")
+            return
+
+        print(f"Loaded global positions: {global_positions}")
+
+        # Sort ROMs for processing
+        sorted_roms = sorted(self.available_roms)
+        
+        # Apply limit if specified
+        if limit and limit > 0:
+            print(f"Limiting to {limit} ROMs")
+            sorted_roms = sorted_roms[:limit]
+            
+        # Keep track of stats
+        created = 0
+        skipped = 0
+        errors = 0
+        
+        # Create status window to show progress
+        status_window = ctk.CTkToplevel(self)
+        status_window.title("Generating ROM Preview Images")
+        status_window.geometry("500x300")
+        status_window.transient(self)
+        
+        # Status label
+        status_label = ctk.CTkLabel(
+            status_window,
+            text="Preparing to generate preview images...",
+            font=("Arial", 14)
+        )
+        status_label.pack(pady=20)
+        
+        # Progress display
+        progress_text = ctk.CTkLabel(
+            status_window,
+            text=f"0/{len(sorted_roms)} processed",
+            font=("Arial", 12)
+        )
+        progress_text.pack(pady=10)
+        
+        # Progress bar
+        progress_bar = ctk.CTkProgressBar(status_window)
+        progress_bar.pack(pady=10, padx=20, fill="x")
+        progress_bar.set(0)
+        
+        # Stats display
+        stats_label = ctk.CTkLabel(
+            status_window,
+            text="Created: 0 | Skipped: 0 | Errors: 0",
+            font=("Arial", 12)
+        )
+        stats_label.pack(pady=10)
+        
+        # Cancel button
+        cancel_flag = [False]  # Use list to allow modification in inner function
+        
+        def cancel_generation():
+            cancel_flag[0] = True
+            status_label.configure(text="Cancelling...")
+        
+        cancel_button = ctk.CTkButton(
+            status_window,
+            text="Cancel",
+            command=cancel_generation
+        )
+        cancel_button.pack(pady=10)
+        
+        # Update the window
+        status_window.update()
+        
+        try:
+            # Load the default background image
+            try:
+                bg_img = Image.open(default_bg_path)
+                # Use 1920x1080 for the output size to match your preview window
+                target_width, target_height = 1920, 1080
+                
+                # Resize background if needed
+                if bg_img.size != (target_width, target_height):
+                    bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
+                    
+                print(f"Loaded and prepared background image, size: {target_width}x{target_height}")
+            except Exception as e:
+                print(f"Error loading background image: {e}")
+                # Create a blank black image at 1920x1080
+                target_width, target_height = 1920, 1080
+                bg_img = Image.new('RGB', (target_width, target_height), color='black')
+            
+            # Get fonts based on settings
+            font, title_font = self.get_fonts_from_settings(settings)
+            
+            # Process each ROM
+            for i, rom_name in enumerate(sorted_roms):
+                if cancel_flag[0]:
+                    break
+                    
+                # Update progress
+                progress = (i + 1) / len(sorted_roms)
+                progress_bar.set(progress)
+                progress_text.configure(text=f"{i+1}/{len(sorted_roms)} processed")
+                stats_label.configure(text=f"Created: {created} | Skipped: {skipped} | Errors: {errors}")
+                status_label.configure(text=f"Processing: {rom_name}")
+                status_window.update()
+                
+                # Check if image already exists (skip if it does)
+                image_path = os.path.join(preview_dir, f"{rom_name}.png")
+                if os.path.exists(image_path):
+                    print(f"Image already exists for {rom_name}, skipping")
+                    skipped += 1
+                    continue
+                
+                # Get game data
+                game_data = self.get_game_data(rom_name)
+                if not game_data:
+                    print(f"No game data for {rom_name}, skipping")
+                    skipped += 1
+                    continue
+                    
+                # Try to load ROM-specific positions first
+                rom_positions = self.load_text_positions(rom_name)
+                # Fall back to global positions if ROM-specific not available
+                positions = rom_positions if rom_positions else global_positions
+                
+                print(f"Using positions for {rom_name}: {positions}")
+                
+                try:
+                    # Start with a copy of the background image
+                    img = bg_img.copy()
+                    draw = ImageDraw.Draw(img)
+                    
+                    # Draw all controls based on positions
+                    drawn_controls = 0
+                    for player in game_data.get('players', []):
+                        if player['number'] != 1:  # Only show P1 controls for now
+                            continue
+                            
+                        for label in player.get('labels', []):
+                            control_name = label['name']
+                            action = label['value']
+                            
+                            # Check if this control type should be visible
+                            is_visible = False
+                            for control_type in visible_control_types:
+                                if control_type in control_name:
+                                    is_visible = True
+                                    break
+                                    
+                            # Skip if not visible
+                            if not is_visible:
+                                print(f"  Skipping hidden control: {control_name}")
+                                continue
+                            
+                            # Use position from saved layout
+                            if control_name in positions:
+                                # The positions are already in the correct scale (1920x1080)
+                                text_x, text_y = positions[control_name]
+                                
+                                # Use the apply_text_settings helper to draw text with current settings
+                                self.apply_text_settings(draw, action, text_x, text_y, font, settings)
+                                drawn_controls += 1
+                            else:
+                                print(f"  Warning: No position for {control_name}")
+                    
+                    print(f"Drew {drawn_controls} controls for {rom_name}")
+                    
+                    # Add logo to the image
+                    img = self.add_logo_to_image(img, rom_name)
+
+                    # Then save the image
+                    img.save(image_path, format="PNG")
+                    print(f"Created preview image for {rom_name}: {image_path}")
+                    created += 1
+                    
+                except Exception as e:
+                    print(f"Error creating image for {rom_name}: {e}")
+                    traceback.print_exc()
+                    errors += 1
+                    
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate images: {str(e)}")
+            traceback.print_exc()
+        finally:
+            # Update final stats
+            stats_label.configure(text=f"Created: {created} | Skipped: {skipped} | Errors: {errors}")
+            status_label.configure(text="Completed" if not cancel_flag[0] else "Cancelled")
+            progress_text.configure(text=f"Processed {created + skipped + errors} ROMs")
+            
+            # Replace cancel button with close button
+            cancel_button.destroy()
+            close_button = ctk.CTkButton(
+                status_window,
+                text="Close",
+                command=status_window.destroy
+            )
+            close_button.pack(pady=10)
+            
+            # Return stats
+            return {
+                "created": created,
+                "skipped": skipped,
+                "errors": errors,
+                "total": len(sorted_roms)
+            }
+
     def get_fonts_from_settings(self, settings=None):
         """Get font objects based on settings with enhanced font finding capability"""
         import os
@@ -4053,122 +4139,6 @@ class MAMEControlConfig(ctk.CTk):
         
         return font, title_font
     
-    def update_preview_text_appearance(self):
-        """Update existing preview window text items to use current text appearance settings"""
-        if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
-            print("No preview window is currently open")
-            return
-            
-        if not hasattr(self, 'text_items') or not self.text_items:
-            print("No text items found in preview window")
-            return
-        
-        # Load current text appearance settings
-        settings = self.load_text_appearance_settings()
-        
-        # Check if uppercase is enabled
-        use_uppercase = settings.get("use_uppercase", False)
-        print(f"Uppercase setting: {use_uppercase}")
-        
-        # Get font family and size
-        font_family = settings.get("font_family", "Arial")
-        font_size = settings.get("font_size", 28)
-        
-        # Apply scaling if needed (similar to image generation)
-        scaling_factors = {
-            "Times New Roman": 1.5,
-            "Times": 1.5,
-            "Georgia": 1.4,
-            "Garamond": 1.7,
-            "Baskerville": 1.6,
-            "Palatino": 1.5,
-            "Courier New": 1.3,
-            "Courier": 1.3,
-            "Consolas": 1.2,
-            "Cambria": 1.4
-        }
-        
-        scale = scaling_factors.get(font_family, 1.0)
-        adjusted_font_size = int(font_size * scale)
-        
-        print(f"Updating preview text: Font={font_family}, Size={adjusted_font_size}, Uppercase={use_uppercase}")
-        
-        # Create canvas font (TkFont)
-        try:
-            import tkinter.font as tkfont
-            preview_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-        except:
-            # Fallback to default font specification
-            preview_font = (font_family, adjusted_font_size, "bold")
-        
-        # Apply corrections for preview canvas
-        y_offset = settings.get('y_offset', -40)
-        preview_correction = -5  # Default correction
-        
-        # Scale correction based on font size
-        size_factor = adjusted_font_size / 28.0  # Relative to default size
-        preview_correction = int(preview_correction * size_factor)
-        
-        # Store original positions if not already stored
-        if not hasattr(self, 'original_positions'):
-            self.original_positions = {}
-            for control_name, data in self.text_items.items():
-                if 'x' in data and 'y' in data:
-                    self.original_positions[control_name] = (data['x'], data['y'])
-        
-        # Update each text item in the preview
-        for control_name, data in self.text_items.items():
-            try:
-                # Get the original action text
-                if 'action' in data:
-                    action = data['action']
-                    
-                    # Convert to uppercase if enabled
-                    if use_uppercase:
-                        display_text = action.upper()
-                        print(f"Converting {action} to {display_text}")
-                    else:
-                        display_text = action
-                    
-                    # Update text for items
-                    if 'text' in data:
-                        self.preview_canvas.itemconfigure(data['text'], text=display_text, font=preview_font)
-                    
-                    # Update shadow text
-                    if 'shadow' in data:
-                        self.preview_canvas.itemconfigure(data['shadow'], text=display_text, font=preview_font)
-                
-                # Apply position updates if needed
-                if control_name in self.original_positions:
-                    # Get original position
-                    orig_x, orig_y = self.original_positions[control_name]
-                    
-                    # Apply total offset
-                    total_offset = y_offset + preview_correction
-                    
-                    # Calculate new position
-                    new_x, new_y = orig_x, orig_y + total_offset
-                    
-                    # Update position
-                    if 'text' in data:
-                        self.preview_canvas.coords(data['text'], new_x, new_y)
-                    if 'shadow' in data:
-                        self.preview_canvas.coords(data['shadow'], new_x+2, new_y+2)
-                    
-                    # Update stored position
-                    data['x'] = new_x
-                    data['y'] = new_y
-                    
-            except Exception as e:
-                print(f"Error updating text for {control_name}: {e}")
-                import traceback
-                traceback.print_exc()
-        
-        # Force canvas update
-        self.preview_canvas.update()
-        print("Preview text appearance updated")
-
-
     def show_preview_original(self):
         """Store the original show_preview method to be called from the modified version"""
         pass  # This will be replaced with the original show_preview method
@@ -4203,6 +4173,7 @@ class MAMEControlConfig(ctk.CTk):
         self.add_logo_controls_to_preview()
         
         return result
+
 
     def show_image_preview(self):
         """Show a window with an exact preview of how the image will be generated"""
@@ -4364,7 +4335,7 @@ class MAMEControlConfig(ctk.CTk):
             canvas.create_image(0, 0, anchor="nw", image=photo)
             canvas.image = photo  # Keep a reference
             
-           # Button frame
+            # Button frame
             button_frame = ctk.CTkFrame(preview_window)
             button_frame.pack(padx=10, pady=10, fill="x")
             
@@ -4442,13 +4413,68 @@ class MAMEControlConfig(ctk.CTk):
     def apply_preview_update_hook(self):
         """Apply hooks to update preview window for text appearance and logos"""
         print("\n=== Applying preview hooks ===")
-        # Store the original method
-        self.show_preview_original = self.show_preview
         
-        # Replace with the new method that includes both text settings and logo
-        self.show_preview = self.show_preview_with_logo
+        # Store the original show_preview method properly
+        if not hasattr(self, 'show_preview_original'):
+            self.show_preview_original = self.show_preview
+            print("Original show_preview method stored")
         
-        print("Replaced show_preview with show_preview_with_logo")
+        # Define the new method that combines logo and text settings
+        def show_preview_with_logo_and_text(self):
+            """Custom version of show_preview that applies both logo and text settings"""
+            # Call the original method first
+            result = self.show_preview_original()
+            
+            # Load settings
+            if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+                self.load_logo_settings()
+            
+            # Add logo if needed
+            if hasattr(self, 'preview_canvas') and self.current_game:
+                # Add the logo to the canvas
+                if self.logo_visible:
+                    self.add_logo_to_preview_canvas()
+            
+            # Apply text settings to any existing text items
+            if hasattr(self, 'preview_canvas'):
+                self.update_preview_text_appearance()
+                
+            # Add logo controls to buttons if they exist
+            if hasattr(self, 'button_row2') and self.button_row2.winfo_exists():
+                # Logo controls
+                toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
+                self.logo_toggle_button = ctk.CTkButton(
+                    self.button_row2,
+                    text=toggle_text,
+                    command=self.toggle_logo_visibility,
+                    width=90
+                )
+                self.logo_toggle_button.pack(side="left", padx=3)
+                
+                self.logo_position_button = ctk.CTkButton(
+                    self.button_row2,
+                    text="Logo Pos",
+                    command=self.show_logo_position_dialog,
+                    width=90
+                )
+                self.logo_position_button.pack(side="left", padx=3)
+                
+            # Add text settings button if it exists
+            if hasattr(self, 'button_row1') and self.button_row1.winfo_exists():
+                settings_button = ctk.CTkButton(
+                    self.button_row1,
+                    text="Text Settings",
+                    command=lambda: self.show_text_appearance_settings(update_preview=True),
+                    width=90
+                )
+                settings_button.pack(side="left", padx=3)
+                
+            return result
+        
+        # Replace the original method with our new combined method
+        self.show_preview = show_preview_with_logo_and_text.__get__(self, type(self))
+        
+        print("Replaced show_preview with custom version that applies text settings and logos")
         print("=== Preview hooks applied ===\n")
 
     def show_text_appearance_settings(self, update_preview=False):
@@ -5148,40 +5174,533 @@ class MAMEControlConfig(ctk.CTk):
             
         print("--- LOGO TEST COMPLETE ---\n")
 
-    def show_preview_with_logo(self):
-        """Modified show_preview that adds a logo to the canvas and adds logo controls"""
-        # First call the original method to set up the preview window
-        result = self.show_preview_original()
+    # Here's the key part that needs to be fixed - how text is displayed in the preview screen
+    def show_preview(self):
+        """Show a preview of the control layout for the current game on the second screen"""
+        if not self.current_game:
+            messagebox.showinfo("No Game Selected", "Please select a game first")
+            return
+            
+        # Create preview directory and handle bundled images if needed
+        preview_dir = self.ensure_preview_folder()
+
+        # Check for a ROM-specific image (PNG or JPG)
+        image_extensions = [".png", ".jpg", ".jpeg"]
+        image_path = None
+
+        for ext in image_extensions:
+            test_path = os.path.join(preview_dir, f"{self.current_game}{ext}")
+            if os.path.exists(test_path):
+                image_path = test_path
+                break
+
+        # Fall back to default image (PNG or JPG)
+        if not image_path:
+            for ext in image_extensions:
+                test_path = os.path.join(preview_dir, f"default{ext}")
+                if os.path.exists(test_path):
+                    image_path = test_path
+                    break
+
+        # If no image found, show a message
+        if not image_path:
+            messagebox.showinfo(
+                "Image Not Found",
+                f"No preview image found for {self.current_game}\n"
+                f"Place PNG or JPG images in {preview_dir} folder"
+            )
+            return
+
+        # Get game control data
+        game_data = self.get_game_data(self.current_game)
+        if not game_data:
+            messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
+            return
+
         
-        # Make sure settings are loaded before proceeding
-        if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
-            self.load_logo_settings()
+        # Check for screen preference in settings
+        preferred_screen = getattr(self, 'preferred_preview_screen', 2)  # Default to second screen
         
-        # Force logo to be visible initially
-        old_value = self.logo_visible
-        self.logo_visible = True
+        # We'll use tkinter directly for the window but CustomTkinter for buttons
+        import tkinter as tk
+        from PIL import Image, ImageTk
         
-        # Now add the logo to the canvas if it exists
-        if hasattr(self, 'preview_canvas') and self.current_game:
-            try:
-                # Add the logo to the canvas
+        # Create our preview window directly
+        self.preview_window = tk.Toplevel()
+        self.preview_window.title(f"Control Preview: {self.current_game}")
+        
+        # Hide window initially and prevent flashing
+        self.preview_window.withdraw()
+        
+        # Configure the window to properly exit when closed
+        self.preview_window.protocol("WM_DELETE_WINDOW", self.quit_application)
+        
+        # Define a proper ESC key handler that will fully terminate the application
+        def force_quit(event):
+            print("ESC pressed, forcing exit")
+            self.quit_application()
+        
+        # Bind ESC to the force_quit function
+        self.preview_window.bind("<Escape>", lambda event: self.close_preview())
+        
+        # Get information about monitors through direct Windows API if possible
+        monitors = []
+        try:
+            # Try to use Windows API
+            import ctypes
+            from ctypes import windll
+            
+            # Define structs needed to get monitor info
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ('left', ctypes.c_long),
+                    ('top', ctypes.c_long),
+                    ('right', ctypes.c_long),
+                    ('bottom', ctypes.c_long)
+                ]
+                
+            # Get monitor info
+            def callback(monitor, dc, rect, data):
+                rect = ctypes.cast(rect, ctypes.POINTER(RECT)).contents
+                monitors.append({
+                    'left': rect.left,
+                    'top': rect.top,
+                    'right': rect.right,
+                    'bottom': rect.bottom,
+                    'width': rect.right - rect.left,
+                    'height': rect.bottom - rect.top,
+                    'index': len(monitors)  # Add index for selection
+                })
+                return 1
+                
+            MonitorEnumProc = ctypes.WINFUNCTYPE(
+                ctypes.c_bool,
+                ctypes.c_ulong,
+                ctypes.c_ulong,
+                ctypes.POINTER(RECT),
+                ctypes.c_double
+            )
+            
+            # Enumerate monitors
+            windll.user32.EnumDisplayMonitors(None, None, MonitorEnumProc(callback), 0)
+            
+            print(f"Found {len(monitors)} monitors")
+            for i, mon in enumerate(monitors):
+                print(f"Monitor {i+1}: {mon['width']}x{mon['height']} at position {mon['left']},{mon['top']}")
+                
+        except Exception as e:
+            print(f"Error using Windows API for monitor detection: {e}")
+            # Create a minimal monitor list with defaults
+            monitors = [{'left': 0, 'top': 0, 'width': 1920, 'height': 1080, 'index': 0}]
+            
+            # Try to detect second monitor using simple method
+            full_width = self.winfo_screenwidth()
+            if full_width > 2000:  # Assume wide screen means multiple monitors
+                monitors.append({
+                    'left': 1920, 'top': 0, 
+                    'width': full_width - 1920, 'height': self.winfo_screenheight(),
+                    'index': 1
+                })
+                print(f"Detected probable second monitor at x=1920 (simple method)")
+        
+        # Force at least two monitors for button functionality
+        if len(monitors) < 2:
+            monitors.append({
+                'left': monitors[0]['width'], 
+                'top': 0, 
+                'width': monitors[0]['width'], 
+                'height': monitors[0]['height'],
+                'index': 1
+            })
+            print(f"Added virtual second monitor for button functionality")
+        
+        # Use selected monitor or fall back to primary
+        target_monitor = None
+        if 0 <= preferred_screen - 1 < len(monitors):
+            target_monitor = monitors[preferred_screen - 1]
+            print(f"Using preferred screen {preferred_screen}: {target_monitor}")
+        else:
+            # Default to first monitor if preferred screen doesn't exist
+            target_monitor = monitors[0]
+            print(f"Preferred screen {preferred_screen} not available, using monitor 1")
+            
+        # Position window on selected monitor
+        window_x = target_monitor['left']
+        window_y = target_monitor['top']
+        window_width = target_monitor['width']
+        window_height = target_monitor['height']
+        
+        print(f"Setting window dimensions: {window_width}x{window_height}+{window_x}+{window_y}")
+        
+        # Configure the preview window
+        self.preview_window.geometry(f"{window_width}x{window_height}+{window_x}+{window_y}")
+        
+        # Make it fullscreen without window decorations
+        self.preview_window.overrideredirect(True)
+        
+        # Update tasks to allow window to process
+        self.preview_window.update_idletasks()
+        
+        # Make the window visible
+        self.preview_window.deiconify()
+        
+        # Ensure it stays on top
+        self.preview_window.attributes('-topmost', True)
+
+        # Load and display the image
+        try:
+            # Load the image
+            img = Image.open(image_path)
+            print(f"Loaded image: {image_path}, size={img.size}")
+            
+            # Get window dimensions (use the values we set earlier)
+            win_width = window_width
+            win_height = window_height
+            
+            # Resize image to fit window while maintaining aspect ratio
+            img_width, img_height = img.size
+            
+            # Ensure dimensions are positive
+            if win_width <= 0:
+                win_width = 1024
+            if win_height <= 0:
+                win_height = 768
+            
+            # Handle zero-size image
+            if img_width <= 0 or img_height <= 0:
+                print("Image has invalid dimensions, creating blank image")
+                img = Image.new('RGB', (win_width, win_height), color='black')
+                img_width, img_height = img.size
+            
+            # Calculate resize ratio
+            ratio = min(win_width/max(img_width, 1), win_height/max(img_height, 1))
+            new_width = max(int(img_width * ratio), 1)  # Ensure at least 1 pixel
+            new_height = max(int(img_height * ratio), 1)  # Ensure at least 1 pixel
+            
+            print(f"Resizing image to: {new_width}x{new_height}")
+            img = img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(img)
+            
+            # Create canvas with black background
+            canvas = tk.Canvas(self.preview_window, 
+                            width=win_width, 
+                            height=win_height,
+                            bg="black",
+                            highlightthickness=0)
+            canvas.pack(fill="both", expand=True)
+            
+            # Center the image
+            x = max((win_width - new_width) // 2, 0)
+            y = max((win_height - new_height) // 2, 0)
+            canvas.create_image(x, y, image=photo, anchor="nw")
+            canvas.image = photo  # Keep a reference to prevent garbage collection
+            
+            # Store canvas and image info for text placement
+            self.preview_canvas = canvas
+            self.image_x = x
+            self.image_y = y
+            
+            # Add control text overlays - track them for movement
+            self.text_items = {}
+            
+            # Try to load saved positions, checking ROM-specific first then global
+            positions = self.load_text_positions(self.current_game)
+            print(f"Loaded {len(positions)} positions from global file")
+            
+            # Load text appearance settings BEFORE creating text items
+            text_settings = self.load_text_appearance_settings()
+            use_uppercase = text_settings.get("use_uppercase", False)
+            font_family = text_settings.get("font_family", "Arial")
+            font_size = text_settings.get("font_size", 28)
+            bold_strength = text_settings.get("bold_strength", 2)
+            y_offset = text_settings.get("y_offset", -40)
+            
+            print(f"Loaded text settings: uppercase={use_uppercase}, font={font_family}, size={font_size}")
+            
+            # Apply scaling factor for certain fonts
+            scaling_factors = {
+                "Times New Roman": 1.5,
+                "Times": 1.5,
+                "Georgia": 1.4,
+                "Garamond": 1.7,
+                "Baskerville": 1.6,
+                "Palatino": 1.5,
+                "Courier New": 1.3,
+                "Courier": 1.3,
+                "Consolas": 1.2,
+                "Cambria": 1.4
+            }
+            scale = scaling_factors.get(font_family, 1.0)
+            adjusted_font_size = int(font_size * scale)
+            
+            # Add player controls as text overlays
+            text_y = y + 50  # Start 50px from top of image
+            control_count = 0
+            
+            # Process only Player 1 controls
+            for player in game_data.get('players', []):
+                if player['number'] != 1:
+                    continue
+                    
+                for label in player.get('labels', []):
+                    control_name = label['name']
+                    action = label['value']
+                    
+                    # Only include P1 controls
+                    if not control_name.startswith('P1_'):
+                        continue
+                    
+                    # Apply uppercase if enabled
+                    if use_uppercase:
+                        display_text = action.upper()
+                    else:
+                        display_text = action
+                    
+                    print(f"Adding control: {control_name} = {display_text}")
+                    
+                    # Position text (use saved positions if available, otherwise spread across the top)
+                    if control_name in positions:
+                        text_x, text_y = positions[control_name]
+                        # Apply y-offset from settings - adjust text_y
+                        text_y += y_offset
+                        print(f"Using saved position for {control_name}: {text_x}, {text_y} (with offset)")
+                    else:
+                        text_x = x + 100 + (control_count * 150) % (new_width - 200)
+                        if text_x + 100 > x + new_width:
+                            text_x = x + 100
+                            text_y += 40
+                        # Apply y-offset from settings for default positions too
+                        text_y += y_offset
+                        print(f"Using default position for {control_name}: {text_x}, {text_y} (with offset)")
+                    
+                    # Check visibility based on control type
+                    is_visible = False
+                    for control_type in self.visible_control_types:
+                        if control_type in control_name:
+                            is_visible = True
+                            break
+                    
+                    # Create font with correct size and family
+                    try:
+                        import tkinter.font as tkfont
+                        text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+                    except Exception as e:
+                        print(f"Error creating font: {e}")
+                        text_font = (font_family, adjusted_font_size, "bold")
+                    
+                    # Apply bold effect based on strength setting
+                    if bold_strength == 0:
+                        # No shadow/bold effect
+                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
+                                            font=text_font, fill="white",
+                                            anchor="sw", state="" if is_visible else "hidden")
+                        shadow = None
+                    else:
+                        # Create text with shadow for better visibility based on bold strength
+                        shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
+                        shadow = canvas.create_text(text_x+shadow_offset, text_y+shadow_offset, text=display_text, 
+                                            font=text_font, fill="black",
+                                            anchor="sw", state="" if is_visible else "hidden")
+                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
+                                            font=text_font, fill="white",
+                                            anchor="sw", state="" if is_visible else "hidden")
+                    
+                    # Store the text items
+                    self.text_items[control_name] = {
+                        'text': text_item,
+                        'shadow': shadow,
+                        'action': action,  # Store original action for reuse
+                        'display_text': display_text,  # Store display text that may be uppercase
+                        'x': text_x, 
+                        'y': text_y
+                    }
+                    
+                    # Make the text draggable
+                    self.make_draggable(canvas, text_item, shadow, control_name)
+                    control_count += 1
+            
+            # Add right-click menu for text removal
+            self.create_context_menu(canvas)
+
+            self.frame_bg = tk.Frame(self.preview_window, bg="black")  # Changed to self.frame_bg
+
+            # Only show if setting allows
+            if not hasattr(self, 'hide_preview_buttons') or not self.hide_preview_buttons:
+                self.frame_bg.place(relx=0.5, rely=0.95, anchor="center", width=min(1000, window_width-20), height=80)
+
+            # Create ctk frame with default color
+            button_frame = ctk.CTkFrame(self.frame_bg)  # Changed from frame_bg to self.frame_bg
+            button_frame.pack(expand=True, fill="both")
+            self.button_frame = button_frame  # Store reference to button frame
+
+            # Create two rows of buttons using frames
+            top_row = ctk.CTkFrame(button_frame)
+            top_row.pack(side="top", fill="x", expand=True, pady=2)
+
+            bottom_row = ctk.CTkFrame(button_frame)
+            bottom_row.pack(side="bottom", fill="x", expand=True, pady=2)
+
+            # Store row references for the feature buttons
+            self.button_row1 = top_row
+            self.button_row2 = bottom_row
+
+            # Calculate button width to fit all buttons
+            button_width = 90  # Slightly smaller width
+            button_padx = 3    # Smaller padding
+            
+            # Top row buttons (4 buttons)
+            # Close button - use the force_quit function to ensure proper termination
+            close_button = ctk.CTkButton(
+                top_row,
+                text="Close",
+                command=self.close_preview,  # Use quit_application for proper termination
+                width=button_width
+            )
+            close_button.pack(side="left", padx=button_padx)
+
+            # Reset positions button
+            reset_button = ctk.CTkButton(
+                top_row,
+                text="Reset",
+                command=self.reset_text_positions,
+                width=button_width
+            )
+            reset_button.pack(side="left", padx=button_padx)
+
+            # Add save buttons
+            global_button = ctk.CTkButton(
+                top_row,
+                text="Global",
+                command=self.save_global_positions,
+                width=button_width
+            )
+            global_button.pack(side="left", padx=button_padx)
+
+            # ROM button
+            rom_button = ctk.CTkButton(
+                top_row,
+                text="ROM",
+                command=self.save_rom_positions,
+                width=button_width
+            )
+            rom_button.pack(side="left", padx=button_padx)
+
+            # Bottom row buttons
+            # Set initial state for toggle buttons
+            self.show_texts = True
+
+            # Add toggle joystick button
+            joystick_button = ctk.CTkButton(
+                bottom_row,
+                text="Joystick",
+                command=self.toggle_joystick_controls,
+                width=button_width
+            )
+            joystick_button.pack(side="left", padx=button_padx)
+
+            # Add toggle texts button to bottom row
+            def toggle_texts():
+                self.toggle_texts_visibility()
+                texts_button.configure(text="Hide Texts" if self.show_texts else "Show Texts")
+                
+            texts_button = ctk.CTkButton(
+                bottom_row,
+                text="Hide Texts",
+                command=toggle_texts,
+                width=button_width
+            )
+            texts_button.pack(side="left", padx=button_padx)
+
+            if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+                self.load_logo_settings()
+            
+            # Add logo visibility toggle button to bottom row
+            logo_toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
+            logo_toggle_button = ctk.CTkButton(
+                bottom_row,
+                text=logo_toggle_text,
+                command=self.toggle_logo_visibility,
+                width=button_width
+            )
+            logo_toggle_button.pack(side="left", padx=button_padx)
+            self.logo_toggle_button = logo_toggle_button  # Save reference
+            
+            # Add logo position button to bottom row
+            logo_position_button = ctk.CTkButton(
+                bottom_row,
+                text="Logo Pos",
+                command=self.show_logo_position_dialog,
+                width=button_width
+            )
+            logo_position_button.pack(side="left", padx=button_padx)
+            self.logo_position_button = logo_position_button  # Save reference
+            
+            # Now add the logo to the preview canvas if visibility is on
+            if self.logo_visible:
                 self.add_logo_to_preview_canvas()
-            except Exception as e:
-                print(f"Error adding logo to preview: {e}")
+            
+            # Add text settings button to the top row
+            text_settings_button = ctk.CTkButton(
+                top_row,
+                text="Text Settings",
+                command=lambda: self.show_text_appearance_settings(update_preview=True),
+                width=button_width
+            )
+            text_settings_button.pack(side="left", padx=button_padx)
+            
+            # Add the "Save Image" button
+            save_button = ctk.CTkButton(
+                top_row,
+                text="Save Image",
+                command=self.save_current_preview,
+                width=button_width
+            )
+            save_button.pack(side="left", padx=button_padx)
+
+            # Add exact preview button
+            exact_preview_button = ctk.CTkButton(
+                top_row,
+                text="Exact Preview",
+                command=self.show_image_preview,
+                width=button_width
+            )
+            exact_preview_button.pack(side="left", padx=button_padx)
+
+            # Add toggle screen button to bottom row
+            def toggle_screen():
+                # Cycle to the next available monitor
+                current_screen = getattr(self, 'preferred_preview_screen', 2)
+                next_screen = (current_screen % len(monitors)) + 1
+                
+                # Set the preference and print
+                self.preferred_preview_screen = next_screen
+                print(f"Switching to screen {next_screen}")
+                
+                # Close and reopen the preview window
+                self.preview_window.destroy()
+                self.show_preview()
+                
+            screen_button = ctk.CTkButton(
+                bottom_row,
+                text=f"Screen {preferred_screen}",
+                command=toggle_screen,
+                width=button_width
+            )
+            screen_button.pack(side="left", padx=button_padx)
+
+            # Add the feature functions
+            self.add_alignment_guides()
+            self.add_show_all_buttons_feature()
         
-        # Add logo controls directly to the button rows
-        self.add_logo_controls_directly()
-        
-        # VERY IMPORTANT: Prevent any automatic toggling after adding controls
-        if self.logo_visible != old_value:
-            print(f"Logo visibility changed from {old_value} to {self.logo_visible} - restoring!")
-            self.logo_visible = True
-            # Ensure the button text is correct
-            if hasattr(self, 'logo_toggle_button'):
-                self.logo_toggle_button.configure(text="Hide Logo")
-        
-        return result
-    
+        except ImportError:
+            messagebox.showinfo("Missing Package", "Please install Pillow: pip install pillow")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error displaying image: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     def add_logo_controls_directly(self):
         """Add logo controls directly to the preview window button rows"""
         # Check if button rows exist
