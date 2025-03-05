@@ -2428,6 +2428,9 @@ class MAMEControlConfig(ctk.CTk):
     def on_game_select(self, event):
         """Handle game selection and display controls"""
         try:
+            # First, close any existing preview windows
+            self.close_all_previews()
+            
             # Get the selected game name
             index = self.game_list.index(f"@{event.x},{event.y}")
             
@@ -2590,6 +2593,37 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error displaying game: {str(e)}")
             import traceback
             traceback.print_exc()
+        
+    def close_all_previews(self):
+        """Close all preview windows to prevent accumulation"""
+        # Close main preview window
+        if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
+            try:
+                # Clean up canvas items first
+                if hasattr(self, 'preview_canvas'):
+                    self.preview_canvas.delete("all")
+                
+                # Destroy window
+                self.preview_window.destroy()
+                print("Closed main preview window during ROM switch")
+            except Exception as e:
+                print(f"Error closing main preview: {e}")
+        
+        # Close exact preview window
+        if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
+            try:
+                self.exact_preview_window.destroy()
+                print("Closed exact preview window during ROM switch")
+            except Exception as e:
+                print(f"Error closing exact preview: {e}")
+        
+        # Reset text items
+        if hasattr(self, 'text_items'):
+            self.text_items = {}
+            
+        # Reset original positions
+        if hasattr(self, 'original_positions'):
+            self.original_positions = {}
     
     def create_info_directory(self):
         """Create info directory if it doesn't exist"""
@@ -3252,10 +3286,34 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
 
     def close_preview(self):
-        """Close the preview window properly"""
+        """Close the preview window properly and clean up resources"""
         print("Close preview called")
+        
+        # Close the main preview window if it exists
         if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
-            self.preview_window.destroy()
+            try:
+                # Clean up any canvas references first
+                if hasattr(self, 'preview_canvas'):
+                    # Clear stored item references to avoid memory leaks
+                    self.preview_canvas.delete("all")
+                    
+                # Clear text item references
+                if hasattr(self, 'text_items'):
+                    self.text_items = {}
+                    
+                # Destroy the window
+                self.preview_window.destroy()
+                print("Main preview window closed")
+            except Exception as e:
+                print(f"Error closing main preview window: {e}")
+        
+        # Also close any exact preview windows
+        if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
+            try:
+                self.exact_preview_window.destroy()
+                print("Exact preview window closed")
+            except Exception as e:
+                print(f"Error closing exact preview window: {e}")
         
         # If we're in standalone mode, exit the application
         if not hasattr(self, 'game_list') or not self.game_list.winfo_exists():
@@ -4174,18 +4232,22 @@ class MAMEControlConfig(ctk.CTk):
         
         return result
 
-
     def show_image_preview(self):
         """Show a window with an exact preview of how the image will be generated"""
         if not hasattr(self, 'current_game') or not self.current_game:
             messagebox.showerror("Error", "No game is currently selected")
             return
-        
+
         import os
         from tkinter import messagebox
         from PIL import Image, ImageDraw, ImageTk
         import traceback
-        
+
+        # Check for and close any existing exact preview windows
+        if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
+            print("Closing existing exact preview window")
+            self.exact_preview_window.destroy()
+            
         try:
             print("\n--- STARTING EXACT PREVIEW ---")
             
@@ -4298,13 +4360,13 @@ class MAMEControlConfig(ctk.CTk):
             print("Image preparation complete, creating display window")
             
             # Now display this image in a window
-            preview_window = ctk.CTkToplevel(self)
-            preview_window.title(f"Exact Image Preview: {self.current_game}")
-            preview_window.attributes('-topmost', True)
+            self.exact_preview_window = ctk.CTkToplevel(self)
+            self.exact_preview_window.title(f"Exact Image Preview: {self.current_game}")
+            self.exact_preview_window.attributes('-topmost', True)
             
             # Resize the image to fit on screen (maintaining aspect ratio)
-            screen_width = preview_window.winfo_screenwidth()
-            screen_height = preview_window.winfo_screenheight()
+            screen_width = self.exact_preview_window.winfo_screenwidth()
+            screen_height = self.exact_preview_window.winfo_screenheight()
             print(f"Screen dimensions: {screen_width}x{screen_height}")
             
             # Maximum size for preview (80% of screen)
@@ -4327,7 +4389,7 @@ class MAMEControlConfig(ctk.CTk):
             photo = ImageTk.PhotoImage(display_img)
             
             # Create canvas for the image
-            canvas = ctk.CTkCanvas(preview_window, width=display_width, height=display_height)
+            canvas = ctk.CTkCanvas(self.exact_preview_window, width=display_width, height=display_height)
             canvas.pack(padx=10, pady=10)
             
             # Display the image
@@ -4336,7 +4398,7 @@ class MAMEControlConfig(ctk.CTk):
             canvas.image = photo  # Keep a reference
             
             # Button frame
-            button_frame = ctk.CTkFrame(preview_window)
+            button_frame = ctk.CTkFrame(self.exact_preview_window)
             button_frame.pack(padx=10, pady=10, fill="x")
             
             # Save button
@@ -4351,17 +4413,17 @@ class MAMEControlConfig(ctk.CTk):
             close_button = ctk.CTkButton(
                 button_frame,
                 text="Close",
-                command=preview_window.destroy
+                command=self.exact_preview_window.destroy
             )
             close_button.pack(side="right", padx=10)
             
             # Set window size based on image dimensions plus padding
-            preview_window.geometry(f"{display_width + 40}x{display_height + 100}")
+            self.exact_preview_window.geometry(f"{display_width + 40}x{display_height + 100}")
             
             # Center window on screen
             x = (screen_width - (display_width + 40)) // 2
             y = (screen_height - (display_height + 100)) // 2
-            preview_window.geometry(f"+{x}+{y}")
+            self.exact_preview_window.geometry(f"+{x}+{y}")
             
             print("--- EXACT PREVIEW COMPLETED ---\n")
             
@@ -5176,7 +5238,9 @@ class MAMEControlConfig(ctk.CTk):
 
     # Here's the key part that needs to be fixed - how text is displayed in the preview screen
     def show_preview(self):
-        """Show a preview of the control layout for the current game on the second screen"""
+        
+        self.close_all_previews()
+
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
