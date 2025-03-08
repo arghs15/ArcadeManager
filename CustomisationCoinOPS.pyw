@@ -39,12 +39,53 @@ import builtins
 from datetime import datetime
 from ctypes import wintypes
 
+# Global debug flag - set to False for production, True for debugging
+DEBUG_MODE = False
+
 def disable_logging():
     def null_print(*args, **kwargs): pass
     null_print._disabled = True
     builtins.print = null_print
     sys.stdout = type('NullWriter', (), {'write': lambda s,t: None, 'flush': lambda s: None})()
 
+def timing_decorator(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # Skip timing measurements if not in debug mode
+        if not DEBUG_MODE:
+            return func(*args, **kwargs)
+        
+        # Only perform timing if in debug mode
+        start_time = time.time()
+        memory_before = psutil.Process().memory_info().rss / 1024 / 1024  # Memory in MB
+        
+        result = func(*args, **kwargs)
+        
+        end_time = time.time()
+        memory_after = psutil.Process().memory_info().rss / 1024 / 1024
+        duration = end_time - start_time
+        memory_used = memory_after - memory_before
+        
+        message = f"[TIMING] {func.__name__} took {duration:.3f} seconds | Memory change: {memory_used:.1f}MB"
+        print(message)
+        
+        # Only attempt to store timing data if we have an instance
+        if args and len(args) > 0:
+            instance = args[0]
+            if hasattr(instance, 'timing_data'):
+                instance.timing_data.append({
+                    "function": func.__name__,
+                    "duration": duration,
+                    "memory_change": memory_used,
+                    "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
+                })
+            if hasattr(instance, 'timing_messages'):
+                instance.timing_messages.append(message)
+                
+        return result
+    return wrapper
+
+# Early initialization - check config to disable logging if needed
 config = configparser.ConfigParser()
 config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "autochanger", "customisation.ini")
 if os.path.exists(config_path):
@@ -52,8 +93,15 @@ if os.path.exists(config_path):
     if not config.get('Settings', 'log_level', fallback='ALL').upper() == 'ALL':
         disable_logging()
 
+# Check if the script is running in a bundled environment
+if not getattr(sys, 'frozen', False):
+    # Change the working directory to the directory where the script is located
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 class PathManager:
-    
+    # Initialize the class attribute to store our cached path
+    _cached_base_path = None
+
     @staticmethod
     def get_parent_directory(path):
         # Get the parent directory of a given path
@@ -66,38 +114,40 @@ class PathManager:
 
     @staticmethod
     def get_base_path():
+        # Check if we've already cached the base path
+        if PathManager._cached_base_path is not None:
+            return PathManager._cached_base_path
+        
+        # Calculate the base path if not cached
         if sys.platform == 'win32':
-            # For Windows
-            # ie D:\CoinOPS\retrofe\retrofe.exe should return D:\CoinOPS
+            # Windows implementation...
             hModule = ctypes.windll.kernel32.GetModuleHandleW(None)
             exe = ctypes.create_unicode_buffer(260)  # MAX_PATH
             ctypes.windll.kernel32.GetModuleFileNameW(hModule, exe, 260)
-            return PathManager.get_directory(exe.value)
-
+            base_path = PathManager.get_directory(exe.value)
+            
         elif sys.platform == 'darwin':
-            # For macOS
-            # macOS can run executables or .app's, we account for both
-            # Get the process path
+            # macOS implementation...
             exepath = psutil.Process(os.getpid()).exe()
             sPath = PathManager.get_directory(exepath)
-
-            # Check if it's started as an app bundle
-            # ie /Applications/CoinOPS.app/Contents/Resources/Customisation.app/Contents/MacOS/RetroFE should return /Applications/CoinOPS.app/Contents/Resources
             rootPos = sPath.find("/Customisation.app/Contents/MacOS")
             if rootPos != -1:
                 sPath = sPath[:rootPos]
-
-            return sPath
-
+            base_path = sPath
+            
         else:
-            # For Linux or other Unix-like systems
+            # Linux implementation...
             exepath = f"/proc/{os.getpid()}/exe"
             try:
                 realpath = os.readlink(exepath)
-                return PathManager.get_directory(realpath)
+                base_path = PathManager.get_directory(realpath)
             except OSError:
                 print(f"Error reading the executable path: {exepath}")
-                return None
+                base_path = None
+        
+        # Cache the result in the class attribute
+        PathManager._cached_base_path = base_path
+        return base_path
 
     @staticmethod
     def get_resource_path(relative_path):
@@ -265,82 +315,92 @@ def initialize_logging(config_manager=None):
     builtins.print = log_manager.custom_print
     return log_manager
 
-''' THIS METHOD REMOVES ALL PRINTS. APP RUNS A SECOND FASTER
-# Store original print
-original_print = print
-
-class LogCapture:
-    def __init__(self):
-        self.log_file = None
-        self._initialize_log_file()
-    
-    def _initialize_log_file(self):
-        try:
-            self.log_file = os.path.join(PathManager.get_base_path(), "autochanger", "application.log")
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
-        except Exception as e:
-            original_print(f"Error initializing log file: {e}")
-
-    def write(self, message, with_timestamp=True):
-        if not message.strip():  # Skip empty messages
-            return
-            
-        try:
-            with open(self.log_file, 'a', encoding='utf-8') as f:
-                # Keep original formatting for certain messages
-                if "===" in message or "→" in message:
-                    f.write(f"{message}\n")
-                    return
-                    
-                # Don't add timestamp if message already has one
-                if "[20" in message and "] [INFO]" in message:
-                    f.write(f"{message}\n")
-                else:
-                    # Add line breaks before certain sections
-                    if any(message.startswith(x) for x in ["Loading ", "Checking ", "==="]):
-                        f.write("\n")
-                    
-                    if with_timestamp:
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        f.write(f"[{timestamp}] [INFO] {message}\n")
-                    else:
-                        f.write(f"{message}\n")
-        except Exception as e:
-            original_print(f"Error writing to log: {e}")
-
-logger = LogCapture()
-
-def custom_print(*args, **kwargs):
-    message = " ".join(str(arg) for arg in args)
-    original_print(*args, **kwargs)  # Call original print first
-    
-    # Special handling for build type checking format
-    if message.startswith("  roms:") or message.startswith("  videos:") or message.startswith("  logos:"):
-        logger.write(message, with_timestamp=False)
-    elif "→" in message:
-        logger.write(f"    {message}", with_timestamp=False)
-    else:
-        logger.write(message)
-
-# Override print globally
-builtins.print = custom_print
-
-# Add sys.stdout redirection for catching other output
-class StdoutRedirect:
-    def write(self, text):
-        if text.strip():
-            logger.write(text.rstrip())
-    def flush(self):
-        pass
-
-sys.stdout = StdoutRedirect()
-'''
-
 # Check if the script is running in a bundled environment
 if not getattr(sys, 'frozen', False):
     # Change the working directory to the directory where the script is located
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+class CreateToolTip:
+    """
+    Create a tooltip for a given customtkinter widget
+    """
+    def __init__(self, widget, text):
+        self.widget = widget
+        self.text = text
+        self.tooltip = None
+        # Bind to the CTk button's internal label widget
+        self.widget._text_label.bind('<Enter>', self.enter)
+        self.widget._text_label.bind('<Leave>', self.leave)
+        # Also bind to the button itself
+        self.widget.bind('<Enter>', self.enter)
+        self.widget.bind('<Leave>', self.leave)
+        self.id = None
+        self.tw = None
+
+    def enter(self, event=None):
+        """Schedule showing the tooltip"""
+        self.schedule()
+
+    def leave(self, event=None):
+        """Hide the tooltip"""
+        self.unschedule()
+        self.hide()
+
+    def schedule(self):
+        """Schedule showing of tooltip"""
+        self.unschedule()
+        self.id = self.widget.after(500, self.show)
+
+    def unschedule(self):
+        """Unschedule showing of tooltip"""
+        id_ = self.id
+        self.id = None
+        if id_:
+            self.widget.after_cancel(id_)
+
+    def show(self):
+        """Show the tooltip"""
+        # Get widget position
+        x = self.widget.winfo_rootx() + self.widget.winfo_width()//2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height()
+
+        # Creates a toplevel window
+        self.tw = tk.Toplevel(self.widget)
+        # Remove the window decorations
+        self.tw.wm_overrideredirect(True)
+        
+        # Create tooltip content with dark theme
+        frame = tk.Frame(self.tw, background="#2B2B2B", borderwidth=1, relief="solid")
+        frame.pack(ipadx=5, ipady=2)
+        
+        label = tk.Label(frame, 
+                        text=self.text,
+                        justify='left',
+                        background="#2B2B2B",
+                        foreground="white",
+                        wraplength=250,
+                        font=("Arial", "10", "normal"))
+        label.pack(padx=3, pady=2)
+
+        # Position tooltip centered below the button
+        tw_width = label.winfo_reqwidth() + 10  # Add padding
+        tw_height = label.winfo_reqheight() + 6  # Add padding
+        
+        x = x - tw_width//2  # Center horizontally
+        y = y + 5  # Add small gap below button
+        
+        self.tw.wm_geometry(f"+{x}+{y}")
+        
+        # Raise tooltip above other windows
+        self.tw.lift()
+        self.tw.attributes('-topmost', True)
+
+    def hide(self):
+        """Hide the tooltip"""
+        tw = self.tw
+        self.tw = None
+        if tw:
+            tw.destroy()
 
 class SplashScreen:
     def __init__(self, parent):
@@ -357,13 +417,18 @@ class SplashScreen:
         self.root.protocol("WM_DELETE_WINDOW", self.force_close)
         self.root.deiconify()  # Show window again
 
-        # Get DPI scale factor
-        try:
-            from ctypes import windll
-            self.dpi_scale = windll.shcore.GetScaleFactorForDevice(0) / 100
-        except Exception as e:
-            print(f"Failed to get DPI scale: {e}")
-            self.dpi_scale = 1.0
+        # Get DPI scale factor - simplified for CustomTkinter compatibility
+        if hasattr(ctk, 'get_scaling'):
+            # Use CustomTkinter's scaling if available
+            self.dpi_scale = ctk.get_scaling()
+        else:
+            # Fallback to manual detection
+            try:
+                from ctypes import windll
+                self.dpi_scale = windll.shcore.GetScaleFactorForDevice(0) / 100
+            except Exception:
+                print("Failed to get DPI scale, using default")
+                self.dpi_scale = 1.0
 
         # Set dark grey background
         self.root.configure(bg='#2b2b2b')
@@ -374,16 +439,16 @@ class SplashScreen:
         # Bind right-click event
         self.root.bind('<Button-3>', self.show_context_menu)
         
-        # Add timeout mechanism (30 seconds)
-        self.timeout_id = self.root.after(60000, self.handle_timeout)
+        # Add timeout mechanism (reduced from 60 to 30 seconds)
+        self.timeout_id = self.root.after(30000, self.handle_timeout)
 
         # Get screen dimensions
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
         # Calculate splash dimensions based on screen size and DPI
-        base_width = int(min(screen_width * 0.8, 1200))    # Doubled from 0.3 to 0.6
-        base_height = int(min(screen_height * 0.8, 800))   # Doubled from 0.4 to 0.8
+        base_width = int(min(screen_width * 0.8, 1200))
+        base_height = int(min(screen_height * 0.8, 800))
         
         # Apply DPI scaling
         splash_width = int(base_width * self.dpi_scale)
@@ -410,6 +475,17 @@ class SplashScreen:
         # Set initial geometry
         self.root.geometry(f"{splash_width}x{splash_height}+{x}+{y}")
 
+        # Try to load splash image with optimized path lookup
+        self.load_splash_image(splash_width, splash_height)
+
+        # Progress bar with custom style
+        self.setup_progress_bar(splash_width)
+
+        # Status label with DPI-aware font size
+        self.setup_status_label()
+
+    def load_splash_image(self, width, height):
+        """Improved image loading with better error handling"""
         # Paths for splash image lookup
         possible_paths = [
             PathManager.get_resource_path("Helper.png"),
@@ -417,7 +493,6 @@ class SplashScreen:
         ]
 
         # Try to load image
-        image_loaded = False
         for splash_path in possible_paths:
             try:
                 if os.path.exists(splash_path):
@@ -425,9 +500,8 @@ class SplashScreen:
                     image = Image.open(splash_path)
                     
                     # Use full frame width and height above progress bar
-                    # Remove padding to allow image to fill entire space
-                    img_width = splash_width
-                    img_height = int(splash_height * 0.9)  # Leave 10% for progress bar and status
+                    img_width = width
+                    img_height = int(height * 0.9)  # Leave 10% for progress bar and status
                     
                     # Maintain aspect ratio while filling the space
                     aspect_ratio = image.width / image.height
@@ -450,26 +524,26 @@ class SplashScreen:
                     # Remove padding to allow full-frame coverage
                     self.image_label.grid(row=0, column=0, sticky="nsew")
                     
-                    image_loaded = True
-                    break
+                    return  # Successfully loaded image
             except Exception as e:
                 print(f"Failed to load splash image from {splash_path}: {e}")
                 continue
 
-        if not image_loaded:
-            print("\nNo splash image found. Using text fallback.")
-            # Scale font size based on DPI - doubled from 24 to 48
-            font_size = int(48 * self.dpi_scale)
-            label = tk.Label(
-                self.frame,
-                text="Loading Application...",
-                font=("Helvetica", font_size),
-                bg='#2b2b2b',
-                fg='white'
-            )
-            label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        # Fallback to text if no image is loaded
+        print("\nNo splash image found. Using text fallback.")
+        # Scale font size based on DPI
+        font_size = int(48 * self.dpi_scale)
+        label = tk.Label(
+            self.frame,
+            text="Loading Application...",
+            font=("Helvetica", font_size),
+            bg='#2b2b2b',
+            fg='white'
+        )
+        label.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        # Progress bar with custom style
+    def setup_progress_bar(self, width):
+        """Configure and set up the progress bar"""
         style = ttk.Style()
         style.configure(
             "Custom.Horizontal.TProgressbar",
@@ -479,8 +553,7 @@ class SplashScreen:
             lightcolor='#007acc'
         )
 
-        # Calculate progress bar length based on window width
-        progress_width = int(splash_width * 0.95)  # Increased from 0.9 to 0.95
+        progress_width = int(width * 0.95)
         
         self.progress = ttk.Progressbar(
             self.frame,
@@ -491,7 +564,8 @@ class SplashScreen:
         self.progress.grid(row=1, column=0, sticky="ew", padx=20, pady=10)
         self.progress.start()
 
-        # Status label with DPI-aware font size - doubled from 10 to 20
+    def setup_status_label(self):
+        """Set up the status label with proper DPI scaling"""
         status_font_size = int(20 * self.dpi_scale)
         self.status_label = tk.Label(
             self.frame,
@@ -522,88 +596,88 @@ class SplashScreen:
             self.context_menu.grab_release()
 
     def handle_timeout(self):
-        """Handle splash screen timeout"""
+        """Handle splash screen timeout with improved messaging"""
         print("Splash screen timed out after 30 seconds")
-        error_msg = ("Application failed to start within 30 seconds.\n"
-                    "This might indicate a problem with initialization.\n"
+        error_msg = ("Application initialization is taking longer than expected.\n"
+                    "This might indicate a problem with the startup process.\n"
                     "Would you like to force close the application?")
                     
-        if messagebox.askyesno("Timeout Error", error_msg):
+        if messagebox.askyesno("Startup Taking Too Long", error_msg):
             self.force_close()
         else:
-            # Reset timeout for another 30 seconds
-            self.timeout_id = self.root.after(30000, self.handle_timeout)
+            # Reset timeout for another 15 seconds, shorter than initial timeout
+            self.timeout_id = self.root.after(15000, self.handle_timeout)
     
     def force_close(self):
-        """Force close the entire application"""
+        """Force close the entire application with enhanced cleanup"""
         print("Force closing application...")
         try:
             # Cancel timeout if it exists
-            if hasattr(self, 'timeout_id'):
+            if hasattr(self, 'timeout_id') and self.timeout_id:
                 self.root.after_cancel(self.timeout_id)
+                self.timeout_id = None
+            
+            # Stop the progress bar if running
+            if hasattr(self, 'progress'):
+                try:
+                    self.progress.stop()
+                except:
+                    pass
             
             # Destroy splash screen
             self.root.destroy()
             
             # Force close parent application
             if self.parent:
-                self.parent.quit()
-                self.parent.destroy()
+                try:
+                    self.parent.quit()
+                    self.parent.destroy()
+                except:
+                    pass
+                    
+            # As a last resort if normal close fails
+            import os
+            import sys
+            os._exit(1)
+            
         except Exception as e:
             print(f"Error during force close: {e}")
-            # If normal close fails, use os._exit as last resort
+            # If all else fails
             import os
             os._exit(1)
 
     def update_status(self, text):
         """Update status text with error checking"""
         try:
-            self.status_label.config(text=text)
-            self.root.update_idletasks()
-            print(f"Updated status label text: {text}")
+            if hasattr(self, 'status_label') and self.status_label.winfo_exists():
+                self.status_label.config(text=text)
+                self.root.update_idletasks()
+                print(f"Status update: {text}")
         except Exception as e:
             print(f"Error updating status: {e}")
 
     def close(self):
-        """Normal close of splash screen"""
+        """Normal close of splash screen with improved cleanup"""
         try:
             # Cancel timeout if it exists
-            if hasattr(self, 'timeout_id'):
+            if hasattr(self, 'timeout_id') and self.timeout_id:
                 self.root.after_cancel(self.timeout_id)
+                self.timeout_id = None
             
+            # Stop the progress bar if running
+            if hasattr(self, 'progress'):
+                try:
+                    self.progress.stop()
+                except:
+                    pass
+                    
+            # Lower topmost flag before destroying
             self.root.attributes('-topmost', False)
+            
+            # Destroy the window
             self.root.destroy()
         except Exception as e:
             print(f"Error closing splash screen: {e}")
-
-def timing_decorator(func):
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        memory_before = psutil.Process().memory_info().rss / 1024 / 1024  # Memory in MB
-        
-        result = func(*args, **kwargs)
-        
-        end_time = time.time()
-        memory_after = psutil.Process().memory_info().rss / 1024 / 1024
-        duration = end_time - start_time
-        memory_used = memory_after - memory_before
-        
-        message = f"[TIMING] {func.__name__} took {duration:.3f} seconds | Memory change: {memory_used:.1f}MB"
-        print(message)
-        
-        instance = args[0]
-        if hasattr(instance, 'timing_data'):
-            instance.timing_data.append({
-                "function": func.__name__,
-                "duration": duration,
-                "memory_change": memory_used,
-                "timestamp": time.strftime('%Y-%m-%d %H:%M:%S')
-            })
-        if hasattr(instance, 'timing_messages'):
-            instance.timing_messages.append(message)
-        return result
-    return wrapper
 
 class FilterGamesApp:
     def __init__(self, root):
@@ -615,14 +689,11 @@ class FilterGamesApp:
 
         # Initialize timing data first
         self.timing_data = []
-        self.timing_messages = []
+        self.tab_load_times = []
         self.start_time = time.time()
 
         # Initialize config_manager without passing base_path
         self.config_manager = ConfigManager()
-
-        # Initialize logging system right after config_manager
-        self.log_manager = initialize_logging(self.config_manager)
 
         # Get the base_path from config_manager if needed elsewhere
         self.base_path = self.config_manager.base_path
@@ -664,8 +735,14 @@ class FilterGamesApp:
 
     @staticmethod
     def resource_path(relative_path):
-        """Use PathManager for resource paths"""
-        return PathManager.get_resource_path(relative_path)
+        """Get absolute path to resource, works for dev and PyInstaller"""
+        try:
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            base_path = sys._MEIPASS
+        except Exception:
+            base_path = os.path.abspath(".")
+        
+        return os.path.join(base_path, relative_path)
     
     def _handle_focus(self):
         """Handle window focus events"""
@@ -732,13 +809,6 @@ class FilterGamesApp:
             self.splash.update_status("Setting up user interface...")
             self.setup_main_ui()
             
-            # Calculate total time
-            total_time = time.time() - self.start_time
-            self.timing_data.append(("Total Startup", total_time))
-            
-            # Log timing data
-            self.log_performance_data()
-            
             self.splash.update_status("Launch complete!")
             self.root.after(1000, self.finish_loading)
 
@@ -747,53 +817,6 @@ class FilterGamesApp:
             import traceback
             traceback.print_exc()
             self.splash.update_status(f"Error: {str(e)}")
-
-    def log_performance_data(self, save_to_file=False):
-        """Log performance data to console and optionally to file"""
-        print("\n=== Performance Report ===")
-        
-        # Get more detailed system info
-        system_info = {
-            "OS": platform.system() + " " + platform.version(),
-            "CPU": platform.processor(),
-            "CPU Cores": psutil.cpu_count(),
-            "CPU Usage": f"{psutil.cpu_percent()}%",
-            "RAM Total": f"{psutil.virtual_memory().total / (1024**3):.1f} GB",
-            "RAM Available": f"{psutil.virtual_memory().available / (1024**3):.1f} GB",
-            "RAM Usage": f"{psutil.virtual_memory().percent}%",
-            "Python": platform.python_version(),
-            "Screen Resolution": f"{self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}",
-            "DPI Scale": self.get_recommended_scaling()
-        }
-        
-        # Create log entry
-        log_entry = f"""
-    Performance Log - {time.strftime('%Y-%m-%d %H:%M:%S')}
-    System Information:
-    {chr(10).join(f'  {k}: {v}' for k, v in system_info.items())}
-
-    Timing Breakdown:
-    {chr(10).join(f'  {name}: {duration:.3f}s' for name, duration in self.timing_data)}
-
-    Tab Load Times:
-    {chr(10).join(f'  {name}: {duration:.3f}s' for name, duration in self.tab_load_times)}
-    """
-        
-        # Print to console
-        print(log_entry)
-        
-        # Only save to file if explicitly requested
-        if save_to_file:
-            try:
-                log_filename = f"performance_log_{time.strftime('%Y%m%d_%H%M%S')}.txt"
-                with open(log_filename, "w") as f:
-                    f.write(log_entry)
-                return log_filename
-            except Exception as e:
-                print(f"Error saving performance log: {e}")
-                return None
-        
-        return log_entry
 
     def _calculate_and_set_window_size(self):
         """Calculate window size based on screen size and constraints"""
@@ -870,12 +893,6 @@ class FilterGamesApp:
             # Store the new geometry
             self.original_geometry = self.root.geometry()
 
-            # Ensure frames maintain proper proportions
-            if hasattr(self, 'tabview_frame') and hasattr(self, 'exe_selector_frame'):
-                # Let grid weights handle the proportions rather than setting fixed heights
-                # This ensures better scaling with DPI and window size changes
-                pass
-
             # Trigger a frame update to ensure proper layout
             self.root.update_idletasks()
 
@@ -883,38 +900,31 @@ class FilterGamesApp:
         """Setup all UI components with proper vertical expansion"""
         overall_start = time.time()
         self.tab_load_times = []
-        ui_setup_start = time.time()
         
-        # Basic UI setup
-        self.root.resizable(True, True)
-        self.playlist_location = self.config_manager.get_playlist_location()
-        
-        # Set the window icon
+        # Set window icon and AppUserModelID FIRST, before any other UI setup
         try:
+            icon_path = self.resource_path("icon.ico")
             if os.name == 'nt':  # Windows
-                if getattr(sys, 'frozen', False):
-                    icon_path = os.path.join(sys._MEIPASS, "icon.ico") 
-                else:
-                    icon_path = self.resource_path("icon.ico")
-                    
-                if os.path.exists(icon_path):
-                    self.root.iconbitmap(icon_path)
-                    myappid = 'company.product.subproduct.version'
-                    ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
-                else:
-                    print(f"Icon not found at: {icon_path}")
-                    
+                # Set AppUserModelID before any UI operations
+                myappid = 'coinops.filtergames.app.v1'
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+                # Then set the icon
+                self.root.iconbitmap(default=icon_path)
             elif os.name == 'posix':  # macOS or Linux
                 if 'darwin' in os.uname().sysname.lower():  # Check if it's macOS
                     icns_path = os.path.join(PathManager.get_base_path() + "Customisation.app/Contents/Resources" + "icon.ico")
                     self.root.iconphoto(True, PhotoImage(file=icns_path))
-                else:
-                    icon_img = PhotoImage(file=self.resource_path("icon.ico"))
+                else:  # Linux
+                    icon_img = PhotoImage(file=icon_path)
                     self.root.iconphoto(True, icon_img)
         except Exception as e:
             print(f"Could not load icon: {e}")
         
-         # Configure root window grid - main content and appearance frame
+        # Now continue with the rest of the UI setup
+        self.root.resizable(True, True)
+        self.playlist_location = self.config_manager.get_playlist_location()
+
+        # Configure root window grid - main content and appearance frame
         self.root.grid_rowconfigure(0, weight=1)  # Main content
         self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
         self.root.grid_columnconfigure(0, weight=1)
@@ -948,13 +958,6 @@ class FilterGamesApp:
         self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
         self.tabview.grid(row=0, column=0, sticky="nsew")
         
-        # Record base UI setup time
-        base_ui_time = time.time() - ui_setup_start
-        self.timing_data.append(("Base UI Setup", base_ui_time))
-
-        # Start tracking total tab load time
-        tab_load_start = time.time()
-        
         # Add tabs
         # MultiPath Themes tab
         if self.config_manager.determine_tab_visibility('multi_path_themes'):
@@ -967,7 +970,7 @@ class FilterGamesApp:
                 tab_end = time.time()
                 duration = tab_end - tab_start
                 self.tab_load_times.append(("Themes", duration))
-                print(f"[TIMING] MultiPathThemes loaded in {duration:.3f} seconds")
+                print(f"MultiPathThemes loaded in {duration:.3f} seconds")
             else:
                 print("No ROM paths configured - Themes tab will not be displayed")
 
@@ -979,17 +982,17 @@ class FilterGamesApp:
             tab_end = time.time()
             duration = tab_end - tab_start
             self.tab_load_times.append(("Advanced Configs", duration))
-            print(f"[TIMING] AdvancedConfigs loaded in {duration:.3f} seconds")
+            print(f"AdvancedConfigs loaded in {duration:.3f} seconds")
             
         # Playlists tab
         if self.config_manager.determine_tab_visibility('playlists'):
             tab_start = time.time()
-            self.playlists_tab = self.tabview.add("Playlists")
+            self.playlists_tab = self.tabview.add("Arcade Playlists")
             self.playlists = Playlists(self.root, self.playlists_tab)
             tab_end = time.time()
             duration = tab_end - tab_start
             self.tab_load_times.append(("Playlists", duration))
-            print(f"[TIMING] Playlists loaded in {duration:.3f} seconds")
+            print(f"Playlists loaded in {duration:.3f} seconds")
 
         # Filter Games tab
         if self.config_manager.determine_tab_visibility('filter_games'):
@@ -999,7 +1002,7 @@ class FilterGamesApp:
             tab_end = time.time()
             duration = tab_end - tab_start
             self.tab_load_times.append(("Filter Arcades", duration))
-            print(f"[TIMING] FilterGames loaded in {duration:.3f} seconds")
+            print(f"FilterGames loaded in {duration:.3f} seconds")
 
         # Controls tab
         if self.config_manager.determine_tab_visibility('controls'):
@@ -1009,7 +1012,7 @@ class FilterGamesApp:
             tab_end = time.time()
             duration = tab_end - tab_start
             self.tab_load_times.append(("Controls", duration))
-            print(f"[TIMING] Controls loaded in {duration:.3f} seconds")
+            print(f"Controls loaded in {duration:.3f} seconds")
 
         # Manage Games tab
         if self.config_manager.determine_tab_visibility('view_games'):
@@ -1019,11 +1022,7 @@ class FilterGamesApp:
             tab_end = time.time()
             duration = tab_end - tab_start
             self.tab_load_times.append(("Manage Games", duration))
-            print(f"[TIMING] ViewRoms loaded in {duration:.3f} seconds")
-
-        # Calculate and store total tab load time
-        total_tab_time = time.time() - tab_load_start
-        self.timing_data.append(("Total Tab Loading Time", total_tab_time))
+            print(f"ViewRoms loaded in {duration:.3f} seconds")
 
         # Bind cleanup to window closing
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -1031,14 +1030,8 @@ class FilterGamesApp:
         # Add exe file selector on the right side
         self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
 
-        # Add total UI setup time
-        total_ui_time = time.time() - overall_start
-        self.timing_data.append(("Total UI Setup", total_ui_time))
-
         # Add resize observer
         self.add_resize_observer()
-
-        print("Debug - Final tab load times:", self.tab_load_times)
 
     def show_performance_data(self):
         """Show performance data in a popup window"""
@@ -1057,7 +1050,7 @@ class FilterGamesApp:
         screen_width = popup.winfo_screenwidth()
         screen_height = popup.winfo_screenheight()
         
-        # Use 60% of screen width and 70% of screen height
+        # Use 40% of screen width and 60% of screen height
         window_width = int(screen_width * 0.4)
         window_height = int(screen_height * 0.6)
         
@@ -1119,85 +1112,6 @@ class FilterGamesApp:
                 )
                 info_label.pack(pady=2, padx=10, anchor="w")
 
-        # Performance Metrics Section
-        perf_label = ctk.CTkLabel(
-            main_frame,
-            text="Performance Metrics",
-            font=("Helvetica", 18, "bold"),
-            text_color="#4CAF50"
-        )
-        perf_label.pack(pady=(20, 10), anchor="w")
-
-        perf_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
-        perf_frame.pack(fill="x", padx=5, pady=(0, 10))
-
-        # Startup Times Section
-        startup_label = ctk.CTkLabel(
-            perf_frame,
-            text="Startup Times",
-            font=("Helvetica", 14, "bold"),
-            text_color="#00BCD4"
-        )
-        startup_label.pack(pady=5, padx=10, anchor="w")
-
-        startup_frame = ctk.CTkFrame(perf_frame, fg_color='#252525', corner_radius=5)
-        startup_frame.pack(fill="x", padx=20, pady=(0, 10))
-
-        total_time = 0
-        for entry in self.timing_data:
-            if isinstance(entry, tuple) and len(entry) == 2:
-                name, duration = entry
-                total_time += duration
-                timing_label = ctk.CTkLabel(
-                    startup_frame,
-                    text=f"{name}: {duration:.3f} seconds",
-                    font=("Helvetica", 12),
-                    text_color="#ffffff"
-                )
-                timing_label.pack(pady=2, padx=10, anchor="w")
-
-        if total_time > 0:
-            total_label = ctk.CTkLabel(
-                startup_frame,
-                text=f"Total Startup Time: {total_time:.3f} seconds",
-                font=("Helvetica", 12, "bold"),
-                text_color="#4CAF50"
-            )
-            total_label.pack(pady=(5, 10), padx=10, anchor="w")
-
-        # Tab Load Times Section
-        if hasattr(self, 'tab_load_times') and self.tab_load_times:
-            tabs_label = ctk.CTkLabel(
-                perf_frame,
-                text="\nTab Load Times",
-                font=("Helvetica", 14, "bold"),
-                text_color="#00BCD4"
-            )
-            tabs_label.pack(pady=5, padx=10, anchor="w")
-
-            tabs_frame = ctk.CTkFrame(perf_frame, fg_color='#252525', corner_radius=5)
-            tabs_frame.pack(fill="x", padx=20, pady=(0, 10))
-
-            total_tab_time = 0
-            for tab_name, duration in self.tab_load_times:
-                tab_label = ctk.CTkLabel(
-                    tabs_frame,
-                    text=f"{tab_name}: {duration:.3f} seconds",
-                    font=("Helvetica", 12),
-                    text_color="#ffffff"
-                )
-                tab_label.pack(pady=2, padx=10, anchor="w")
-                total_tab_time += duration
-
-            # Add total tab load time
-            total_tab_label = ctk.CTkLabel(
-                tabs_frame,
-                text=f"\nTotal Tab Load Time: {total_tab_time:.3f} seconds",
-                font=("Helvetica", 12, "bold"),
-                text_color="#4CAF50"
-            )
-            total_tab_label.pack(pady=(5, 10), padx=10, anchor="w")
-
         # Get the centralized popup management
         on_close = self.show_popup(popup)
 
@@ -1229,462 +1143,6 @@ class FilterGamesApp:
             self._window_state['width_percentage'] = event.width / screen_width
             self._window_state['height_percentage'] = event.height / screen_height
 
-    def show_whats_new_popup(self):
-        """Show the 'What's New' popup with the latest updates."""
-        # ===== SIZE CONFIGURATION - ADJUST THESE VALUES =====
-        WINDOW_SIZE = {
-            'width_percentage': 0.4,  # 70% of screen width
-            'height_percentage': 0.6,  # 80% of screen height
-        }
-
-        SIZES = {
-            'icon': 20,  # Size in pixels for feature/bug icons
-            'screenshot': 400,  # Max width for screenshots in pixels
-            'window_padding': 20,  # Padding around the main window
-            'content_padding': 15,  # Padding for content elements
-            'button_spacing': 30,  # Spacing from scrollbar for bottom elements
-        }
-        # =================================================
-
-        # Helper function to get correct asset path
-        def get_asset_path(relative_path):
-            # First try the regular assets path
-            regular_path = os.path.join('assets', relative_path)
-            # Then try the PyInstaller temp directory path
-            bundled_path = os.path.join(getattr(sys, '_MEIPASS', '.'), 'assets', relative_path)
-            # Return the first path that exists
-            return regular_path if os.path.exists(regular_path) else bundled_path
-
-        # Define all asset paths using the helper function
-        assets = {
-            'feature_icon': get_asset_path('icons/feature_icon.png'),
-            'bug_icon': get_asset_path('icons/bug_icon.png'),
-            'rocket_icon': get_asset_path('icons/rocket_icon.png'),
-            'CoinOPS': get_asset_path('icons/CoinOPS.png'),
-            'image0': get_asset_path('screenshots/image0.png'),
-            #'image1': get_asset_path('screenshots/image1.png'),
-            #'image2': get_asset_path('screenshots/image2.png'),
-        }
-
-        print("Feature icon path:", assets['feature_icon'])
-        print("Exists?", os.path.exists(assets['feature_icon']))
-        print("Bug icon path:", assets['bug_icon'])
-        print("Exists?", os.path.exists(assets['bug_icon']))
-        print("Rocket icon path:", assets['rocket_icon'])
-        print("Exists?", os.path.exists(assets['rocket_icon']))
-
-        def load_icon(icon_path, fallback="⭐"):
-            """Load PNG icon with fallback to colored emoji."""
-            try:
-                original = tk.PhotoImage(file=icon_path)
-                aspect_ratio = original.width() / original.height()
-                new_width = SIZES['icon']
-                new_height = int(SIZES['icon'] / aspect_ratio)
-                subsample_x = original.width() // new_width
-                subsample_y = original.height() // new_height
-                if subsample_x > 0 and subsample_y > 0:
-                    return original.subsample(subsample_x, subsample_y)
-                return original
-            except (tk.TclError, FileNotFoundError) as e:
-                #print(f"Could not load icon from {icon_path}, using fallback: {e}")
-                # Create a colored label for the fallback emoji
-                return {
-                    'feature_icon': "⭐",  # Gold star
-                    'bug_icon': "👾",     # Space invader alien
-                    'rocket_icon': "🚀"   # Blue rocket
-                }.get(os.path.basename(icon_path).split('.')[0], fallback)
-
-        def resize_screenshot(screenshot):
-            """Resize screenshot to fit the desired width while maintaining aspect ratio."""
-            original_width = screenshot.width()
-            original_height = screenshot.height()
-
-            if original_width > SIZES['screenshot']:
-                aspect_ratio = original_width / original_height
-                new_width = SIZES['screenshot']
-                new_height = int(SIZES['screenshot'] / aspect_ratio)
-
-                subsample_x = original_width // new_width
-                subsample_y = original_height // new_height
-
-                if subsample_x > 0 and subsample_y > 0:
-                    return screenshot.subsample(subsample_x, subsample_y)
-            return screenshot
-
-        def create_feature_frame(parent, icon, title, description, image_path=None, full_width=False):
-            """Create a framed feature that can be either full-width or split layout, with a consistent outer border."""
-            # Outer frame for the darker border
-            outer_frame = ctk.CTkFrame(
-                parent,
-                fg_color="#1e1e1e",  # Darker border color
-                corner_radius=10,  # Rounded corners for the outer border
-            )
-            outer_frame.pack(fill="x", pady=(10, 20), padx=20)  # Padding around the entire frame
-
-            # Inner frame for the lighter content area
-            inner_frame = ctk.CTkFrame(
-                outer_frame,
-                fg_color="#252525",  # Lighter gray color for the inner frame
-                corner_radius=8,  # Slightly smaller rounding for the inner frame
-            )
-            inner_frame.pack(fill="both", expand=True, padx=10, pady=10)  # Padding inside the border
-
-            if full_width:
-                # Full-width layout
-                # Single content area for full-width items
-                content = ctk.CTkFrame(
-                    inner_frame,
-                    fg_color="#252525",  # Lighter gray for content
-                    corner_radius=8,
-                )
-                content.pack(fill="both", expand=True, padx=10, pady=10)
-
-                # Header frame for icon and title
-                header_frame = ctk.CTkFrame(content, fg_color="transparent")
-                header_frame.pack(fill="x", pady=(10, 5))
-
-                if isinstance(icon, str):
-                    icon_label = ctk.CTkLabel(
-                        header_frame,
-                        text=icon,
-                        font=("Segoe UI Emoji", 14),  # Use a font that supports colored emojis
-                        width=20,
-                    )
-                else:
-                    icon_label = tk.Label(
-                        header_frame,
-                        image=icon,
-                        bg="#252525",
-                    )
-                    # ───────────────────────────────────────────────
-                    # ADD THIS LINE to preserve the PhotoImage ref:
-                    icon_label.image = icon
-                    # ───────────────────────────────────────────────
-                icon_label.pack(side="left", padx=(5, 10))
-
-                title_label = ctk.CTkLabel(
-                    header_frame,
-                    text=title,
-                    text_color="#ffffff",
-                    font=("Helvetica", 16, "bold"),
-                    anchor="w",
-                )
-                title_label.pack(side="left", fill="x", expand=True)
-
-                # Description
-                desc_label = ctk.CTkLabel(
-                    content,
-                    text=description,
-                    text_color="#e0e0e0",
-                    font=("Helvetica", 12),
-                    justify="left",
-                    anchor="w",
-                    wraplength=800,  # Adjusted for full width
-                )
-                desc_label.pack(fill="both", expand=True, pady=(10, 10), padx=15)
-            else:
-                # Split layout
-                inner_frame.grid_columnconfigure(0, weight=1)  # Left column
-                inner_frame.grid_columnconfigure(1, weight=1)  # Right column
-
-                # Left content (text area)
-                left_content = ctk.CTkFrame(
-                    inner_frame,
-                    fg_color="#252525",  # Same color as the inner frame
-                    corner_radius=0,  # No additional border
-                )
-                left_content.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-
-                header_frame = ctk.CTkFrame(left_content, fg_color="transparent")
-                header_frame.pack(fill="x", pady=(5, 5))
-
-                if isinstance(icon, str):
-                    icon_label = ctk.CTkLabel(
-                        header_frame,
-                        text=icon,
-                        font=("Helvetica", 14),
-                        width=20,
-                    )
-                else:
-                    icon_label = tk.Label(
-                        header_frame,
-                        image=icon,
-                        bg="#252525",
-                    )
-                    # ───────────────────────────────────────────────
-                    # ADD THIS LINE to preserve the PhotoImage ref:
-                    icon_label.image = icon
-                    # ───────────────────────────────────────────────
-
-                icon_label.pack(side="left", padx=(5, 10))
-
-                title_label = ctk.CTkLabel(
-                    header_frame,
-                    text=title,
-                    text_color="#ffffff",
-                    font=("Helvetica", 16, "bold"),
-                    anchor="w",
-                )
-                title_label.pack(side="left", fill="x", expand=True)
-
-                desc_label = ctk.CTkLabel(
-                    left_content,
-                    text=description,
-                    text_color="#e0e0e0",
-                    font=("Helvetica", 12),
-                    justify="left",
-                    anchor="w",
-                    wraplength=400,
-                )
-                desc_label.pack(fill="both", expand=True, pady=(10, 10), padx=15)
-
-                # Right content (image area)
-                if image_path:
-                    try:
-                        right_content = ctk.CTkFrame(
-                            inner_frame,
-                            fg_color="#252525",  # Same color as the inner frame
-                            corner_radius=0,  # No additional border
-                        )
-                        right_content.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
-
-                        original_screenshot = tk.PhotoImage(file=image_path)
-                        resized_screenshot = resize_screenshot(original_screenshot)
-
-                        screenshot_label = tk.Label(
-                            right_content,
-                            image=resized_screenshot,
-                            bg="#252525",  # Match the inner frame background
-                        )
-                        screenshot_label.image = resized_screenshot
-                        screenshot_label.pack(expand=True, padx=5, pady=5)
-
-                    except (tk.TclError, FileNotFoundError) as e:
-                        print(f"Failed to load screenshot {image_path}: {e}")
-
-            return outer_frame
-
-        def show_popup():
-            if hasattr(self, '_whats_new_window') and self._whats_new_window:
-                self._whats_new_window.lift()
-                return
-
-            popup = tk.Toplevel(self.root)
-            self._whats_new_window = popup
-            popup.title("What's New")
-            popup.configure(bg='#2c2c2c')
-            
-            # Position the window
-            screen_width = popup.winfo_screenwidth()
-            screen_height = popup.winfo_screenheight()
-            window_width = int(screen_width * WINDOW_SIZE['width_percentage'])
-            window_height = int(screen_height * WINDOW_SIZE['height_percentage'])
-            x = (screen_width // 2) - (window_width // 2)
-            y = (screen_height // 2) - (window_height // 2)
-            popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-            # Get the config version
-            current_version = self.config_manager.config.get(
-                "DEFAULT", 
-                self.config_manager.CONFIG_VERSION_KEY, 
-                fallback=self.config_manager.CONFIG_FILE_VERSION
-            )
-
-            # Create title label
-            title_label = ctk.CTkLabel(
-                popup,
-                text=f"What's New in Version {current_version} 🎉",
-                text_color='#ffffff',
-                font=('Helvetica', 24, 'bold'),
-            )
-            title_label.pack(pady=(0, 30))
-
-            # Main scrollable frame
-            main_frame = ctk.CTkScrollableFrame(
-                popup,
-                fg_color='#2c2c2c',
-                scrollbar_button_color='#4CAF50',
-                scrollbar_button_hover_color='#45a049',
-                width=window_width - (2 * SIZES['window_padding'])
-            )
-            main_frame.pack(
-                fill="both",
-                expand=True,
-                padx=SIZES['window_padding'],
-                pady=SIZES['window_padding']
-            )
-
-            # Load icons with fallbacks
-            feature_icon = load_icon(assets['feature_icon'], "⭐")
-            bug_icon = load_icon(assets['bug_icon'], "👾")
-            rocket_icon = load_icon(assets['rocket_icon'], "🚀")
-
-            # Load your JSON data
-            json_file_path = os.path.join(PathManager.get_base_path(), "whats_new.json")
-            if sys.platform == 'darwin' and os.path.exists(os.path.join(PathManager.get_base_path(), "Customisation.app/Contents/Resources", "whats_new.json")):
-                json_file_path = os.path.join(PathManager.get_base_path(), "Customisation.app/Contents/Resources", "whats_new.json")
-
-            try:
-                with open(json_file_path, "r", encoding="utf-8") as f:
-                    whats_new_data = json.load(f)
-                    sections = whats_new_data.get("sections", [])
-            except Exception as e:
-                print(f"Whats New file not found - using default content")
-                sections = [{
-                    "section_header": "Welcome",
-                    "section_color": "#4CAF50",
-                    "items": [{
-                        "title": "Test Version",
-                        "description": "This is a test build - whats_new.json not found",
-                        "icon_key": "feature_icon",
-                        "full_width": True
-                    }]
-                }]
-
-            # Process sections
-            for section in sections:
-                section_label_text = section.get("section_header", "Untitled Section")
-                section_label_color = section.get("section_color", "#4CAF50")
-
-                new_features_label = ctk.CTkLabel(
-                    main_frame,
-                    text=section_label_text,
-                    text_color=section_label_color,
-                    font=('Helvetica', 18, 'bold'),
-                    anchor="w",
-                    justify="left"
-                )
-                new_features_label.pack(fill="x", pady=(0, 10))
-
-                for item in section.get("items", []):
-                    icon_key = item.get("icon_key", "feature_icon")
-                    title = item.get("title", "No title")
-                    description = item.get("description", "No description")
-                    full_width = item.get("full_width", False)
-                    image_key = item.get("image_key")
-
-                    icon = load_icon(assets[icon_key], "⭐") if icon_key in assets else "⭐"
-                    image_path = assets.get(image_key) if image_key and image_key in assets else None
-
-                    create_feature_frame(
-                        parent=main_frame,
-                        icon=icon,
-                        title=title,
-                        description=description,
-                        image_path=image_path,
-                        full_width=full_width
-                    )
-
-            # Bottom frame with buttons
-            bottom_frame = ctk.CTkFrame(main_frame, fg_color='transparent')
-            bottom_frame.pack(fill="x", pady=(20, 0))
-
-            def show_system_info():
-                self.show_performance_data()
-
-            # System Info button
-            system_info_button = ctk.CTkButton(
-                bottom_frame,
-                text="System Info",
-                command=show_system_info,
-                fg_color="#1f538d",
-                hover_color="#14375e",
-                width=100
-            )
-            system_info_button.pack(side="left", padx=(SIZES['button_spacing'], 0))
-
-            # Get the centralized popup management
-            on_close = self.show_popup(popup)
-
-            # OK button
-            def on_ok():
-                self._whats_new_window = None
-                if on_close:
-                    on_close()
-
-            ok_button = ctk.CTkButton(
-                bottom_frame,
-                text="Got it!",
-                command=on_ok,
-                fg_color='#4CAF50',
-                hover_color='#45a049',
-                width=100
-            )
-            ok_button.pack(side="right", padx=(0, SIZES['button_spacing']))
-
-            return popup
-
-        show_popup()
-
-    def on_closing(self):
-        try:
-            # Clean up controls if they exist
-            if hasattr(self, 'controls'):
-                self.controls.cleanup()
-
-            # Clean up advanced configs if it exists
-            if hasattr(self, 'advanced_configs'):
-                self.advanced_configs.cleanup()
-
-            # Destroy the root window
-            self.root.destroy()
-        except Exception as e:
-            print(f"Error during application closing: {e}")
-            # Ensure window is destroyed even if there's an error
-            try:
-                self.root.destroy()
-            except:
-                pass
-
-    def check_zzz_settings_folder(self):
-        """Check if at least one of the required themes folders exists."""
-        # Check if any of the paths exist
-        if os.path.isdir(self.zzz_auto_path):
-            print(f"Found themes folder: {self.zzz_auto_path}")
-            return True
-        elif os.path.isdir(self.zzz_set_path):
-            print(f"Found zzzSettings folder: {self.zzz_set_path}")
-            return True
-        elif os.path.isdir(self.zzz_shutdwn_path):
-            print(f"Found zzzShutdown folder: {self.zzz_shutdwn_path}")
-            return True
-        
-        # If none of the paths exist, return False
-        print(f"Warning: No themes folders found. Will remove Themes tab")
-        return False      
-    
-    def initialize_app(self):
-        """Initialize the main application with loading status updates"""
-        try:
-            # Configure all root grid weights first
-            self.root.grid_rowconfigure(0, weight=1)  # Main content
-            self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
-            self.root.grid_columnconfigure(0, weight=1)
-
-            # Window Configuration
-            self.splash.update_status("Setting up window configurations...")
-            self._calculate_and_set_window_size()
-            
-            # UI Setup
-            self.splash.update_status("Setting up user interface...")
-            self.setup_main_ui()
-            
-            # Calculate total time
-            total_time = time.time() - self.start_time
-            self.timing_data.append(("Total Startup", total_time))
-            
-            # Log timing data
-            self.log_performance_data()
-            
-            self.splash.update_status("Launch complete!")
-            self.root.after(1000, self.finish_loading)
-
-        except Exception as e:
-            print(f"Error during initialization: {e}")
-            import traceback
-            traceback.print_exc()
-            self.splash.update_status(f"Error: {str(e)}")
-
     def add_appearance_mode_frame(self, fullscreen=False):
         """Add appearance mode frame using grid layout"""
         # Check if the frame already exists
@@ -1696,63 +1154,23 @@ class FilterGamesApp:
         self.appearance_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
 
         # Create a grid layout inside appearance frame
-        self.appearance_frame.grid_columnconfigure(0, weight=0)  # Version button
-        self.appearance_frame.grid_columnconfigure(2, weight=0)  # Fullscreen toggle
-        self.appearance_frame.grid_columnconfigure(3, weight=1)  # Flexible space
-        self.appearance_frame.grid_columnconfigure(4, weight=0)  # Scale
-        self.appearance_frame.grid_columnconfigure(5, weight=0)  # Appearance mode
-        self.appearance_frame.grid_columnconfigure(6, weight=0)  # Close button
-
-        # Get the config version
-        current_version = self.config_manager.config.get(
-            "DEFAULT", 
-            self.config_manager.CONFIG_VERSION_KEY, 
-            fallback=self.config_manager.CONFIG_FILE_VERSION
-        )
-
-        # Get clicked status
-        has_been_clicked = self.config_manager.get_whats_new_clicked()
-
-        # Set initial colors
-        button_color = "#1f538d" if has_been_clicked else "#4CAF50"
-        hover_color = "#14375e" if has_been_clicked else "#45a049"
-
-        # Create version button
-        version_button = ctk.CTkButton(
-            self.appearance_frame,
-            text=f"What's New v{current_version}",
-            font=("Arial", 14, "bold"),
-            command=lambda: self.on_version_button_click(version_button),
-            fg_color=button_color,
-            hover_color=hover_color
-        )
-        version_button.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="ew")
-
-        # Add log button
-        ## Hide for now
-        if self.config_manager.determine_button_visibility('show_log_viewer_button'):
-            log_button = ctk.CTkButton(
-                self.appearance_frame,
-                text="View Log",
-                command=self.show_log_viewer,
-                font=("Arial", 14),
-                fg_color="#1f538d",
-                hover_color="#14375e"
-            )
-            log_button.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
-
-        if not has_been_clicked:
-            self._start_flash_animation(version_button)
+        self.appearance_frame.grid_columnconfigure(0, weight=0)  # System info button
+        self.appearance_frame.grid_columnconfigure(1, weight=0)  # Fullscreen toggle
+        self.appearance_frame.grid_columnconfigure(2, weight=1)  # Flexible space
+        self.appearance_frame.grid_columnconfigure(3, weight=0)  # Scale
+        self.appearance_frame.grid_columnconfigure(4, weight=0)  # Appearance mode
+        self.appearance_frame.grid_columnconfigure(5, weight=0)  # Close button
 
         # Add system info button
-        #timing_button = ctk.CTkButton(
-           #self.appearance_frame,
-            #text="System Info",
-            #command=self.show_performance_data,
-            #fg_color="#1f538d",
-            #hover_color="#14375e"
-        #)
-        #timing_button.grid(row=0, column=1, padx=5, pady=10, sticky="ew")
+        system_info_button = ctk.CTkButton(
+            self.appearance_frame,
+            text="System Info",
+            command=self.show_performance_data,
+            font=("Arial", 14, "bold"),
+            fg_color="#1f538d",
+            hover_color="#14375e"
+        )
+        system_info_button.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="ew")
 
         # Add fullscreen toggle
         fullscreen_switch = ctk.CTkSwitch(
@@ -1760,7 +1178,7 @@ class FilterGamesApp:
             text="Start in Fullscreen",
             command=lambda: self.set_fullscreen_preference(fullscreen_switch.get())
         )
-        fullscreen_switch.grid(row=0, column=2, padx=5, pady=10, sticky="w")
+        fullscreen_switch.grid(row=0, column=1, padx=5, pady=10, sticky="w")
 
         if self.config_manager.get_fullscreen_preference():
             fullscreen_switch.select()
@@ -1773,7 +1191,7 @@ class FilterGamesApp:
             values=["80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%"],
             command=self.change_scaling_event
         )
-        scaling_optionmenu.grid(row=0, column=4, padx=5, pady=10, sticky="e")
+        scaling_optionmenu.grid(row=0, column=3, padx=5, pady=10, sticky="e")
 
         # Add appearance mode dropdown
         current_mode = self.config_manager.get_appearance_mode()
@@ -1782,7 +1200,7 @@ class FilterGamesApp:
             values=["Dark", "Light", "System"],
             command=lambda mode: self.set_appearance_mode(mode)
         )
-        appearance_mode_optionmenu.grid(row=0, column=5, padx=5, pady=10, sticky="e")
+        appearance_mode_optionmenu.grid(row=0, column=4, padx=5, pady=10, sticky="e")
         appearance_mode_optionmenu.set(current_mode)
 
         # Add close button
@@ -1794,261 +1212,11 @@ class FilterGamesApp:
             hover_color="darkred",
             command=self.close_app
         )
-        close_button.grid(row=0, column=6, padx=(5, 10), pady=10, sticky="e")
+        close_button.grid(row=0, column=5, padx=(5, 10), pady=10, sticky="e")
 
         # Set default scaling based on screen properties
         current_scale = self.get_recommended_scaling()
         scaling_optionmenu.set(f"{int(current_scale * 100)}%")
-
-    def show_log_viewer(self):
-        """Show log content in a popup window with tabs for different logs"""
-        popup = ctk.CTkToplevel(self.root)
-        popup.title("Log Viewer")
-        
-        # Get screen dimensions for centering
-        screen_width = popup.winfo_screenwidth()
-        screen_height = popup.winfo_screenheight()
-        
-        # Calculate window size with margins for all elements
-        window_width = int(screen_width * 0.6)  # 60% of screen width
-        
-        # Calculate total height needed
-        settings_height = 50    
-        buttons_height = 50     
-        padding_height = 40     
-        min_content_height = 400  
-        
-        window_height = settings_height + min_content_height + buttons_height + padding_height
-        window_height = min(window_height, int(screen_height * 0.8))  # Cap at 80% of screen height
-        
-        # Calculate position for center of screen
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        
-        # Set window size and position
-        popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        popup.minsize(width=800, height=600)
-
-        # Get centralized popup management
-        on_close = self.show_popup(popup)  # Changed from self.main_app.show_popup
-
-        # Add settings frame at top
-        settings_frame = ctk.CTkFrame(popup)
-        settings_frame.pack(fill="x", padx=10, pady=5)
-        
-        # Single label and dropdown that will update based on tab
-        ctk.CTkLabel(settings_frame, text="Log Level:").pack(side="left", padx=10)
-        
-        # Create variables for both dropdowns
-        app_log_levels = ["ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL", "NONE"]
-        exe_log_levels = ["DEBUG", "INFO", "NOTICE", "WARNING", "ERROR", "FILECACHE", "ALL", "NONE"]
-        
-        level_var = ctk.StringVar(value=self.config_manager.get_setting('Settings', 'log_level', 'ALL'))
-
-        # Create tabview for different logs
-        tabview = ctk.CTkTabview(popup)
-        tabview.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # Create tabs
-        app_tab = tabview.add("Application Log")
-        exe_tab = tabview.add("Executable Log")
-        sys_tab = tabview.add("System Info")
-
-        # Calculate text widget height
-        text_height = window_height - settings_height - buttons_height - padding_height
-
-        def create_styled_text_widget(parent):
-            text_widget = ctk.CTkTextbox(
-                parent, 
-                width=window_width-60, 
-                height=text_height,  # Use calculated height
-                font=("Consolas", 12),
-                wrap="none"
-            )
-            text_widget.pack(fill="both", expand=True, padx=10, pady=10)
-            return text_widget
-
-        # Create text widgets for all tabs
-        app_log_text = create_styled_text_widget(app_tab)
-        exe_log_text = create_styled_text_widget(exe_tab)
-        sys_info_text = create_styled_text_widget(sys_tab)
-
-        # Add horizontal scrollbars
-        app_scrollx = ttk.Scrollbar(app_tab, orient="horizontal", command=app_log_text.xview)
-        app_scrollx.pack(fill="x", padx=10)
-        app_log_text.configure(xscrollcommand=app_scrollx.set)
-
-        exe_scrollx = ttk.Scrollbar(exe_tab, orient="horizontal", command=exe_log_text.xview)
-        exe_scrollx.pack(fill="x", padx=10)
-        exe_log_text.configure(xscrollcommand=exe_scrollx.set)
-
-        # Get log paths
-        app_log_path = os.path.join(PathManager.get_base_path(), "autochanger", "application.log")
-        exe_log_path = os.path.join(PathManager.get_base_path(), "log.txt")
-
-        def on_tab_change():
-            """Update dropdown when tab changes"""
-            current_tab = tabview.get()
-            if current_tab == "Application Log":
-                level_dropdown.configure(values=app_log_levels, state="normal")
-                level_var.set(self.config_manager.get_setting('Settings', 'log_level', 'ALL'))
-            elif current_tab == "Executable Log":
-                level_dropdown.configure(values=exe_log_levels, state="normal")
-                level_var.set(self.log_manager.get_current_exe_log_level())
-            else:  # System Info tab
-                level_dropdown.configure(state="disabled")
-
-        def on_level_change(value):
-            """Handle level change based on current tab"""
-            current_tab = tabview.get()
-            if current_tab == "Application Log":
-                self.log_manager.update_app_logging_setting('log_level', value)
-            else:  # Executable Log
-                self.log_manager.update_exe_logging_setting(value)
-            update_log_content()
-
-        level_dropdown = ctk.CTkOptionMenu(
-            settings_frame,
-            values=app_log_levels,  # Start with app levels
-            variable=level_var,
-            command=on_level_change
-        )
-        level_dropdown.pack(side="left", padx=10)
-
-        def update_system_info():
-            """Update system information display"""
-            try:
-                sys_info = []
-                sys_info.append("=== Performance Report ===\n")
-                sys_info.append("System Information:")
-                sys_info.append(f"  OS: {platform.system()} {platform.release()}")
-                
-                # CPU Info
-                cpu_info = psutil.cpu_count()
-                cpu_percent = psutil.cpu_percent()
-                sys_info.append(f"  CPU: {platform.processor()}")
-                sys_info.append(f"  CPU Cores: {cpu_info}")
-                sys_info.append(f"  CPU Usage: {cpu_percent}%")
-                
-                # Memory Info
-                memory = psutil.virtual_memory()
-                sys_info.append(f"  RAM Total: {memory.total / (1024**3):.1f} GB")
-                sys_info.append(f"  RAM Available: {memory.available / (1024**3):.1f} GB")
-                sys_info.append(f"  RAM Usage: {memory.percent}%")
-                
-                # Python Info
-                sys_info.append(f"  Python: {platform.python_version()}")
-                
-                # Screen Info
-                sys_info.append(f"  Screen Resolution: {self.root.winfo_screenwidth()}x{self.root.winfo_screenheight()}")
-                sys_info.append(f"  DPI Scale: {self.dpi_scale}")
-
-                # Timing Information (if you have it)
-                sys_info.append("\nTiming Breakdown:")
-                sys_info.append("  Base UI Setup: 0.097s")
-                sys_info.append("  Total Tab Loading Time: 1.104s")
-                sys_info.append("  Total UI Setup: 1.298s")
-                sys_info.append("  Total Startup: 1.484s")
-
-                sys_info.append("\nTab Load Times:")
-                sys_info.append("  Themes: 0.194s")
-                sys_info.append("  Advanced Configs: 0.066s")
-                sys_info.append("  Playlists: 0.170s")
-                sys_info.append("  Filter Arcades: 0.196s")
-                sys_info.append("  Controls: 0.404s")
-                sys_info.append("  Manage Games: 0.072s")
-                
-                # Update text widget
-                sys_info_text.configure(state="normal")
-                sys_info_text.delete('1.0', 'end')
-                sys_info_text.insert('1.0', "\n".join(sys_info))
-                sys_info_text.configure(state="disabled")
-            except Exception as e:
-                sys_info_text.configure(state="normal")
-                sys_info_text.delete('1.0', 'end')
-                sys_info_text.insert('1.0', f"Error getting system info: {str(e)}")
-                sys_info_text.configure(state="disabled")
-
-        def update_log_content():
-            """Update content for both log files"""
-            # Update application log
-            try:
-                if os.path.exists(app_log_path):
-                    with open(app_log_path, 'r', encoding='utf-8') as f:
-                        app_content = f.read()
-                    app_log_text.configure(state="normal")
-                    app_log_text.delete('1.0', 'end')
-                    app_log_text.insert('1.0', app_content)
-                    app_log_text.configure(state="disabled")
-                else:
-                    app_log_text.configure(state="normal")
-                    app_log_text.delete('1.0', 'end')
-                    app_log_text.insert('1.0', "No application log file found.")
-                    app_log_text.configure(state="disabled")
-            except Exception as e:
-                app_log_text.configure(state="normal")
-                app_log_text.delete('1.0', 'end')
-                app_log_text.insert('1.0', f"Error reading application log file: {str(e)}")
-                app_log_text.configure(state="disabled")
-
-            # Update executable log
-            try:
-                if os.path.exists(exe_log_path):
-                    with open(exe_log_path, 'r', encoding='utf-8') as f:
-                        exe_content = f.read()
-                    exe_log_text.configure(state="normal")
-                    exe_log_text.delete('1.0', 'end')
-                    exe_log_text.insert('1.0', exe_content)
-                    exe_log_text.configure(state="disabled")
-                else:
-                    exe_log_text.configure(state="normal")
-                    exe_log_text.delete('1.0', 'end')
-                    exe_log_text.insert('1.0', "No executable log file found.")
-                    exe_log_text.configure(state="disabled")
-            except Exception as e:
-                exe_log_text.configure(state="normal")
-                exe_log_text.delete('1.0', 'end')
-                exe_log_text.insert('1.0', f"Error reading executable log file: {str(e)}")
-                exe_log_text.configure(state="disabled")
-
-        # Set up tab change callback
-        tabview.configure(command=on_tab_change)
-
-        # Initial content load
-        update_log_content()
-        update_system_info()
-
-       # Add buttons
-        button_frame = ctk.CTkFrame(popup, fg_color="transparent")
-        button_frame.pack(fill="x", padx=10, pady=(0, 10))
-
-        refresh_button = ctk.CTkButton(
-            button_frame,
-            text="Refresh",
-            command=lambda: [update_log_content(), update_system_info()],
-            width=100
-        )
-        refresh_button.pack(side="left", padx=10)
-
-        close_button = ctk.CTkButton(
-            button_frame,
-            text="Close",
-            command=lambda: on_close() if on_close else None,
-            width=100
-        )
-        close_button.pack(side="right", padx=10)
-    
-    def add_resize_observer(self):
-        """Add window resize handling"""
-        self.root.bind('<Configure>', self.on_window_resize)
-
-    def on_window_resize(self, event):
-        """Handle window resize events"""
-        if event.widget == self.root and not self._window_state['is_fullscreen']:
-            # Update window dimensions
-            self._window_state['width'] = event.width
-            self._window_state['height'] = event.height
-            self.original_geometry = self.root.geometry()
 
     def get_recommended_scaling(self):
         """Calculate recommended scaling based on screen resolution and DPI"""
@@ -2116,90 +1284,46 @@ class FilterGamesApp:
         """Closes the application."""
         self.root.destroy()
 
-    def _start_flash_animation(self, button, flash_count=0):
-        """
-        Creates a flashing animation between green and blue.
-        """
-        GREEN = "#4CAF50"
-        DARK_GREEN = "#45a049"
-        BLUE = "#1f538d"
-        DARK_BLUE = "#14375e"
-        
-        MAX_FLASHES = 5  # Number of complete flash cycles
-        FLASH_INTERVAL = 500  # Milliseconds between color changes
-        
-        if flash_count >= (MAX_FLASHES * 2):  # *2 because each flash has two states
-            # Final state - set to green
-            button.configure(fg_color=GREEN, hover_color=DARK_GREEN)
-            return
-            
-        # Toggle between blue and green
-        if flash_count % 2 == 0:
-            button.configure(fg_color=BLUE, hover_color=DARK_BLUE)
-        else:
-            button.configure(fg_color=GREEN, hover_color=DARK_GREEN)
-        
-        # Schedule next color change
-        self.root.after(FLASH_INTERVAL, 
-                        lambda: self._start_flash_animation(button, flash_count + 1))
+    def on_closing(self):
+        try:
+            # Clean up controls if they exist
+            if hasattr(self, 'controls'):
+                self.controls.cleanup()
 
-    def on_version_button_click(self, button):
-        self.root.update_idletasks()  # Process any pending updates first
-        
-        # Batch our changes together
-        def update_ui():
-            button.configure(
-                fg_color="#1f538d",
-                hover_color="#14375e"
-            )
-            self.config_manager.set_whats_new_clicked(True)
-            self.show_whats_new_popup()
-        
-        # Schedule the UI updates together
-        self.root.after(1, update_ui)
-   
-    def center_window(self, width=None, height=None):
-        """Center the window with proper geometry management"""
-        if self._window_state['is_fullscreen']:
-            return  # Don't adjust geometry in fullscreen mode
-        
-        # If no dimensions provided, use stored percentages to calculate
-        if width is None or height is None:
-            self._calculate_and_set_window_size()
-            return
-            
-        # If specific dimensions are provided, use them
-        if os.name == 'nt':
-            SPI_GETWORKAREA = 48
-            work_area = ctypes.wintypes.RECT()
-            ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(work_area), 0)
-            screen_width = work_area.right - work_area.left
-            screen_height = work_area.bottom - work_area.top
-        else:
-            screen_width = self.root.winfo_screenwidth()
-            screen_height = self.root.winfo_screenheight()
+            # Clean up advanced configs if it exists
+            if hasattr(self, 'advanced_configs'):
+                self.advanced_configs.cleanup()
 
-        # Ensure dimensions don't exceed screen size
-        width = min(width, screen_width)
-        height = min(height, screen_height)
+            # Destroy the root window
+            self.root.destroy()
+        except Exception as e:
+            print(f"Error during application closing: {e}")
+            # Ensure window is destroyed even if there's an error
+            try:
+                self.root.destroy()
+            except:
+                pass
+
+    def check_zzz_settings_folder(self):
+        """Check if at least one of the required themes folders exists."""
+        # Check if any of the paths exist
+        if os.path.isdir(self.zzz_auto_path):
+            print(f"Found themes folder: {self.zzz_auto_path}")
+            return True
+        elif os.path.isdir(self.zzz_set_path):
+            print(f"Found zzzSettings folder: {self.zzz_set_path}")
+            return True
+        elif os.path.isdir(self.zzz_shutdwn_path):
+            print(f"Found zzzShutdown folder: {self.zzz_shutdwn_path}")
+            return True
         
-        # Calculate centered position
-        x = (screen_width - width) // 2
-        y = (screen_height - height) // 2
-        
-        # Update stored dimensions
-        self._window_state['width'] = width
-        self._window_state['height'] = height
-        self._window_state['width_percentage'] = width / screen_width
-        self._window_state['height_percentage'] = height / screen_height
-        
-        # Set geometry
-        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        # If none of the paths exist, return False
+        print(f"Warning: No themes folders found. Will remove Themes tab")
+        return False
 
 class ConfigManager:
     # Document all possible settings as class attributes
-    # These won't appear in the INI file unless explicitly added
-    CONFIG_FILE_VERSION = "2.2.9"  # Current configuration file version
+    CONFIG_FILE_VERSION = "3.0.0"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -2227,12 +1351,6 @@ class ConfigManager:
                 'description': 'Comma-separated paths for multi logos',
                 'type': List[str],
                 'hidden': True
-            },
-            'whats_new_clicked': {
-                'default': 'False',
-                'description': "Tracks whether the 'What's New' button has been clicked.",
-                'type': bool,
-                'hidden': False
             },
             'theme_location': {
                 'default': 'autochanger',
@@ -2342,7 +1460,36 @@ class ConfigManager:
                 'type': str,
                 'hidden': False
             },
-            
+            'lazy_loading': {
+                'default': 'True',
+                'description': 'Enable or disable logging',
+                'type': bool,
+                'hidden': False
+            },
+            'ignored_executables': {
+                'default': ['customisation', 'unins'],  # Default as a list
+                'description': 'Comma-separated list of executables to ignore',
+                'type': List[str],
+                'hidden': False
+            },
+            'ignore_collections': {
+                'default': [''],  # Default as a list, not a string
+                'description': 'Comma-separated list of collections to ignore',
+                'type': List[str],
+                'hidden': False
+            },
+            'layout_paths': {
+                'default': ['layouts/Arcades/collections'],
+                'description': 'Comma-separated list of layout collection paths',
+                'type': List[str],
+                'hidden': False
+            },
+            'default_executable': {
+                'default': '',
+                'description': 'Default executable to select when opening the app',
+                'type': str,
+                'hidden': False
+            }
         },
         'Controls': {
             'controls_file': {
@@ -2400,52 +1547,57 @@ class ConfigManager:
                 'description': 'Visibility of All Games tab',
                 'type': str,
                 'hidden': True
-            }
-        }
-    }
-
-    BUTTON_VISIBILITY_STATES = {
-        'show_move_artwork_button': { # removes all artwork for missing roms
-            'default': 'always',  # 'always', 'never'
-            'description': 'Controls visibility of Move Artwork button',
-            'type': str,
-            'hidden': False  # Changed from True
+            },
+            'theme_manager': {
+                'default': 'never',  # 'auto', 'always', or 'never'
+                'description': 'Visibility of All Games tab',
+                'type': str,
+                'hidden': True
+            },
         },
-        'show_move_roms_button': { # Allows a user to select roms to remove from a text fileView Log
-            'default': 'never',  # 'always', 'never'
-            'description': 'Controls visibility of Move ROMs button',
-            'type': str,
-            'hidden': False  # Changed from True
-        },
-        'show_remove_random_roms_button': { # Allows user to choose percentage of roms to remove. Used for me to slim down a build for testing.
-            'default': 'never',  # 'always', 'never'
-            'description': 'Controls visibility of Move ROMs button',
-            'type': str,
-            'hidden': False  # Changed from True
-        },
-        'remove_games_button': { # Checklist of roms user can manually choose to remove
-            'default': 'always',  # 'always', 'never'
-            'description': 'Controls visibility of Remove Games button',
-            'type': str,
-            'hidden': False  # Changed from True
-        },
-        'show_log_viewer_button': {  # Added new button visibility state
-            'default': 'never',  # 'always', 'never'
-            'description': 'Controls visibility of Log Viewer button',
-            'type': str,
-            'hidden': False
-        },
-        'create_playlist_button': {
-            'default': 'always',  # 'always', 'never'
-            'description': '',
-            'type': str,
-            'hidden': False
-        },
-        'export_collections_button': {
-            'default': 'always',  # 'always', 'never'
-            'description': 'Controls visibility of Log Viewer button',
-            'type': str,
-            'hidden': False
+        'ButtonVisibility': {
+            'show_move_artwork_button': { # removes all artwork for missing roms
+                'default': 'always',  # 'always', 'never'
+                'description': 'Controls visibility of Move Artwork button',
+                'type': str,
+                'hidden': True  # Changed from True
+            },
+            'show_move_roms_button': { # Allows a user to select roms to remove from a text fileView Log
+                'default': 'never',  # 'always', 'never'
+                'description': 'Controls visibility of Move ROMs button',
+                'type': str,
+                'hidden': True  # Changed from True
+            },
+            'show_remove_random_roms_button': { # Allows user to choose percentage of roms to remove. Used for me to slim down a build for testing.
+                'default': 'never',  # 'always', 'never'
+                'description': 'Controls visibility of Move ROMs button',
+                'type': str,
+                'hidden': True  # Changed from True
+            },
+            'remove_games_button': { # Checklist of roms user can manually choose to remove
+                'default': 'always',  # 'always', 'never'
+                'description': 'Controls visibility of Remove Games button',
+                'type': str,
+                'hidden': True  # Changed from True
+            },
+            'show_log_viewer_button': {  # Added new button visibility state
+                'default': 'never',  # 'always', 'never'
+                'description': 'Controls visibility of Log Viewer button',
+                'type': str,
+                'hidden': True
+            },
+            'create_playlist_button': {
+                'default': 'always',  # 'always', 'never'
+                'description': '',
+                'type': str,
+                'hidden': True
+            },
+            'export_collections_button': {
+                'default': 'always',  # 'always', 'never'
+                'description': 'Controls visibility of Log Viewer button',
+                'type': str,
+                'hidden': True
+            },
         }
     }
 
@@ -2519,125 +1671,6 @@ class ConfigManager:
             cls._cached_build_type = 'S'
             return 'S'
     
-    @classmethod
-    def get_version_from_json(cls):
-        """Load version from whats_new.json"""
-        try:
-            json_file_path = os.path.join(PathManager.get_base_path(), "whats_new.json")
-            if sys.platform == 'darwin' and os.path.exists(os.path.join(PathManager.get_base_path(), "Customisation.app/Contents/Resources", "whats_new.json")):
-                json_file_path = os.path.join(PathManager.get_base_path(), "Customisation.app/Contents/Resources", "whats_new.json")
-            with open(json_file_path, "r", encoding="utf-8") as f:
-                whats_new_data = json.load(f)
-                return whats_new_data.get("version", "2.2.8")  # fallback to 2.2.8 if not found
-        except Exception as e:
-            print(f"Error loading version from JSON: {e}")
-            return "2.2.8"  # fallback version
-
-    # Use as a property to get the current version
-    @property
-    def CONFIG_FILE_VERSION(self):
-        return self.get_version_from_json()
-    
-    @classmethod
-    def _load_json_file(cls, filename):
-        """Load a JSON file from PyInstaller temp directory first"""
-        try:
-            # First try PyInstaller temp directory
-            if hasattr(sys, '_MEIPASS'):
-                pyinstaller_path = os.path.join(sys._MEIPASS, filename)
-                print(f"Checking PyInstaller path: {pyinstaller_path}")
-                if os.path.exists(pyinstaller_path):
-                    print(f"✓ Found {filename} in PyInstaller directory")
-                    with open(pyinstaller_path, 'r', encoding='utf-8') as f:
-                        return json.load(f)
-                else:
-                    print(f"✗ {filename} not found in PyInstaller directory")
-            
-            # If not found in PyInstaller dir or not running from bundle,
-            # try base path
-            base_path = PathManager.get_base_path()
-            json_path = os.path.join(base_path, filename)
-            if os.path.exists(json_path):
-                print(f"Loading {filename} from base directory")
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-                    
-            print(f"Optional file {filename} not found - using defaults")
-            return None
-            
-        except Exception as e:
-            print(f"Error loading {filename}: {e} - using defaults")
-            return None
-
-    @classmethod
-    def _load_settings_overrides(cls):
-        """Load and apply settings from config_overrides.json"""
-        print("\nLoading settings overrides...")
-        overrides = cls._load_json_file('config_overrides.json')
-        if not overrides:
-            print("No overrides loaded")
-            return
-
-        print("Processing overrides:")
-        # Update settings
-        for section, settings in overrides.items():
-            print(f"\nProcessing section: {section}")
-            if section not in cls.AVAILABLE_SETTINGS:
-                print(f"Creating new section: {section}")
-                cls.AVAILABLE_SETTINGS[section] = {}
-            
-            for key, value in settings.items():
-                print(f"  Setting {key}:")
-                print(f"    Before: {key} = {cls.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('default', 'Not present')}")
-                
-                # Convert type string to actual type
-                if 'type' in value:
-                    value['type'] = cls._convert_type(value['type'])
-                
-                # Handle ButtonVisibility section specially
-                if section == 'ButtonVisibility':
-                    cls.BUTTON_VISIBILITY_STATES[key] = value
-                else:
-                    cls.AVAILABLE_SETTINGS[section][key] = value
-                
-                print(f"    After: {key} = {cls.AVAILABLE_SETTINGS.get(section, {}).get(key, {}).get('default', 'Not present')}")
-
-        print("\nFinal AVAILABLE_SETTINGS for Tabs section:")
-        tabs_section = cls.AVAILABLE_SETTINGS.get('Tabs', {})
-        for key, value in tabs_section.items():
-            print(f"  {key}: default = {value.get('default')}, hidden = {value.get('hidden')}")
-
-    @classmethod
-    def _convert_type(cls, type_str):
-        """Convert type string to actual type"""
-        type_mapping = {
-            'str': str,
-            'bool': bool,
-            'List[str]': List[str],
-            'int': int,
-            'float': float
-        }
-        return type_mapping.get(type_str, str)
-
-    @classmethod
-    def _load_build_types_overrides(cls):
-        """Load and apply build types from build_types.json if it exists"""
-        build_types = cls._load_json_file('build_types.json')
-        
-        # Only update if build_types exists and has the required key
-        if build_types is not None and 'BUILD_TYPE_PATHS' in build_types:
-            cls.BUILD_TYPE_PATHS.update(build_types['BUILD_TYPE_PATHS'])
-        else:
-            print("No build_types.json found or no BUILD_TYPE_PATHS key - using defaults")
-    
-    @classmethod
-    def initialize(cls):
-        """Initialize class-level settings"""
-        print("Loading settings overrides...")  # This will now be logged
-        cls._load_settings_overrides()
-        print("Loading build types overrides...")  # This will now be logged
-        cls._load_build_types_overrides()
-    
     def __init__(self, debug=True):
         self.debug = debug
         self.base_path = PathManager.get_base_path()
@@ -2680,17 +1713,23 @@ class ConfigManager:
         self.version_check()
 
         print("\nInitializing caches...")
-        # Initialize button visibility
-        for button in self.BUTTON_VISIBILITY_STATES:
-            self._button_visibility_cache[button] = self.determine_button_visibility(button)
+        # Initialize button visibility cache
+        button_settings = self.AVAILABLE_SETTINGS.get('ButtonVisibility', {})
+        for button_name in button_settings:
+            self._button_visibility_cache[button_name] = self.determine_button_visibility(button_name)
 
         # Pre-compute tab visibility
         for tab in ['controls', 'view_games', 'themes_games', 'advanced_configs', 
-                   'playlists', 'filter_games', 'multi_path_themes_tab']:
+                'playlists', 'filter_games', 'multi_path_themes_tab']:
             self._tab_visibility_cache[tab] = self.determine_tab_visibility(tab)
         
         print("=== ConfigManager Initialization Complete ===\n")
         print(f"✓ Using cached build type: {self._build_type}")
+        
+        # Print final state of button visibility cache
+        print("\nFinal Button Visibility Cache:")
+        for button_name, is_visible in self._button_visibility_cache.items():
+            print(f"  {button_name}: {'visible' if is_visible else 'hidden'}")
     
     def init_log(self):
         """Initialize/clear the log file on app startup"""
@@ -2731,12 +1770,11 @@ class ConfigManager:
     
     def get_fullscreen_preference(self) -> bool:
         """Retrieve the fullscreen preference."""
-        return self.config.getboolean('Settings', 'fullscreen', fallback=False)
+        return self.get_setting('Settings', 'fullscreen', False)
 
     def set_fullscreen_preference(self, fullscreen: bool):
         """Update the fullscreen preference."""
-        self.config.set('Settings', 'fullscreen', str(fullscreen).lower())
-        self.save_config()
+        self.set_setting('Settings', 'fullscreen', str(fullscreen).lower())
 
     def get_appearance_mode(self) -> str:
         """Retrieve the saved appearance mode."""
@@ -2746,19 +1784,23 @@ class ConfigManager:
         """Update and save the appearance mode."""
         if mode not in ['Dark', 'Light', 'System']:
             raise ValueError("Invalid appearance mode. Must be 'Dark', 'Light', or 'System'.")
-        self.config.set('Settings', 'appearance_mode', mode)
-        self.save_config()
+        self.set_setting('Settings', 'appearance_mode', mode)
 
     def version_check(self):
         """
         Check and handle configuration file version compatibility.
-        Ensures that the config version is checked in the DEFAULT section.
+        Preserves legacy versions "528" and "529".
         """
         try:
+            # Use the class constant for version
+            current_version = ConfigManager.CONFIG_FILE_VERSION
+            
             # If config file doesn't exist, create it with current version
             if not os.path.exists(self.config_path):
                 self._log("Config file not found. Will create with current version.")
                 self._reset_config_to_defaults()
+                self.config['DEFAULT'][ConfigManager.CONFIG_VERSION_KEY] = current_version
+                self.save_config()
                 return
 
             # Read existing config
@@ -2769,14 +1811,22 @@ class ConfigManager:
                 self.config['DEFAULT'] = {}
 
             # Check for version key specifically in DEFAULT section
-            current_version = self.config.get('DEFAULT', self.CONFIG_VERSION_KEY, fallback=None)
+            config_version = self.config.get('DEFAULT', ConfigManager.CONFIG_VERSION_KEY, fallback=None)
+            print(f"Version in config file: {config_version}")
 
-            # Preserve 528 version or set to current version if missing
-            if current_version is None or current_version not in ['528', self.CONFIG_FILE_VERSION]:
-                self._log(f"Config version updating. Old version: {current_version}, New version: {self.CONFIG_FILE_VERSION}")
-                # Ensure we don't completely reset the config
+            # Preserve "528" and "529" versions, reset if it's any other version mismatch
+            if config_version is None or (config_version not in ['528', '529'] and config_version != current_version):
+                self._log(f"Config version mismatch. Config: {config_version}, Current: {current_version}")
+                
+                # Preserve old config
                 old_config = dict(self.config)
                 self._reset_config_to_defaults()
+                
+                # Set the new version unless it's "528" or "529"
+                if config_version in ['528', '529']:
+                    self.config['DEFAULT'][ConfigManager.CONFIG_VERSION_KEY] = config_version
+                else:
+                    self.config['DEFAULT'][ConfigManager.CONFIG_VERSION_KEY] = current_version
                 
                 # Restore non-hidden settings from the old config
                 for section in old_config.sections():
@@ -2799,40 +1849,6 @@ class ConfigManager:
             self._log(f"Error during version check: {e}")
             self._reset_config_to_defaults()
 
-    def get_whats_new_clicked(self) -> bool:
-        """Retrieve the clicked status of the 'What's New' button."""
-        try:
-            # Get the raw value from config
-            value = self.config.get("Settings", "whats_new_clicked", fallback="False")
-            #print(f"Raw whats_new_clicked value from config: {value}")
-            # Convert to boolean
-            is_clicked = value.lower() in ['true', '1', 'yes']
-            #print(f"Converted to boolean: {is_clicked}")
-            return is_clicked
-        except Exception as e:
-            print(f"Error getting whats_new_clicked: {e}")
-            return False
-
-    def set_whats_new_clicked(self, clicked: bool):
-        """Update the clicked status of the 'What's New' button."""
-        try:
-            # Make sure Settings section exists
-            if "Settings" not in self.config:
-                self.config.add_section("Settings")
-            
-            # Set the value
-            self.config.set("Settings", "whats_new_clicked", str(clicked).lower())
-            print(f"Setting whats_new_clicked to: {clicked}")
-            
-            # Save immediately
-            self.save_config()
-            
-            # Verify the save
-            saved_value = self.get_whats_new_clicked()
-            print(f"Verified saved value: {saved_value}")
-        except Exception as e:
-            print(f"Error setting whats_new_clicked: {e}")
-
     def determine_button_visibility(self, button_name):
         """
         Determine whether a button should be visible based on configuration and context.
@@ -2842,17 +1858,19 @@ class ConfigManager:
             if button_name in self._button_visibility_cache:
                 return self._button_visibility_cache[button_name]
 
+            # Get the default value from AVAILABLE_SETTINGS
+            default_value = self.AVAILABLE_SETTINGS['ButtonVisibility'].get(button_name, {}).get('default', 'never')
+
             # First check ButtonVisibility section in INI
             if 'ButtonVisibility' in self.config and button_name in self.config['ButtonVisibility']:
                 visibility = self.config['ButtonVisibility'][button_name]
             # Then check Settings section in INI (for backward compatibility)
             elif 'Settings' in self.config and button_name in self.config['Settings']:
                 visibility = self.config['Settings'][button_name]
-            # Finally fall back to hardcoded defaults/overrides
             else:
-                visibility = self.BUTTON_VISIBILITY_STATES.get(button_name, {}).get('default', 'never')
+                visibility = default_value
 
-            print(f"Button {button_name} visibility from config: {visibility}")  # Debug logging
+            print(f"Button {button_name} visibility from config: {visibility}")
             
             # Convert visibility setting to boolean
             is_visible = visibility.lower() == 'always'
@@ -2866,39 +1884,15 @@ class ConfigManager:
             return False
 
     def update_button_visibility(self, button_name, visibility):
-        """
-        Update button visibility setting.
-        
-        :param button_name: Name of the button
-        :param visibility: Visibility mode ('always' or 'never')
-        """
+        """Update button visibility setting."""
         try:
             if visibility not in ['always', 'never']:
                 raise ValueError("Invalid visibility mode. Must be 'always' or 'never'")
-
-            # Ensure ButtonVisibility section exists
-            if 'ButtonVisibility' not in self.config:
-                self.config.add_section('ButtonVisibility')
-                
-            # Update the config
-            self.config.set('ButtonVisibility', button_name, visibility)
-            
+            self.set_setting('ButtonVisibility', button_name, visibility)
             # Update the cache
             self._button_visibility_cache[button_name] = (visibility == 'always')
-            
-            self.save_config()
-
         except Exception as e:
             print(f"Error updating button visibility for {button_name}: {e}")
-
-    def get_button_visibility(self, button_name):
-        """
-        Get the current visibility state of a button.
-        
-        :param button_name: Name of the button to check
-        :return: bool indicating if button should be visible
-        """
-        return self.determine_button_visibility(button_name)
     
     def _reset_config_to_defaults(self):
         """
@@ -2929,7 +1923,7 @@ class ConfigManager:
 
         # Ensure DEFAULT section exists with version
         new_config['DEFAULT'] = {
-            self.CONFIG_VERSION_KEY: self.CONFIG_FILE_VERSION
+            ConfigManager.CONFIG_VERSION_KEY: ConfigManager.CONFIG_FILE_VERSION
         }
 
         # Update the current config
@@ -2997,24 +1991,55 @@ class ConfigManager:
 
     def _initialize_default_config(self):
         """Initialize the INI file with only visible (non-hidden) default settings."""
+        print("\n=== Initializing Default Configuration ===")
+        
         # Add base sections
-        for section in ['Settings', 'Controls', 'Tabs', 'ButtonVisibility']:  # Added ButtonVisibility
+        for section in ['Settings', 'Controls', 'Tabs', 'ButtonVisibility']:
             if section not in self.config:
+                print(f"Creating section: {section}")
                 self.config[section] = {}
 
         # Initialize settings from AVAILABLE_SETTINGS
         for section, settings in self.AVAILABLE_SETTINGS.items():
             if section not in self.config:
                 self.config[section] = {}
+                
             for key, setting_info in settings.items():
                 if not setting_info.get('hidden', False):
-                    self.config[section][key] = str(setting_info['default'])
+                    default_value = str(setting_info['default'])
+                    self.config[section][key] = default_value
+                    print(f"Adding setting: [{section}] {key} = {default_value}")
 
-        # Initialize button visibility settings under [ButtonVisibility] section
-        for button_name, button_info in self.BUTTON_VISIBILITY_STATES.items():
+        print("=== Default Configuration Initialization Complete ===\n")
+
+    def verify_button_visibility_settings(self):
+        """Verify that non-hidden button visibility settings are properly written to the INI file."""
+        print("\n=== Verifying Button Visibility Settings ===")
+        
+        if 'ButtonVisibility' not in self.config:
+            print("❌ ButtonVisibility section missing from config")
+            return False
+            
+        all_correct = True
+        button_settings = self.AVAILABLE_SETTINGS.get('ButtonVisibility', {})
+        
+        for button_name, button_info in button_settings.items():
             if not button_info.get('hidden', False):
-                self.config['ButtonVisibility'][button_name] = button_info['default']
-
+                if button_name in self.config['ButtonVisibility']:
+                    stored_value = self.config['ButtonVisibility'][button_name]
+                    expected_value = button_info['default']
+                    if stored_value == expected_value:
+                        print(f"✓ {button_name}: stored={stored_value}")
+                    else:
+                        print(f"❌ Value mismatch for {button_name}: stored={stored_value}, expected={expected_value}")
+                        all_correct = False
+                else:
+                    print(f"❌ Missing setting for {button_name}")
+                    all_correct = False
+        
+        print(f"\nVerification {'succeeded' if all_correct else 'failed'}")
+        return all_correct
+    
     def determine_tab_visibility(self, tab_name):
         """
         Determine whether a tab is visible based on config and environment checks.
@@ -3059,19 +2084,14 @@ class ConfigManager:
             return False
 
     def update_tab_visibility(self, tab_name, visibility):
-        """
-        Update tab visibility setting.
-
-        :param tab_name: Name of the tab
-        :param visibility: Visibility mode ('auto', 'always', 'never')
-        """
+        """Update tab visibility setting."""
         try:
             if visibility not in ['auto', 'always', 'never']:
                 raise ValueError("Invalid visibility mode. Must be 'auto', 'always', or 'never'")
-
             setting_key = f'{tab_name}_tab'
-            self.config.set('Tabs', setting_key, visibility)
-            self.save_config()
+            self.set_setting('Tabs', setting_key, visibility)
+            # Update the cache
+            self._tab_visibility_cache[tab_name] = self.determine_tab_visibility(tab_name)
         except Exception as e:
             print(f"Error updating tab visibility for {tab_name}: {e}")
 
@@ -3328,35 +2348,25 @@ class ConfigManager:
             cls._cached_build_type = None
             print("Cache reset complete")
 
-    def get_controls_file(self) -> str:
-        """Get the controls file name."""
-        return self.config.get('Controls', 'controls_file', fallback='controls5.conf')
+    def get_exclude_append(self) -> List[str]:
+        """Get the list of additional controls to exclude."""
+        return self.get_setting('Controls', 'excludeAppend', [])
 
     def get_exclude_append(self) -> List[str]:
         """Get the list of additional controls to exclude."""
-        exclude_str = self.config.get('Controls', 'excludeAppend', fallback='')
-        return [item.strip() for item in exclude_str.split(',') if item.strip()]
+        return self.get_setting('Controls', 'excludeAppend', [])
 
     def get_controls_add(self) -> List[str]:
         """Get the list of controls to add (ignoring exclude list)."""
-        controls_str = self.config.get('Controls', 'controlsAdd', fallback='')
-        return [item.strip() for item in controls_str.split(',') if item.strip()]
+        return self.get_setting('Controls', 'controlsAdd', [])
 
     def update_controls_file(self, filename: str):
         """Update the controls file name."""
-        try:
-            self.config.set('Controls', 'controls_file', filename)
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating controls file: {str(e)}")
+        self.set_setting('Controls', 'controls_file', filename)
 
     def update_exclude_append(self, controls: List[str]):
         """Update the excludeAppend list."""
-        try:
-            self.config.set('Controls', 'excludeAppend', ', '.join(controls))
-            self.save_config()
-        except Exception as e:
-            print(f"Error updating excludeAppend: {str(e)}")
+        self.set_setting('Controls', 'excludeAppend', ', '.join(controls))
 
     def update_controls_add(self, controls: List[str]):
         """Update the controlsAdd list."""
@@ -3366,22 +2376,19 @@ class ConfigManager:
         except Exception as e:
             print(f"Error updating controlsAdd: {str(e)}")
 
+    def get_controls_file(self) -> str:
+        """Get the controls file name."""
+        return self.get_setting('Controls', 'controls_file', 'controls5.conf')
+
     def toggle_location_controls(self):
         """Toggle the visibility of location control elements."""
-        current_value = self.config.getboolean('Settings', 'show_location_controls', fallback=False)
-        print(f"Current value before toggle: {current_value}")  # Debug
-        self.config['Settings']['show_location_controls'] = str(not current_value)
-        self.save_config()
-        print(f"New value after toggle: {not current_value}")  # Debug
+        current_value = self.get_setting('Settings', 'show_location_controls', False)
+        self.set_setting('Settings', 'show_location_controls', not current_value)
 
     def get_settings_file(self) -> str:
         """Get the settings file name."""
-        try:
-            settings_value = self.config.get('Settings', 'settings_file', fallback='5_7')
-            return f"settings{settings_value}.conf"
-        except Exception as e:
-            print(f"Error reading settings file: {str(e)}")
-            return "settings5_7.conf"
+        settings_value = self.get_setting('Settings', 'settings_file', '5_7')
+        return f"settings{settings_value}.conf"
 
     def get_cycle_playlist(self) -> List[str]:
         """Get the cycle playlist configuration based on build conditions."""
@@ -3460,9 +2467,4548 @@ class ConfigManager:
         except Exception as e:
             print(f"Error updating settings file: {str(e)}")
 
-# Right here, after the class definition ends
-ConfigManager.initialize()
+class ExeFileSelector:
+    def __init__(self, parent_frame, config_manager):
+        self.parent_frame = parent_frame
+        self.config_manager = config_manager
+        self.base_path = self.config_manager.base_path
 
+        print("\nInitializing ExeFileSelector...")
+
+        # Get settings
+        close_gui_after_running = self.config_manager.get_setting('Settings', 'close_gui_after_running', True)
+        self.default_exe = self.config_manager.get_setting('Settings', 'default_executable', '')
+        print(f"Loaded default_executable from config: {self.default_exe}")
+
+        # Create the exe frame inside parent frame
+        self.exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)
+        self.exe_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Configure the exe_frame grid
+        self.exe_frame.grid_rowconfigure(0, weight=0)  # Logo row
+        self.exe_frame.grid_rowconfigure(1, weight=1)  # Scrollable frame
+        self.exe_frame.grid_rowconfigure(2, weight=0)  # Switch row
+        self.exe_frame.grid_columnconfigure(0, weight=1)
+
+        # Modified logo loading section
+        try:
+            print("\nLogo loading debug:")
+            
+            # Try multiple possible logo locations relative to base_path
+            possible_paths = [
+                os.path.join(self.base_path, 'autochanger', 'Logo.png'),
+                os.path.join(self.base_path, 'Logo.png'),
+                os.path.join(self.base_path, 'assets', 'Logo.png')
+            ]
+
+            if sys.platform == 'darwin':
+                # For macOS
+                possible_paths = [
+                    os.path.join(self.base_path, "Customisation.app/Contents/Resources", "Logo.png")
+                ]
+            
+            logo_found = None
+            for path in possible_paths:
+                print(f"Checking path: {path}")
+                if os.path.exists(path):
+                    logo_found = path
+                    print(f"Found logo at: {logo_found}")
+                    break
+                    
+            if not logo_found:
+                raise FileNotFoundError("Logo file not found in any of the expected locations")
+
+            # Load and process the logo
+            logo_original = Image.open(logo_found)
+            print(f"Logo loaded successfully! Dimensions: {logo_original.width}x{logo_original.height}")
+            
+            # Calculate scaled dimensions
+            MAX_WIDTH = 300
+            MAX_HEIGHT = 150
+            width_ratio = MAX_WIDTH / logo_original.width
+            height_ratio = MAX_HEIGHT / logo_original.height
+            scale_ratio = min(width_ratio, height_ratio)
+            new_width = int(logo_original.width * scale_ratio)
+            new_height = int(logo_original.height * scale_ratio)
+            
+            # Create and display the logo
+            logo_image = ctk.CTkImage(
+                light_image=logo_original,
+                dark_image=logo_original,
+                size=(new_width, new_height)
+            )
+            
+            # Create and display the logo using grid
+            logo_label = ctk.CTkLabel(self.exe_frame, text="", image=logo_image)
+            logo_label.grid(row=0, column=0, pady=(10, 0))
+            
+            # Store reference
+            self.logo_image = logo_image
+            
+        except Exception as e:
+            print(f"Error loading logo: {str(e)}")
+            print(f"Full error traceback:", traceback.format_exc())
+            title_label = ctk.CTkLabel(self.exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
+            title_label.grid(row=0, column=0, padx=10, pady=10)
+
+       # Create a scrollable frame inside exe_frame
+        self.scrollable_frame = ctk.CTkScrollableFrame(self.exe_frame, width=300, height=200, corner_radius=10)
+        self.scrollable_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Bind mousewheel to scrollable frame
+        self.scrollable_frame.bind("<MouseWheel>", self._on_mousewheel)
+        self.scrollable_frame.bind("<Button-4>", self._on_mousewheel)
+        self.scrollable_frame.bind("<Button-5>", self._on_mousewheel)
+        
+        # Find all .exe files
+        self.exe_files = self.find_exe_files()
+        print(f"Found executables: {self.exe_files}")
+        
+        # Set the default exe if it exists in exe_files, otherwise use first exe
+        initial_exe = self.default_exe if self.default_exe in self.exe_files else (self.exe_files[0] if self.exe_files else "")
+        print(f"Setting initial executable to: {initial_exe}")
+        self.exe_var = tk.StringVar(value=initial_exe)
+        
+        # Dictionary to store labels and frames
+        self.exe_labels = {}
+        
+        # Add clickable items for each exe
+        for i, exe in enumerate(self.exe_files):
+            # Remove the .exe extension for display
+            display_name = os.path.splitext(exe)[0]
+            
+            # Create a frame to hold the label for better hover effects
+            item_frame = ctk.CTkFrame(
+                self.scrollable_frame,
+                fg_color="transparent",
+                corner_radius=5
+            )
+            item_frame.grid(row=i, column=0, sticky="ew", padx=5, pady=2)
+            item_frame.grid_columnconfigure(0, weight=1)
+            
+            # Create the label
+            exe_label = ctk.CTkLabel(
+                item_frame,
+                text=display_name,
+                cursor="hand2",
+                anchor="w",
+                padx=15,
+                pady=8
+            )
+            exe_label.grid(row=0, column=0, sticky="ew")
+            
+            # Bind events for hover effect and click
+            item_frame.bind("<Button-1>", lambda e, ex=exe: self.on_exe_click(ex))
+            exe_label.bind("<Button-1>", lambda e, ex=exe: self.on_exe_click(ex))
+            
+            self.exe_labels[exe] = (item_frame, exe_label)
+            
+        # Update selection indicator for initial_exe
+        if initial_exe and initial_exe in self.exe_labels:
+            self.update_selection_indicator(initial_exe)
+
+        # Create the switch using grid
+        self.close_gui_var = tk.BooleanVar(value=close_gui_after_running)
+        self.close_gui_switch = ctk.CTkSwitch(
+            self.exe_frame,
+            text="Close GUI After Running",
+            onvalue=True,
+            offvalue=False,
+            variable=self.close_gui_var,
+            command=self.update_switch_text
+        )
+        self.close_gui_switch.grid(row=2, column=0, pady=10, padx=10, sticky="w")
+        
+        # Update switch text initially
+        self.update_switch_text()
+        
+        # Add a separator between exe selection and batch file sections
+        separator = ctk.CTkFrame(parent_frame, height=2, fg_color="gray70")
+        separator.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+        
+        # Add batch file section - convert to use grid throughout
+        self.add_batch_file_dropdown(parent_frame)
+
+    def _on_mousewheel(self, event):
+        """Handle mousewheel scrolling"""
+        # Different handling for different platforms
+        if event.num == 4 or event.num == 5:
+            # Linux behavior
+            direction = 1 if event.num == 4 else -1
+        else:
+            # Windows behavior
+            direction = event.delta // 120
+        
+        # Scroll the canvas inside the scrollable frame
+        # For CTkScrollableFrame, we need to access its internal canvas
+        self.scrollable_frame._parent_canvas.yview_scroll(-direction, "units")
+    
+    def on_exe_click(self, exe):
+        """Handle click on an exe item"""
+        self.exe_var.set(exe)
+        self.update_selection_indicator(exe)
+        
+        # Automatically save this as the default/last used
+        self.default_exe = exe
+        self.config_manager.config.setdefault('Settings', {})['default_executable'] = exe
+        self.config_manager.save_config()
+        
+        # Run the executable
+        self.run_selected_exe()
+        
+    def update_selection_indicator(self, selected_exe):
+        """Update the visual indicator of the selected exe"""
+        # Find the frame of the selected exe
+        if selected_exe in self.exe_labels:
+            frame, _ = self.exe_labels[selected_exe]
+            frame.configure(fg_color="#3B8ED0")  # Highlight color
+            
+            # Reset other frames
+            for exe, (other_frame, _) in self.exe_labels.items():
+                if exe != selected_exe:
+                    other_frame.configure(fg_color="transparent")
+    
+    def update_switch_text(self):
+        # Update the visual text based on the current switch state
+        if self.close_gui_var.get():
+            self.close_gui_switch.configure(text="Exit the GUI after execution")
+        else:
+            self.close_gui_switch.configure(text="Stay in the GUI after execution")
+        
+        # Save the current switch state to the configuration
+        self.config_manager.config['Settings']['close_gui_after_running'] = str(self.close_gui_var.get()).lower()
+        self.config_manager.save_config()
+
+    def find_exe_files(self):
+        """Find executable files with cross-platform support, ignoring specified executables."""
+        # Get the executable extension based on platform
+        if sys.platform.startswith('win'):
+            exe_extension = '.exe'
+        elif sys.platform == 'darwin':
+            exe_extension = '.app'
+        else:
+            exe_extension = ''
+
+        exe_dir = self.base_path
+        
+        print(f"Searching for executables in: {exe_dir}")
+        
+        # Get the list of ignored executables from the config
+        ignored_terms = self.config_manager.get_setting('Settings', 'ignored_executables')
+        
+        # Add 'Customisation' to ignored terms if not already present
+        if 'Customisation' not in ignored_terms:
+            ignored_terms.append('Customisation')
+        
+        executables = []
+        for f in os.listdir(exe_dir):
+            if f.endswith(exe_extension):
+                # Convert filename to lowercase for case-insensitive comparison
+                filename_lower = f.lower()
+                
+                # Check if any ignored term appears in the filename
+                should_ignore = any(
+                    ignore_term.lower() in filename_lower 
+                    for ignore_term in ignored_terms
+                )
+                
+                if not should_ignore and not filename_lower.startswith('customisation'):
+                    executables.append(f)
+        
+        print(f"Found executables: {executables}, Ignored terms:", ignored_terms)
+        return executables
+    
+    def run_selected_exe(self):
+        selected_exe = self.exe_var.get()
+        if not selected_exe:
+            messagebox.showinfo("No Selection", "Please select an executable.")
+            return
+        
+        exe_path = os.path.join(PathManager.get_base_path(), selected_exe)
+        try:
+            # 1) Remove topmost if we want the EXE to appear on top
+            #    (only if 'stay in the GUI' is toggled off, for example)
+            if not self.close_gui_switch.get():
+                # “Stay in the GUI”
+                parent_window = self.parent_frame.winfo_toplevel()
+                parent_window.attributes('-topmost', False)
+                parent_window.lift()  # or parent_window.lower() if you prefer
+            
+            # 2) Launch the EXE
+            os.startfile(exe_path)
+            
+            # 3) If user selected “close GUI after running,” just destroy
+            if self.close_gui_switch.get():
+                self.parent_frame.winfo_toplevel().destroy()
+
+            # Optionally do a small sleep to give Windows time to reorder windows
+            time.sleep(0.5)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to run {selected_exe}: {e}")
+
+    def add_batch_file_dropdown(self, parent_frame):
+        # Create a frame for batch file dropdown below the separator
+        self.batch_file_frame = ctk.CTkFrame(parent_frame, corner_radius=10)
+        self.batch_file_frame.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        
+        # Configure the batch_file_frame grid
+        self.batch_file_frame.grid_rowconfigure(0, weight=0)  # Title row
+        self.batch_file_frame.grid_rowconfigure(1, weight=1)  # Script list row
+        self.batch_file_frame.grid_columnconfigure(0, weight=1)
+
+        # Add a title for the reset section using grid
+        reset_label = ctk.CTkLabel(self.batch_file_frame, text="Reset Build to Defaults", font=("Arial", 14, "bold"))
+        reset_label.grid(row=0, column=0, padx=10, pady=(10, 5))
+
+        # Get batch files and ensure it's a list
+        batch_files = self.find_reset_batch_files()
+        print(f"Found batch files: {batch_files}")
+        
+        # If no scripts found, display message
+        if not batch_files:
+            no_scripts_label = ctk.CTkLabel(
+                self.batch_file_frame,
+                text="No reset scripts found",
+                text_color="gray60"
+            )
+            no_scripts_label.grid(row=1, column=0, padx=10, pady=10, sticky="w")
+            return
+        
+        # Create a scrollable frame for script items
+        self.scripts_frame = ctk.CTkScrollableFrame(self.batch_file_frame, height=100, corner_radius=5)
+        self.scripts_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
+        self.scripts_frame.grid_columnconfigure(0, weight=1)
+        
+        # Bind mousewheel to scrollable frame
+        self.scripts_frame.bind("<MouseWheel>", self._on_scripts_mousewheel)
+        self.scripts_frame.bind("<Button-4>", self._on_scripts_mousewheel)
+        self.scripts_frame.bind("<Button-5>", self._on_scripts_mousewheel)
+        
+        # Variable to track selected script
+        self.script_var = tk.StringVar(value=batch_files[0] if batch_files else "")
+        print(f"Initial script selection: {self.script_var.get()}")
+        
+        # Clear any existing script_labels from previous runs
+        self.script_labels = {}
+        
+        # Add clickable items for each script
+        for i, script in enumerate(batch_files):
+            # Remove extension and "- " for display
+            display_name = os.path.splitext(script)[0].replace("- ", "")
+            print(f"Creating script item {i}: {display_name}")
+            
+            # Create a frame with fixed width and explicit background
+            script_frame = ctk.CTkFrame(
+                self.scripts_frame,
+                fg_color="transparent",
+                corner_radius=5
+            )
+            script_frame.grid(row=i, column=0, sticky="ew", padx=5, pady=2)
+            script_frame.grid_columnconfigure(0, weight=1)
+            
+            # Create the label
+            script_label = ctk.CTkLabel(
+                script_frame,
+                text=display_name,
+                cursor="hand2",
+                anchor="w",
+                padx=15,
+                pady=8
+            )
+            script_label.grid(row=0, column=0, sticky="ew")
+            
+            # Store the reference
+            self.script_labels[script] = (script_frame, script_label)
+            
+            # Use a function to create a proper closure to capture the script variable correctly
+            def make_bindings(script_frame, script_name):
+                script_frame.bind("<Button-1>", lambda e, s=script_name: self.on_script_click(s))
+                
+                # Get the label for this frame
+                label = script_frame.winfo_children()[0]
+                label.bind("<Button-1>", lambda e, s=script_name: self.on_script_click(s))
+            
+            # Call the function to properly bind events
+            make_bindings(script_frame, script)
+            
+        # Highlight the first script initially
+        if batch_files:
+            print(f"Setting initial highlight to: {batch_files[0]}")
+            self.update_script_highlight(batch_files[0])
+
+    def _on_scripts_mousewheel(self, event):
+        """Handle mousewheel scrolling for scripts frame"""
+        # Different handling for different platforms
+        if hasattr(event, 'num') and (event.num == 4 or event.num == 5):
+            # Linux behavior
+            direction = 1 if event.num == 4 else -1
+        else:
+            # Windows behavior
+            direction = event.delta // 120
+        
+        # Scroll the canvas inside the scrollable frame
+        self.scripts_frame._parent_canvas.yview_scroll(-direction, "units")
+    
+    def on_script_click(self, script):
+        """Handle click on a script item"""
+        print(f"Script clicked: {script}")
+        
+        # Update the selected script
+        self.script_var.set(script)
+        
+        # Update highlighting
+        self.update_script_highlight(script)
+        
+        # Ask for confirmation before running
+        confirm = messagebox.askyesno(
+            "Confirmation",
+            f"Are you sure you want to run the '{script}' script?"
+        )
+        
+        if confirm:
+            print(f"  - running script: {script}")
+            self.run_script(script)
+
+    def update_script_highlight(self, selected_script):
+        """Update the visual indicator for scripts"""
+        print(f"Setting script highlight: {selected_script}")
+        
+        # First reset all scripts to transparent
+        for s, (frame, _) in self.script_labels.items():
+            if s == selected_script:
+                print(f"  - highlighting: {s}")
+                frame.configure(fg_color="#B22222")  # Red
+            else:
+                print(f"  - clearing: {s}")
+                frame.configure(fg_color="transparent")
+    
+    def find_reset_batch_files(self):
+        """Find reset scripts with cross-platform support"""
+        # Define script extensions based on platform
+        if sys.platform.startswith('win'):
+            extensions = ['.bat', '.cmd']
+        else:
+            extensions = ['.sh']
+            
+        base_path = self.base_path
+        files = []
+        
+        for ext in extensions:
+            files.extend([
+                f for f in os.listdir(base_path) 
+                if f.endswith(ext) and "Restore" in f
+            ])
+            
+        print(f"Found reset scripts: {files}")
+        return files if files else []
+
+    def run_script(self, script_name):
+        """Run scripts with cross-platform support"""
+        confirm = messagebox.askyesno(
+            "Confirmation",
+            f"Are you sure you want to run the '{script_name}' script?"
+        )
+
+        if not confirm:
+            return
+
+        try:
+            script_path = os.path.join(self.base_path, script_name)
+
+            # Check if the script exists
+            if not os.path.isfile(script_path):
+                messagebox.showerror("File Not Found", f"Script not found: {script_path}")
+                return
+
+            print(f"Running script: {script_path}")
+
+            # Create a modal progress window
+            progress_window = tk.Toplevel(self.parent_frame)
+            progress_window.title("Running Script")
+            
+            # Make it modal (blocks main window interaction)
+            progress_window.grab_set()
+            
+            # Center the progress window
+            window_width = 400
+            window_height = 150
+            screen_width = progress_window.winfo_screenwidth()
+            screen_height = progress_window.winfo_screenheight()
+            center_x = int((screen_width - window_width) / 2)
+            center_y = int((screen_height - window_height) / 2)
+            progress_window.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
+            
+            # Make it non-resizable and always on top
+            progress_window.resizable(False, False)
+            progress_window.transient(self.parent_frame)
+            progress_window.attributes('-topmost', True)
+
+            # Add message
+            message_label = ctk.CTkLabel(
+                progress_window,
+                text="Please wait while the restore script runs...\n\nThis window will close automatically when complete.",
+                font=("Arial", 12),
+                wraplength=350
+            )
+            message_label.pack(pady=20, padx=20)
+
+            # Add spinning progress indicator
+            progress = ctk.CTkProgressBar(progress_window)
+            progress.pack(pady=10, padx=20)
+            progress.configure(mode='indeterminate')
+            progress.start()
+
+            # Function to run the script and close the progress window
+            def run_script_thread():
+                try:
+                    if sys.platform.startswith('win'):
+                        # Windows
+                        subprocess.run(
+                            f'cmd.exe /c "{script_path}"',
+                            shell=True,
+                            text=True,
+                            check=False
+                        )
+                    else:
+                        # Linux/MacOS
+                        os.chmod(script_path, 0o755)  # Make executable
+                        subprocess.run(
+                            ['/bin/bash', script_path],
+                            shell=False,
+                            text=True,
+                            check=False
+                        )
+                    
+                    # Schedule the window closure and success message on the main thread
+                    progress_window.after(0, lambda: [
+                        progress_window.destroy(),
+                        messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has completed.")
+                    ])
+                    
+                except Exception as e:
+                    # Schedule error handling on the main thread
+                    progress_window.after(0, lambda: [
+                        progress_window.destroy(),
+                        messagebox.showerror("Error", f"An error occurred: {str(e)}")
+                    ])
+
+            # Run the script in a separate thread
+            thread = Thread(target=run_script_thread)
+            thread.daemon = True
+            thread.start()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"An unexpected error occurred while running {script_name}: {str(e)}")
+
+"""
+This class is used to manage playing videos for MultiThemes class.
+"""
+class ThemeViewer:
+    def __init__(self, video_path=None, image_path=None):
+        self.video_path = video_path
+        self.image_path = image_path
+        self.thumbnail = None
+        self.video_cap = None
+        self.is_playing = False
+        self.lock = Lock()
+        
+    def extract_thumbnail(self):
+        """Extract thumbnail from video file or load PNG with fallback handling"""
+        # Try video first
+        if self.video_path:
+            try:
+                cap = cv2.VideoCapture(self.video_path)
+                ret, frame = cap.read()
+                cap.release()
+                
+                if ret:
+                    return frame
+            except Exception as e:
+                print(f"Error extracting video thumbnail: {e}")
+        
+        # Try specific image if provided (but not logo)
+        if self.image_path and not any(folder in self.image_path for folder in ['logos', 'Logos']):
+            try:
+                image = cv2.imread(self.image_path)
+                if image is not None:
+                    return image
+            except Exception as e:
+                print(f"Error loading specific image: {e}")
+        
+        # Try fallback image
+        fallback_path = os.path.join("assets", "images", "theme_fallback.png")
+        if not os.path.exists(fallback_path):
+            fallback_path = os.path.join("assets", "images", "theme_fallback.jpg")
+        
+        if os.path.exists(fallback_path):
+            try:
+                fallback_image = cv2.imread(fallback_path)
+                if fallback_image is not None:
+                    return fallback_image
+            except Exception as e:
+                print(f"Error loading fallback image: {e}")
+        
+        return None
+
+    def start_video(self):
+        """Start video playback"""
+        with self.lock:
+            if not self.is_playing and self.video_path:
+                try:
+                    self.video_cap = cv2.VideoCapture(self.video_path)
+                    if self.video_cap.isOpened():
+                        self.is_playing = True
+                        #print(f"Video started successfully: {self.video_path}")
+                        return True
+                    else:
+                        print("Failed to open video file")
+                        self.video_cap = None
+                except Exception as e:
+                    print(f"Error starting video: {e}")
+                    self.video_cap = None
+            return False
+
+    def stop_video(self):
+        """Stop video playback"""
+        with self.lock:
+            self.is_playing = False
+            if self.video_cap:
+                try:
+                    self.video_cap.release()
+                except Exception as e:
+                    print(f"Error stopping video: {e}")
+                finally:
+                    self.video_cap = None
+
+    def get_frame(self):
+        """Get next video frame if playing"""
+        if not self.is_playing or not self.video_cap:
+            return None
+            
+        try:
+            ret, frame = self.video_cap.read()
+            if ret:
+                return frame
+            else:
+                # Reset video to start
+                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                ret, frame = self.video_cap.read()
+                return frame if ret else None
+        except Exception as e:
+            print(f"Error reading frame: {e}")
+            return None
+            
+class MultiPathThemes:
+    def __init__(self, parent_tab):
+        #print("Initializing MultiPathThemes...")
+        self.parent_tab = parent_tab
+        self.base_path = PathManager.get_base_path()
+
+        # Initialize configuration manager
+        self.config_manager = ConfigManager()
+        self.theme_paths = self.config_manager.get_theme_paths_multi()
+        self.ignore_list = self.config_manager.get_ignore_list()
+
+        # Validate that we have required paths
+        if not self.theme_paths.get('roms'):
+            print("No ROM paths configured")
+            self.rom_folders = []
+        else:
+            self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
+
+        if not self.theme_paths.get('videos'):
+            print("No video paths configured")
+            self.video_folders = []
+        else:
+            self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
+            
+        if not self.theme_paths.get('logos'):
+            print("No logo paths configured")
+            self.logo_folders = []
+        else:
+            self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
+
+        # Resolve relative paths to absolute paths
+        #self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
+        #self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
+        #self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
+
+        # State management
+        self.themes_list = []
+        self.current_theme_index = 0
+        self.current_viewer = None
+        self.default_size = (640, 360)
+        self.thumbnail_cache = {}
+        self.current_frame = None
+        self.autoplay_after = None
+        self.last_resize_time = 0
+        self.resize_delay = 200  # ms
+        self.last_frame_time = 0
+        self.target_fps = 40
+        self.frame_interval = 1000 / self.target_fps  # ms
+        self.current_rom_folder_index = 0  # Track the current ROM folder index
+
+        self._setup_ui()
+        self.load_themes()
+        
+        # If we have themes, show initial theme and update button visibility
+        if self.themes_list:
+            # Force button visibility update before showing initial theme
+            self.update_exclude_button()
+            self.show_initial_theme()
+            # Update UI to ensure changes are applied
+            self.parent_tab.update_idletasks()
+
+    def show_status_message(self, message):
+        """Utility to display a status message in the theme label."""
+        self.theme_label.configure(text=message)
+        print(f"Status Update: {message}")
+
+    def cancel_autoplay(self):
+        """Cancel any scheduled autoplay"""
+        if self.autoplay_after:
+            try:
+                self.parent_tab.after_cancel(self.autoplay_after)
+                print("Cancelled scheduled autoplay")
+            except Exception as e:
+                print(f"Error cancelling autoplay: {e}")
+            finally:
+                self.autoplay_after = None
+
+    def schedule_autoplay(self):
+        """Schedule video autoplay after 2 seconds"""
+        self.cancel_autoplay()
+
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling autoplay...")
+            self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
+
+    def start_autoplay(self):
+        """Start video playback immediately"""
+        print("Starting autoplay...")
+        self.config_manager.add_to_log("Starting autoplay...")
+        if self.current_viewer and self.current_viewer.video_path:
+            if not self.current_viewer.is_playing:
+                if self.current_viewer.start_video():
+                    print("Autoplay started successfully")
+                    self.play_video()
+                else:
+                    print("Failed to start autoplay")
+                    self.show_thumbnail()
+
+    def clear_logo_cache(self):
+        """Clear all cached logo images"""
+        for attr in list(vars(self)):
+            if attr.startswith('logo_cache_'):
+                delattr(self, attr)
+
+    def get_build_type(self, rom_folder):
+        """Determine build type from ROM folder path"""
+        if 'zzzSettings' in rom_folder:
+            return 'S'
+        elif 'zzzShutdown' in rom_folder:
+            return 'U'
+        return 'D'
+    
+    def exclude_current_theme(self):
+        """Add current theme to exclude.txt for its build type and refresh display"""
+        if not self.themes_list:
+            return
+
+        current_theme = self.themes_list[self.current_theme_index]
+        theme_name = os.path.splitext(current_theme[0])[0]  # Remove extension
+        rom_folder = current_theme[3]  # Get ROM folder from theme tuple
+        build_type = self.get_build_type(rom_folder)
+
+        # Get the base path and construct collections path
+        collections_path = os.path.join(self.base_path, 'collections')
+        
+        # Determine exclude directory path based on build type
+        if build_type == 'S':
+            exclude_dir = os.path.join(collections_path, 'zzzSettings')
+        elif build_type == 'U':
+            exclude_dir = os.path.join(collections_path, 'zzzShutdown')
+        else:
+            return  # Don't proceed for build type D
+
+        # Ensure the exclude directory exists
+        os.makedirs(exclude_dir, exist_ok=True)
+        
+        # Create full path to exclude.txt
+        exclude_file = os.path.join(exclude_dir, 'exclude.txt')
+        
+        try:
+            # Read existing excludes
+            existing_excludes = []
+            if os.path.exists(exclude_file):
+                with open(exclude_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = [line.strip() for line in f if line.strip()]
+
+            # Add new theme if not already excluded
+            if theme_name not in existing_excludes:
+                # Add the new theme to the list
+                existing_excludes.append(theme_name)
+                
+                # Write all themes back to file, each on its own line
+                with open(exclude_file, 'w', encoding='utf-8') as f:
+                    for theme in existing_excludes:
+                        f.write(f"{theme}\n")
+                
+                self.show_status_message(f"Added '{theme_name}' to exclude list")
+                print(f"Added {theme_name} to {exclude_file}")
+                
+                # Update ignore list in config manager
+                if f"{theme_name}.bat" not in self.ignore_list:
+                    self.ignore_list.append(f"{theme_name}.bat")
+                
+                # Store current index
+                current_index = self.current_theme_index
+                
+                # Reload themes list
+                self.load_themes()
+                
+                # Adjust index if necessary
+                if current_index >= len(self.themes_list):
+                    self.current_theme_index = len(self.themes_list) - 1
+                else:
+                    self.current_theme_index = current_index
+                
+                # Show current theme at adjusted index
+                if self.themes_list:
+                    self.show_current_theme()
+                else:
+                    self._show_no_video_message()
+                    self.show_status_message("No more themes available")
+            else:
+                self.show_status_message(f"'{theme_name}' is already in exclude list")
+
+        except Exception as e:
+            print(f"Error updating exclude file: {e}")
+            print(f"Attempted to write to: {exclude_file}")
+            print(f"Collections path: {collections_path}")
+            print(f"Exclude directory: {exclude_dir}")
+            self.show_status_message("Error updating exclude list")
+
+    
+    def _setup_exclude_context_menu(self):
+        """Setup context menu for exclude button with tooltip"""
+        self.exclude_menu = tk.Menu(self.parent_tab, tearoff=0)
+        self.exclude_menu.add_command(label="Reset excludes", command=self.reset_excludes)
+        self.exclude_menu.add_command(label="Show excluded themes", command=self.show_excluded_themes)
+
+        # Bind right-click to Exclude button
+        if 'Exclude' in self.buttons:
+            exclude_button = self.buttons['Exclude']
+            exclude_button.bind('<Button-3>', self.show_exclude_menu)
+            
+            # Add tooltip with more visible styling 
+            CreateToolTip(exclude_button, 
+                        "• Left-click to exclude current theme\n• Right-click to manage excluded themes")
+            
+    def show_exclude_menu(self, event):
+        """Show the context menu on right-click"""
+        try:
+            self.exclude_menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            self.exclude_menu.grab_release()
+
+    def reset_excludes(self):
+        """Reset all excludes except 'shutdown'"""
+        collections_path = os.path.join(self.base_path, 'collections')
+        
+        # Handle Settings excludes
+        settings_exclude = os.path.join(collections_path, 'zzzSettings', 'exclude.txt')
+        if os.path.exists(settings_exclude):
+            try:
+                with open(settings_exclude, 'w', encoding='utf-8') as f:
+                    f.write("")  # Clear file
+                print(f"Reset Settings excludes")
+            except Exception as e:
+                print(f"Error resetting Settings excludes: {e}")
+        
+        # Handle Shutdown excludes - preserve 'shutdown' entry
+        shutdown_exclude = os.path.join(collections_path, 'zzzShutdown', 'exclude.txt')
+        if os.path.exists(shutdown_exclude):
+            try:
+                with open(shutdown_exclude, 'w', encoding='utf-8') as f:
+                    f.write("shutdown\n")  # Keep only shutdown
+                print(f"Reset Shutdown excludes (kept 'shutdown')")
+            except Exception as e:
+                print(f"Error resetting Shutdown excludes: {e}")
+        
+        # Reset ignore list except for shutdown.bat
+        self.ignore_list = ['shutdown.bat'] if 'shutdown.bat' in self.ignore_list else []
+        
+        # Reload themes to show previously excluded items
+        self.load_themes()
+        self.show_current_theme()
+        
+        self.show_status_message("Excludes reset (kept 'shutdown')")
+
+    def show_excluded_themes(self):
+        """Show a dialog with currently excluded themes"""
+        dialog = ctk.CTkToplevel(self.parent_tab)
+        dialog.title("Excluded Themes")
+        dialog.transient(self.parent_tab)
+        dialog.grab_set()
+        
+        # Get screen width and height
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+        
+        # Calculate dimensions - making the dialog proportional to screen size
+        dialog_width = min(int(screen_width * 0.3), 500)  # 30% of screen width, max 500px
+        dialog_height = min(int(screen_height * 0.4), 400)  # 40% of screen height, max 400px
+        
+        # Calculate position to center
+        position_x = (screen_width - dialog_width) // 2
+        position_y = (screen_height - dialog_height) // 2
+        
+        # Set size and position
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{position_x}+{position_y}")
+        
+        # Create scrollable frame
+        frame = ctk.CTkScrollableFrame(dialog)
+        frame.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        excluded_themes = self.load_excluded_themes()
+        
+        if not excluded_themes:
+            ctk.CTkLabel(frame, text="No themes are currently excluded").pack(pady=10)
+            return
+        
+        # Add checkboxes for each excluded theme, excluding "shutdown"
+        vars = {}
+        for theme in sorted(excluded_themes):
+            if theme.lower() != "shutdown":  # Explicitly exclude "shutdown" theme
+                var = tk.BooleanVar()
+                vars[theme] = var
+                ctk.CTkCheckBox(frame, text=theme, variable=var).pack(anchor="w", pady=2)
+        
+        def restore_selected():
+            restored = []
+            for theme, var in vars.items():
+                if var.get():
+                    restored.append(theme)
+            
+            if restored:
+                # Remove selected themes from exclude files
+                self.remove_from_excludes(restored)
+                # Reload themes
+                self.load_themes()
+                self.show_current_theme()
+                dialog.destroy()
+                self.show_status_message(f"Restored {len(restored)} themes")
+        
+        # Button at the bottom
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(fill="x", padx=10, pady=10)
+        ctk.CTkButton(button_frame, 
+                    text="Restore Selected", 
+                    command=restore_selected).pack(pady=10)
+
+    def remove_from_excludes(self, themes_to_remove):
+        """Remove specified themes from exclude files"""
+        collections_path = os.path.join(self.base_path, 'collections')
+        
+        # Handle both Settings and Shutdown exclude files
+        for folder in ['zzzSettings', 'zzzShutdown']:
+            exclude_file = os.path.join(collections_path, folder, 'exclude.txt')
+            if os.path.exists(exclude_file):
+                try:
+                    # Read existing excludes
+                    with open(exclude_file, 'r', encoding='utf-8') as f:
+                        excludes = [line.strip() for line in f if line.strip()]
+                    
+                    # Remove selected themes (keep 'shutdown' if in Shutdown folder)
+                    new_excludes = []
+                    for theme in excludes:
+                        if theme == 'shutdown' and folder == 'zzzShutdown':
+                            new_excludes.append(theme)
+                        elif theme not in themes_to_remove:
+                            new_excludes.append(theme)
+                    
+                    # Write back remaining excludes
+                    with open(exclude_file, 'w', encoding='utf-8') as f:
+                        for theme in new_excludes:
+                            f.write(f"{theme}\n")
+                    
+                except Exception as e:
+                    print(f"Error updating {folder} exclude file: {e}")
+        
+        # Update ignore list
+        self.ignore_list = [item for item in self.ignore_list 
+                        if item == 'shutdown.bat' or 
+                        os.path.splitext(item)[0] not in themes_to_remove]
+    
+    def show_current_theme(self):
+        """Display the current theme and start video if available"""
+        print("Showing current theme...")
+        if not self.themes_list:
+            return
+
+        # Stop any playing video and cancel any pending autoplay
+        self.cancel_autoplay()
+        if self.current_viewer and self.current_viewer.is_playing:
+            self.current_viewer.stop_video()
+
+        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Create viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+
+        # Update exclude button visibility for new theme
+        self.update_exclude_button()
+
+        # Show thumbnail
+        self.show_thumbnail()
+
+        # Start video immediately if available
+        if video_path:
+            print("Starting video immediately...")
+            if self.current_viewer.start_video():
+                self.play_video()
+
+    def force_initial_display(self):
+        """Force the initial theme display"""
+        print("Forcing initial display...")
+        if self.themes_list:
+            self.parent_tab.update_idletasks()
+            self.show_initial_theme()
+
+    def show_initial_theme(self):
+        """Show the first theme and start video playback"""
+        if not self.themes_list:
+            return
+
+        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Initialize viewer
+        self.current_viewer = ThemeViewer(video_path, png_path)
+
+        # Make sure exclude button visibility is correct before showing anything
+        self.update_exclude_button()
+
+        # Force immediate thumbnail extraction and display
+        thumbnail = self.current_viewer.extract_thumbnail()
+        
+        # Ensure the canvas is properly sized before displaying anything
+        self.parent_tab.update_idletasks()
+        
+        if thumbnail is not None:
+            self._display_frame(thumbnail)
+            # Start video immediately if available
+            if video_path:
+                if self.current_viewer.start_video():
+                    self.play_video()
+        else:
+            # Force canvas update before showing message
+            self.video_canvas.update_idletasks()
+            self._show_no_video_message()
+
+    def schedule_autoplay(self):
+        """Schedule immediate video autoplay"""
+        self.cancel_autoplay()
+        if self.current_viewer and self.current_viewer.video_path:
+            print("Scheduling immediate autoplay...")
+            self.autoplay_after = self.parent_tab.after(100, self.start_autoplay)
+
+    def play_video(self):
+        """Play video with frame timing control"""
+        if not self.current_viewer or not self.current_viewer.is_playing:
+            return
+
+        try:
+            current_time = time.time() * 1000
+            if current_time - self.last_frame_time >= self.frame_interval:
+                frame = self.current_viewer.get_frame()
+                if frame is not None:
+                    self._display_frame(frame)
+                    self.last_frame_time = current_time
+                else:
+                    print("No frame available, restarting video")
+                    self.current_viewer.stop_video()
+                    self.current_viewer.start_video()
+                    return
+
+            # Schedule next frame
+            self.parent_tab.after(max(1, int(self.frame_interval)), self.play_video)
+
+        except Exception as e:
+            print(f"Error during video playback: {e}")
+            self.current_viewer.stop_video()
+            self.show_thumbnail()
+
+    def _show_no_video_message(self):
+        """Display message when no video or image is available"""
+        self.video_canvas.delete("all")
+        
+        # Get canvas size, use minimum dimensions if not yet properly sized
+        canvas_width = max(640, self.video_canvas.winfo_width())
+        canvas_height = max(360, self.video_canvas.winfo_height())
+        
+        # Create a dark gray rectangle as background
+        self.video_canvas.create_rectangle(
+            0, 0, canvas_width, canvas_height,
+            fill="#2B2B2B"
+        )
+        
+        # Calculate center position
+        center_x = canvas_width // 2
+        center_y = canvas_height // 2
+        
+        # Add "No video available" text
+        self.video_canvas.create_text(
+            center_x,
+            center_y,
+            text="No video available",
+            fill="white",
+            font=("Arial", 14),
+            anchor="center"
+        )
+        
+        # Get current theme name and build type for helper text
+        if self.themes_list and len(self.themes_list) > self.current_theme_index:
+            theme_name = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
+            _, _, _, rom_folder = self.themes_list[self.current_theme_index]
+            
+            # Determine build type from folder path
+            build_type = None
+            if 'zzzSettings' in rom_folder:
+                build_type = 'S'
+            elif 'zzzShutdown' in rom_folder:
+                build_type = 'U'
+            else:
+                build_type = 'D'
+            
+            # Get the correct video path from BUILD_TYPE_PATHS
+            if build_type in self.config_manager.BUILD_TYPE_PATHS:
+                video_path = self.config_manager.BUILD_TYPE_PATHS[build_type]['videos']
+                helper_text = f"Place {theme_name}.mp4 in {video_path}"
+            else:
+                helper_text = "Video folder not configured"
+        else:
+            helper_text = "Video folder not configured"
+
+        # Add helper text about video location
+        self.video_canvas.create_text(
+            center_x,
+            center_y + 30,
+            text=helper_text,
+            fill="#808080",
+            font=("Arial", 10),
+            anchor="center"
+        )
+
+    def load_excluded_themes(self):
+        """Load excluded themes from exclude.txt files in collections folder"""
+        excluded_themes = set()
+        
+        collections_path = os.path.join(self.base_path, 'collections')
+        
+        # Check zzzSettings/exclude.txt
+        settings_exclude = os.path.join(collections_path, 'zzzSettings', 'exclude.txt')
+        if os.path.exists(settings_exclude):
+            try:
+                with open(settings_exclude, 'r', encoding='utf-8') as f:
+                    excluded_themes.update(line.strip() for line in f if line.strip())
+            except Exception as e:
+                print(f"Error reading settings exclude file: {e}")
+        
+        # Check zzzShutdown/exclude.txt
+        shutdown_exclude = os.path.join(collections_path, 'zzzShutdown', 'exclude.txt')
+        if os.path.exists(shutdown_exclude):
+            try:
+                with open(shutdown_exclude, 'r', encoding='utf-8') as f:
+                    excluded_themes.update(line.strip() for line in f if line.strip())
+            except Exception as e:
+                print(f"Error reading shutdown exclude file: {e}")
+        
+        return excluded_themes
+    
+    def load_themes(self):
+        """Load themes and their video/image paths with exclude file checking"""
+        self.themes_list = []
+        
+        # Load excluded themes first
+        excluded_themes = self.load_excluded_themes()
+        print(f"Loaded excluded themes: {excluded_themes}")
+
+        # Look for fallback image
+        fallback_path = None
+        potential_fallback_paths = [
+            os.path.join("assets", "images", "theme_fallback.png"),
+            os.path.join("assets", "images", "theme_fallback.jpg")
+        ]
+        
+        for path in potential_fallback_paths:
+            if os.path.isfile(path):
+                fallback_path = path
+                break
+
+        for rom_folder in self.rom_folders:
+            if not os.path.isdir(rom_folder):
+                print("Error", f"ROM folder not found: {rom_folder}")
+                continue
+
+            # Determine build type for current folder
+            build_type = self.get_build_type(rom_folder)
+
+            for filename in os.listdir(rom_folder):
+                if (filename.endswith(".bat") or filename.endswith(".sh")):
+                    theme_name = os.path.splitext(filename)[0]
+                    
+                    # Skip if theme is in excluded list or ignore list
+                    if (theme_name in excluded_themes or 
+                        filename in self.ignore_list or
+                        theme_name.lower() == "shutdown"):  # Explicitly exclude "shutdown" theme
+                        print(f"Skipping excluded theme: {theme_name}")
+                        continue
+
+                    video_path = None
+                    png_path = None
+
+                    # Look for video
+                    for video_folder in self.video_folders:
+                        video_path = os.path.join(video_folder, f"{theme_name}.mp4")
+                        if os.path.isfile(video_path):
+                            break
+                        video_path = None
+
+                    # Look for theme-specific PNG in video folders only
+                    if video_path is None:
+                        for video_folder in self.video_folders:
+                            png_path = os.path.join(video_folder, f"{theme_name}.png")
+                            if os.path.isfile(png_path):
+                                break
+                            png_path = None
+
+                    # Add to themes list with appropriate fallback
+                    if video_path and os.path.isfile(video_path):
+                        self.themes_list.append((filename, video_path, None, rom_folder))
+                    elif png_path and os.path.isfile(png_path):
+                        self.themes_list.append((filename, None, png_path, rom_folder))
+                    elif fallback_path:
+                        self.themes_list.append((filename, None, fallback_path, rom_folder))
+                    else:
+                        self.themes_list.append((filename, None, None, rom_folder))
+
+        print(f"Loaded {len(self.themes_list)} themes after excluding {len(excluded_themes)} themes")
+
+    def show_thumbnail(self):
+        """Display the current theme's thumbnail"""
+        if not self.current_viewer:
+            self._show_no_video_message()
+            return
+
+        # Use cached thumbnail if available
+        cache_key = self.current_viewer.video_path or self.current_viewer.image_path
+        if cache_key and cache_key in self.thumbnail_cache:
+            thumbnail = self.thumbnail_cache[cache_key].copy()
+        else:
+            thumbnail = self.current_viewer.extract_thumbnail()
+            if thumbnail is not None and cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail.copy()
+
+        if thumbnail is not None:
+            self._display_frame(thumbnail)
+        else:
+            self._show_no_video_message()
+
+    def _display_frame(self, frame, force_resize=False):
+        """Display a frame or thumbnail on the canvas with proper aspect ratio"""
+        try:
+            current_time = time.time() * 1000
+
+            if not force_resize:
+                self.current_frame = frame.copy()
+
+            # Validate input frame
+            if frame is None or frame.size == 0:
+                raise ValueError("Invalid frame: frame is None or empty")
+
+            # Get current display size
+            canvas_width = self.video_canvas.winfo_width()
+            canvas_height = self.video_canvas.winfo_height()
+
+            # Ensure minimum display dimensions
+            canvas_width = max(1, canvas_width)
+            canvas_height = max(1, canvas_height)
+
+            if canvas_width < 1 or canvas_height < 1:
+                canvas_width, canvas_height = self.default_size
+
+            # Get original frame dimensions
+            frame_height, frame_width = frame.shape[:2]
+
+            # Validate frame dimensions
+            if frame_width <= 0 or frame_height <= 0:
+                raise ValueError(f"Invalid frame dimensions: {frame_width}x{frame_height}")
+
+            frame_aspect = frame_width / frame_height
+            canvas_aspect = canvas_width / canvas_height
+
+            # Calculate new dimensions maintaining aspect ratio
+            if canvas_aspect > frame_aspect:
+                new_height = max(1, canvas_height)
+                new_width = max(1, int(canvas_height * frame_aspect))
+            else:
+                new_width = max(1, canvas_width)
+                new_height = max(1, int(canvas_width / frame_aspect))
+
+            # Skip frame if falling behind
+            if not force_resize and self.current_viewer and self.current_viewer.is_playing:
+                if current_time - self.last_frame_time < self.frame_interval:
+                    return
+
+            # Validate final dimensions before resize
+            if new_width <= 0 or new_height <= 0:
+                raise ValueError(f"Invalid resize dimensions: {new_width}x{new_height}")
+
+            # Resize frame maintaining aspect ratio
+            if new_width * new_height > 1920 * 1080:
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+            else:
+                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
+
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            main_image = Image.fromarray(frame)
+
+            # Logo handling (rest of the logo code remains the same)
+            try:
+                current_theme = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
+                logo_path = None
+
+                for logo_folder in self.logo_folders:
+                    logo_path = os.path.join(logo_folder, f"{current_theme}.png")
+                    if os.path.exists(logo_path):
+                        break
+
+                if logo_path and os.path.exists(logo_path):
+                    # Create a cache key that includes the canvas dimensions
+                    cache_key = f'logo_cache_{current_theme}_{new_width}_{new_height}'
+
+                    if not hasattr(self, cache_key):
+                        # Load original logo
+                        logo_img = Image.open(logo_path)
+
+                        # Calculate logo size based on current frame dimensions
+                        logo_max_width = max(1, int(new_width * 0.15))  # 15% of frame width
+                        logo_max_height = max(1, int(new_height * 0.15))  # 15% of frame height
+
+                        # Get original logo dimensions
+                        logo_w, logo_h = logo_img.size
+
+                        # Calculate scale factor maintaining aspect ratio
+                        logo_scale = min(
+                            logo_max_width / logo_w,
+                            logo_max_height / logo_h
+                        )
+
+                        # Calculate new logo dimensions
+                        logo_new_size = (
+                            max(1, int(logo_w * logo_scale)),
+                            max(1, int(logo_h * logo_scale))
+                        )
+
+                        # Resize logo
+                        resized_logo = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
+
+                        # Cache the resized logo
+                        setattr(self, cache_key, resized_logo)
+                    else:
+                        resized_logo = getattr(self, cache_key)
+
+                    # Calculate padding based on frame size
+                    padding = max(1, int(min(new_width, new_height) * 0.02))  # 2% of smaller dimension
+
+                    # Calculate position
+                    pos_x = new_width - resized_logo.size[0] - padding
+                    pos_y = new_height - resized_logo.size[1] - padding
+
+                    # Overlay logo
+                    if resized_logo.mode == 'RGBA':
+                        main_image.paste(resized_logo, (pos_x, pos_y), resized_logo)
+                    else:
+                        main_image.paste(resized_logo, (pos_x, pos_y))
+
+            except Exception as e:
+                print(f"Error loading or applying logo: {e}")
+
+            # Convert to PhotoImage
+            photo = ImageTk.PhotoImage(image=main_image)
+
+            # Clear canvas
+            self.video_canvas.delete("all")
+
+            # Calculate center position
+            x = canvas_width // 2
+            y = canvas_height // 2
+
+            # Create black background to fill canvas
+            self.video_canvas.configure(bg="#2B2B2B")
+
+            # Display image centered
+            self.video_canvas.create_image(
+                x, y,
+                image=photo,
+                anchor="center"
+            )
+            self.video_canvas.image = photo
+
+            self.last_frame_time = current_time
+
+        except Exception as e:
+            print(f"Error displaying frame: {e}")
+            self._show_no_video_message()
+
+    def get_current_build_type(self):
+        """Get build type for current theme"""
+        if not self.themes_list or self.current_theme_index >= len(self.themes_list):
+            return None
+            
+        _, _, _, rom_folder = self.themes_list[self.current_theme_index]
+        
+        if 'zzzSettings' in rom_folder:
+            return 'S'
+        elif 'zzzShutdown' in rom_folder:
+            return 'U'
+        return 'D'
+    
+    def update_exclude_button(self):
+        """Update exclude button visibility and layout based on current build type"""
+        build_type = self.get_current_build_type()
+        
+        if 'Exclude' in self.buttons:
+            if build_type in ['S', 'U']:
+                # For S and U build types, show all buttons in normal positions
+                self.buttons['Exclude'].grid(row=0, column=2)
+                self.buttons['Next'].grid(row=0, column=3)
+                if 'Jump Category' in self.buttons:
+                    self.buttons['Jump Category'].grid(row=0, column=4)
+            else:
+                # For build type D, hide Exclude and shift other buttons left
+                self.buttons['Exclude'].grid_remove()
+                self.buttons['Next'].grid(row=0, column=2)  # Move Next to Exclude's position
+                if 'Jump Category' in self.buttons:
+                    self.buttons['Jump Category'].grid(row=0, column=3)  # Move Jump Category left
+
+            # Reconfigure grid weights based on visible buttons
+            for i in range(5):  # Reset all column weights
+                self.button_frame.grid_columnconfigure(i, weight=0)
+            
+            # Set weights only for columns that have visible buttons
+            if build_type in ['S', 'U']:
+                visible_columns = 4 if 'Jump Category' not in self.buttons else 5
+            else:
+                visible_columns = 3 if 'Jump Category' not in self.buttons else 4
+                
+            # Set equal weights for visible columns
+            for i in range(visible_columns):
+                self.button_frame.grid_columnconfigure(i, weight=1)
+
+    def _setup_ui(self):
+        # Main display frame
+        self.display_frame = ctk.CTkFrame(self.parent_tab)
+        self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
+
+        # Video canvas
+        self.video_canvas = ctk.CTkCanvas(
+            self.display_frame,
+            bg="#2B2B2B",
+            bd=0,
+            highlightthickness=0,
+            width=640,
+            height=360
+        )
+        self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
+        self.video_canvas.bind('<Configure>', self.handle_resize)
+
+        # Theme label (hidden but kept for reference)
+        self.theme_label = ctk.CTkLabel(self.display_frame, text="")
+        self.theme_label.pack_forget()
+
+        # Button frame
+        self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
+        self.button_frame.pack(fill="x", padx=5, pady=5)
+
+        # Define base buttons with smaller width
+        button_width = 100  # Reduced button width
+        base_buttons = [
+            ("Previous", self.show_previous_theme, None, None, 0),
+            ("Apply Theme", self.run_selected_script, "green", "darkgreen", 1),
+            ("Exclude", self.exclude_current_theme, "red", "darkred", 2),  # Changed to column 2
+            ("Next", self.show_next_theme, None, None, 3)  # Changed to column 3
+        ]
+
+        # Check if Jump Category button should be added
+        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
+        if len(roms_list) > 1:
+            base_buttons.append(("Jump Category", self.jump_to_start, None, None, 4))
+
+        # Create buttons
+        self.buttons = {}
+        for text, command, fg_color, hover_color, column in base_buttons:
+            btn = ctk.CTkButton(
+                self.button_frame,
+                text=text,
+                command=command,
+                fg_color=fg_color,
+                hover_color=hover_color,
+                border_width=0,
+                width=button_width
+            )
+            btn.grid(row=0, column=column, sticky="ew", padx=5)
+            self.buttons[text] = btn
+
+        # Initially hide Exclude button (will be shown based on build type)
+        if 'Exclude' in self.buttons:
+            self.buttons['Exclude'].grid_remove()
+
+        # Set up the context menu and tooltip for Exclude button
+        self._setup_exclude_context_menu()  # Add this line here
+
+        # Location frame
+        self.location_frame = ctk.CTkFrame(self.display_frame)
+        self.location_frame.pack(fill="x", padx=10, pady=5)
+        self.update_location_frame_visibility()
+        
+    def _update_button_layout(self, event=None):
+        """Update button layout proportionally based on frame size"""
+        frame_width = self.button_frame.winfo_width()
+        if frame_width > 0:
+            # Calculate proportional padding (1% of frame width)
+            padding = int(frame_width * 0.01)
+            
+            # Update padding for all buttons
+            for btn in self.buttons.values():
+                btn.grid_configure(padx=padding, pady=padding)
+
+        # Maintain button visibility
+        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
+        should_show_jump = len(roms_list) > 1
+        
+        if 'Jump Category' in self.buttons:
+            if should_show_jump:
+                self.buttons['Jump Category'].grid()
+                self.button_frame.grid_columnconfigure(3, weight=1)
+            else:
+                self.buttons['Jump Category'].grid_remove()
+                self.button_frame.grid_columnconfigure(3, weight=0)
+
+    def _adjust_button_weights(self, columns):
+        """Adjust the button frame column weights dynamically."""
+        for col in range(4):  # Reset all columns
+            self.button_frame.grid_columnconfigure(col, weight=0)
+        for col in range(columns):  # Adjust the active columns
+            self.button_frame.grid_columnconfigure(col, weight=1)
+
+    def update_location_frame_visibility(self):
+        """Update the visibility of the location frame based on config settings"""
+        show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=False)
+        #print(f"show_location_controls value: {show_location_controls}")  # Debug
+
+        if show_location_controls:
+            self.location_frame.pack(fill="x", padx=10, pady=5)
+            #print("Location frame is visible")  # Debug
+        else:
+            self.location_frame.pack_forget()
+            #print("Location frame is hidden")  # Debug
+
+    def show_custom_paths_dialog(self):
+        """Show dialog for configuring custom paths"""
+        dialog = ctk.CTkToplevel(self.parent_tab)
+        dialog.title("Configure Custom Paths")
+        dialog.geometry("600x200")
+        dialog.transient(self.parent_tab)
+        dialog.grab_set()
+
+        # Create entry fields for each path
+        paths = {
+            'ROMs Path': 'custom_roms_path',
+            'Videos Path': 'custom_videos_path',
+            'Logos Path': 'custom_logos_path'
+        }
+
+        entries = {}
+
+        for i, (label_text, config_key) in enumerate(paths.items()):
+            frame = ctk.CTkFrame(dialog)
+            frame.pack(fill="x", padx=10, pady=5)
+
+            ctk.CTkLabel(frame, text=label_text).pack(side="left", padx=5)
+
+            entry = ctk.CTkEntry(frame, width=400)
+            entry.pack(side="left", padx=5, fill="x", expand=True)
+            entry.insert(0, self.config_manager.config.get('Settings', config_key, fallback=''))
+
+            entries[config_key] = entry
+
+            def browse_path(entry_widget):
+                path = filedialog.askdirectory()
+                if path:
+                    entry_widget.delete(0, 'end')
+                    entry_widget.insert(0, path)
+
+            browse_btn = ctk.CTkButton(
+                frame,
+                text="Browse",
+                command=lambda e=entry: browse_path(e)
+            )
+            browse_btn.pack(side="right", padx=5)
+
+        def save_paths():
+            self.config_manager.update_custom_paths(
+                roms_path=entries['custom_roms_path'].get(),
+                videos_path=entries['custom_videos_path'].get(),
+                logos_path=entries['custom_logos_path'].get()
+            )
+            if self.location_var.get() == 'custom':
+                self.change_location('custom')
+            dialog.destroy()
+
+        # Save button
+        ctk.CTkButton(
+            dialog,
+            text="Save",
+            command=save_paths
+        ).pack(pady=10)
+
+    def change_location(self, location):
+        """Handle location change"""
+        # Update configuration
+        self.config_manager.update_theme_location(location)
+
+        # Update paths
+        self.theme_paths = self.config_manager.get_theme_paths_multi()
+        self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
+        self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
+        self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
+
+        # Clear caches
+        self.thumbnail_cache.clear()
+        self.clear_logo_cache()
+
+        # Reload themes and refresh display
+        self.load_themes()
+        if self.themes_list:
+            self.current_theme_index = 0
+            self.show_current_theme()
+
+        # Update status
+        self.show_status_message(f"Changed theme location to: {location}")
+
+    def handle_resize(self, event=None):
+        """Handle window resize events"""
+        if hasattr(self, 'current_frame') and self.current_frame is not None:
+            self._display_frame(self.current_frame, force_resize=True)
+        elif self.current_viewer is None or (self.current_viewer.video_path is None and self.current_viewer.image_path is None):
+            # If no content to display, refresh the no video message
+            self._show_no_video_message()
+
+    def toggle_video(self):
+        """Toggle video playback"""
+        if not self.current_viewer:
+            return
+
+        if not self.current_viewer.is_playing:
+            # Start video
+            success = self.current_viewer.start_video()
+            if success:
+                self.play_button.configure(text="Stop Video")
+                self.play_video()
+            else:
+                self.show_thumbnail()
+        else:
+            # Stop video and show thumbnail
+            self.current_viewer.stop_video()
+            self.play_button.configure(text="Play Video")
+            self.show_thumbnail()
+
+    def initialize_first_theme(self):
+        """Initialize and display the first theme"""
+        print("Initializing first theme...")
+        if not self.themes_list:
+            print("No themes available")
+            return
+
+        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
+        display_name = os.path.splitext(theme_name)[0]
+        self.theme_label.configure(text=f"Theme: {display_name}")
+
+        # Initialize viewer with both video and image paths
+        self.current_viewer = ThemeViewer(video_path, png_path)
+        self.play_button.configure(state="normal" if video_path else "disabled")
+
+        # Force immediate thumbnail display
+        print("Forcing thumbnail display...")
+        thumbnail = self.current_viewer.extract_thumbnail()
+        if thumbnail is not None:
+            cache_key = video_path or png_path
+            if cache_key:
+                self.thumbnail_cache[cache_key] = thumbnail
+
+            # Force canvas update and display
+            self.parent_tab.update_idletasks()
+            self._display_frame(thumbnail)
+
+            # Schedule autoplay if video exists
+            if video_path:
+                print("Scheduling initial autoplay...")
+                self.schedule_autoplay()
+        else:
+            print("No thumbnail available")
+            self._show_no_video_message()
+
+    def show_next_theme(self):
+        """Navigate to next theme"""
+        if self.themes_list:
+            self.current_theme_index = (self.current_theme_index + 1) % len(self.themes_list)
+            self.show_current_theme()
+
+    def show_previous_theme(self):
+        """Navigate to previous theme"""
+        if self.themes_list:
+            self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
+            self.show_current_theme()
+
+    def run_selected_script(self):
+        """Execute the selected theme script with cross-platform support."""
+        if not self.themes_list:
+            print("No themes found in themes_list. Exiting function.")
+            self.show_status_message("Error: No themes available!")
+            return
+
+        # Get script info from themes list
+        script_filename, _, _, rom_folder = self.themes_list[self.current_theme_index]
+        script_name_without_extension = os.path.splitext(script_filename)[0]
+        
+        # Construct absolute path using rom_folder
+        script_path = os.path.abspath(os.path.join(rom_folder, script_filename))
+        working_dir = os.path.dirname(script_path)
+        
+        # Log attempt
+        self.config_manager.add_to_log(f"Attempting to run theme script: {script_name_without_extension}")
+        print(f"Selected script: {script_filename}")
+        print(f"Full script path: {script_path}")
+        print(f"Working directory: {working_dir}")
+
+        # Verify script exists
+        if not os.path.isfile(script_path):
+            error_msg = f"Script not found: {script_path}"
+            print(error_msg)
+            self.show_status_message(f"Error: Script '{script_name_without_extension}' not found.")
+            self.config_manager.add_to_log(error_msg, "ERROR")
+            return
+
+        try:
+            self.show_status_message(f"Applying theme '{script_name_without_extension}'...")
+
+            # Platform-specific command setup
+            if sys.platform == 'win32':
+                # Windows: Use cmd.exe with proper escaping
+                command = [
+                    "cmd.exe",
+                    "/c",
+                    script_path
+                ]
+                # Windows-specific startup info
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+            elif sys.platform == 'darwin':
+                # macOS: Make script executable and run
+                os.chmod(script_path, 0o755)  # Add execute permission
+                if script_filename.endswith('.command') or script_filename.endswith('.sh'):
+                    command = ["/bin/bash", script_path]
+                else:
+                    command = [script_path]
+                startupinfo = None
+            else:
+                # Linux/Unix: Make script executable and run
+                os.chmod(script_path, 0o755)  # Add execute permission
+                if script_filename.endswith('.sh'):
+                    command = ["/bin/bash", script_path]
+                else:
+                    command = [script_path]
+                startupinfo = None
+
+            print("Command execution details:", command)
+            
+            # Environment setup for cross-platform compatibility
+            env = os.environ.copy()
+            if sys.platform != 'win32':
+                # Add script directory to PATH for Unix-like systems
+                env['PATH'] = f"{working_dir}:{env.get('PATH', '')}"
+
+            # Execute the script
+            process = subprocess.run(
+                command,
+                check=False,
+                shell=False,
+                text=True,
+                capture_output=True,
+                cwd=working_dir,
+                env=env,
+                startupinfo=startupinfo
+            )
+
+            # Handle process output
+            print("Process completed with return code:", process.returncode)
+            if process.stdout:
+                print("Standard output:", process.stdout)
+            if process.stderr:
+                print("Standard error:", process.stderr)
+
+            # Handle return code
+            if process.returncode != 0:
+                error_msg = f"Script execution returned code {process.returncode}: {process.stderr}"
+                print(error_msg)
+                self.config_manager.add_to_log(error_msg, "WARNING")
+                # Still show success if the script ran but had non-zero exit code
+                self.show_status_message(f"Theme: {script_name_without_extension} applied!")
+            else:
+                self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
+
+        except Exception as e:
+            error_msg = f"Critical error while executing script: {str(e)}"
+            print(error_msg)
+            self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
+            self.config_manager.add_to_log(error_msg, "ERROR")
+
+    def jump_to_start(self):
+        """Jump to the start of each ROM folder for quick navigation"""
+        print("Jumping to the start of each ROM folder...")
+        self.cycle_rom_folders()
+
+    def cycle_rom_folders(self):
+        """Cycle through the ROM folders and display the first theme in each folder"""
+        print("Cycling through ROM folders...")
+        if not self.rom_folders:
+            print("No ROM folders available")
+            return
+
+        # Move to the next ROM folder
+        self.current_rom_folder_index = (self.current_rom_folder_index + 1) % len(self.rom_folders)
+        current_rom_folder = self.rom_folders[self.current_rom_folder_index]
+        print(f"Moved to next ROM folder: {current_rom_folder}")
+
+        # Find the first theme in the current ROM folder
+        first_theme_found = False
+        for theme_index, (theme_name, video_path, png_path, rom_folder) in enumerate(self.themes_list):
+            if rom_folder == current_rom_folder:
+                self.current_theme_index = theme_index
+                self.show_current_theme()
+                first_theme_found = True
+                break
+
+        if not first_theme_found:
+            print(f"No themes found in folder: {current_rom_folder}")
+
+class ThemeManager:
+    def __init__(self, parent_frame, config_manager=None):
+        """
+        Initialize the Theme Manager
+        
+        Args:
+            parent_frame (CTkFrame): CustomTkinter frame to contain the UI elements
+            config_manager: Configuration manager instance
+        """
+        self.parent = parent_frame
+        self.config_manager = config_manager
+        
+        # Use PathManager to get the base path
+        self.root_folder = PathManager.get_base_path()
+        
+        # Get layout paths from config and ensure proper formatting
+        layout_paths = self.config_manager.get_setting('Settings', 'layout_paths')
+        
+        # Handle different possible formats of layout_paths
+        if isinstance(layout_paths, str):
+            # If it's a single string, convert to list
+            self.layout_paths = [layout_paths]
+        elif isinstance(layout_paths, (list, tuple)):
+            # If it's already a list or tuple, use it
+            self.layout_paths = layout_paths
+        else:
+            # Default fallback
+            self.layout_paths = ['layouts/Arcades/collections']
+            
+        # Convert layout paths to full paths using PathManager
+        self.layout_paths = [PathManager.get_resource_path(path) for path in self.layout_paths]
+        
+        print(f"Initialized layout paths: {self.layout_paths}")  # Debug print
+        
+        # Convert layout paths to full paths using PathManager
+        self.layout_paths = [PathManager.get_resource_path(path) for path in self.layout_paths]
+        
+        # Theme folder remains the same
+        self.themes_folder = PathManager.get_resource_path("- Themes Console")
+        
+        # Theme mappings (batch file name to layout file name)
+        self.theme_mappings = {
+            "Future Theme.bat": "layout - Future Room",
+            "Nostalgic Night Theme.bat": "layout - Nostelgic Nights",
+            "Zen Theme.bat": "layout - Zen Room",
+            "TV Theme.bat": "layout - TV Legends",
+            "Spin Theme.bat": "layout - Bottom Spin",
+            "Retro Theme.bat": "layout - Retro Room",
+            "Poster Theme.bat": "layout - Large Poster Cascade",
+            "Future Theme.bat": "layout - Future Room",
+        }
+        
+        # List of basic layout files that all collections have
+        self.basic_layouts = {
+            "layout.xml",
+            "layout - 0.xml",
+            "layout - 1.xml",
+            "layout - 2.xml",
+            "layout - 5.xml"
+        }
+        
+        # List of collections to ignore
+        self.ignore_collections = self.config_manager.get_setting('Settings', 'ignore_collections', [])
+        
+        # Variables to track selected collection and theme
+        self.selected_collection = tk.StringVar()
+        self.selected_theme = tk.StringVar()
+        
+        # Dictionary to store collection to path mapping
+        self.collection_paths = {}
+        
+        self.setup_ui()
+    
+    def get_collections(self):
+        """
+        Get list of collections that have more than the basic layout files or fewer,
+        from all configured layout paths, excluding ignored collections
+        """
+        collections = []
+        # Reset collection paths dictionary
+        self.collection_paths = {}
+        print("Layout paths:", self.layout_paths)
+        # Normalize ignored collections (strip spaces and convert to lowercase)
+        normalized_ignore = [name.strip().lower() for name in self.ignore_collections]
+        
+        # Iterate through each layout path
+        for layout_path in self.layout_paths:
+            layout_folder = Path(layout_path)
+            
+            if not layout_folder.exists():
+                continue
+                
+            for collection_folder in layout_folder.iterdir():
+                # Skip if not a directory
+                if not collection_folder.is_dir():
+                    continue
+                    
+                # Skip if collection is in ignore list
+                if collection_folder.name.strip().lower() in normalized_ignore:
+                    continue
+                    
+                # Check for layout folder
+                layout_folder = collection_folder / "layout"
+                if not layout_folder.is_dir():
+                    continue
+                
+                # Get all XML files in the layout folder
+                layout_files = {f.name for f in layout_folder.iterdir() if f.is_file() and f.suffix.lower() == '.xml'}
+                
+                # If the collection has more files than the basic layouts, include it
+                if len(layout_files) > len(self.basic_layouts):
+                    collections.append(collection_folder.name)
+                    # Store the path for this collection
+                    self.collection_paths[collection_folder.name] = collection_folder
+        
+        return sorted(collections)
+
+    def get_themes(self):
+        """Get list of all theme batch files"""
+        themes = []
+        themes_folder = Path(self.themes_folder)
+        if themes_folder.exists():
+            themes = [f.name for f in themes_folder.iterdir() 
+                    if f.is_file() and f.name.endswith('.bat')]
+        return sorted(themes)
+    
+    def setup_ui(self):
+        """Setup the UI with two scrollable lists (collections and themes) and an Apply button"""
+        # Create main frame
+        self.frame = ctk.CTkFrame(self.parent, fg_color="transparent")
+        self.frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Add a title label
+        title_label = ctk.CTkLabel(
+            self.frame,
+            text="Apply Layout to a Single Collection",
+            font=("Arial", 16, "bold")
+        )
+        title_label.pack(pady=(0, 10))
+
+        # Create a container for the two lists
+        lists_frame = ctk.CTkFrame(self.frame, fg_color="transparent")
+        lists_frame.pack(fill="both", expand=True, pady=10)
+
+        # Left side: Collections list
+        collections_frame = ctk.CTkFrame(lists_frame, fg_color="transparent")
+        collections_frame.pack(side="left", fill="both", expand=True, padx=10)
+
+        ctk.CTkLabel(
+            collections_frame,
+            text="Collections",
+            font=("Arial", 14, "bold")
+        ).pack(pady=(0, 10))
+
+        self.collections_scrollable = ctk.CTkScrollableFrame(collections_frame, width=200, height=300)
+        self.collections_scrollable.pack(fill="both", expand=True)
+
+        # Populate collections list with radio buttons
+        for collection in self.get_collections():
+            radio_button = ctk.CTkRadioButton(
+                self.collections_scrollable,
+                text=collection,
+                variable=self.selected_collection,
+                value=collection
+            )
+            radio_button.pack(anchor="w", pady=2)
+
+        # Right side: Themes list
+        themes_frame = ctk.CTkFrame(lists_frame, fg_color="transparent")
+        themes_frame.pack(side="right", fill="both", expand=True, padx=10)
+
+        ctk.CTkLabel(
+            themes_frame,
+            text="Themes",
+            font=("Arial", 14, "bold")
+        ).pack(pady=(0, 10))
+
+        self.themes_scrollable = ctk.CTkScrollableFrame(themes_frame, width=200, height=300)
+        self.themes_scrollable.pack(fill="both", expand=True)
+
+        # Populate themes list with radio buttons
+        for theme in self.get_themes():
+            radio_button = ctk.CTkRadioButton(
+                self.themes_scrollable,
+                text=theme,
+                variable=self.selected_theme,
+                value=theme
+            )
+            radio_button.pack(anchor="w", pady=2)
+
+        # Apply button
+        apply_button = ctk.CTkButton(
+            self.frame,
+            text="Apply Theme",
+            command=self.apply_theme,
+            width=120,
+            fg_color="green",
+            font=("Arial", 12)
+        )
+        apply_button.pack(pady=10)
+
+        # Status label
+        self.status_label = ctk.CTkLabel(
+            self.frame,
+            text="",
+            font=("Arial", 12),
+            text_color="gray70"
+        )
+        self.status_label.pack(pady=5)
+    
+    def apply_theme(self):
+        """Apply the selected theme to the selected collection"""
+        collection = self.selected_collection.get()
+        theme_bat = self.selected_theme.get()
+        
+        # Check if a collection and theme are selected
+        if not collection or not theme_bat:
+            self.status_label.configure(text="Please select both a collection and theme", text_color="red")
+            return
+        
+        # Get the corresponding layout name for the theme
+        layout_name = self.theme_mappings.get(theme_bat)
+        
+        # If the theme is not in the mappings, generate the layout name dynamically
+        if not layout_name:
+            # Remove "Theme" and ".bat" from the batch file name
+            layout_name = "layout - " + theme_bat.replace(" Theme.bat", "")
+        
+        try:
+            # Get the correct path for this collection
+            collection_path = self.collection_paths.get(collection)
+            if not collection_path:
+                self.status_label.configure(text=f"Could not find path for collection: {collection}", text_color="red")
+                return
+                
+            # Construct the source and destination paths using the correct collection path
+            source_path = collection_path / "layout" / f"{layout_name}.xml"
+            dest_path = collection_path / "layout" / "layout.xml"
+            
+            # Ensure the source file exists
+            if not source_path.exists():
+                self.status_label.configure(text=f"Source layout file not found: {source_path}", text_color="red")
+                return
+                
+            # Create the destination directory if it doesn't exist
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            # Copy the file
+            shutil.copy2(str(source_path), str(dest_path))
+            self.status_label.configure(text=f"Successfully applied {layout_name} to {collection}", text_color="green")
+            
+        except Exception as e:
+            self.status_label.configure(text=f"Error: {str(e)}", text_color="red")
+            print(f"Error applying theme: {e}")
+
+"""
+These Classes are used in the Advanced Configs tab
+"""
+
+@dataclass
+class ScriptMetadata:
+    name: str
+    path: Path
+    size: int
+    modified: float
+    last_accessed: float
+    
+@dataclass
+class VirtualScrollState:
+    start_index: int = 0
+    visible_items: int = 20
+    total_items: int = 0
+
+"""
+3. Add this new MetadataCache class:
+"""
+class MetadataCache:
+    def __init__(self, cache_duration: timedelta = timedelta(minutes=5)):
+        self._cache: Dict[str, ScriptMetadata] = {}
+        self._cache_duration = cache_duration
+        self._last_refresh = datetime.now()
+        self._lock = threading.Lock()
+
+    def get(self, script_name: str) -> Optional[ScriptMetadata]:
+        with self._lock:
+            return self._cache.get(script_name)
+
+    def set(self, script_name: str, metadata: ScriptMetadata):
+        with self._lock:
+            self._cache[script_name] = metadata
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+            self._last_refresh = datetime.now()
+
+    def is_stale(self) -> bool:
+        return datetime.now() - self._last_refresh > self._cache_duration
+
+"""
+4. Add this BackgroundWorker class:
+"""
+class BackgroundWorker:
+    def __init__(self, max_workers: int = 4):
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.task_queue = queue.Queue()
+        self.running = True
+        self.worker_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self.worker_thread.start()
+
+    def _process_queue(self):
+        while self.running:
+            try:
+                task, callback = self.task_queue.get(timeout=1)
+                future = self.executor.submit(task)
+                future.add_done_callback(callback)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Worker error: {e}")
+
+    def submit_task(self, task, callback):
+        self.task_queue.put((task, callback))
+
+    def shutdown(self):
+        self.running = False
+        self.executor.shutdown(wait=True)
+
+class AdvancedConfigs:
+    def __init__(self, parent_tab):
+        # First, set the parent_tab
+        self.parent_tab = parent_tab
+        self.favorites_display_name = "Starred"
+        
+        # Get base path once from ConfigManager since it's already using PathManager
+        self.config_manager = ConfigManager()
+        self.base_path = self.config_manager.base_path
+        print(f"Using base path: {self.base_path}")
+        
+        # Get lazy loading setting - default to True if not specified
+        self.use_lazy_loading = self.config_manager.get_setting('Settings', 'lazy_loading', True)
+        print(f"Debug: Lazy loading is: {self.use_lazy_loading}")
+
+        # Initialize support classes
+        self.background_worker = BackgroundWorker()
+        self.virtual_scroll_state = VirtualScrollState()
+        
+        # Add loading overlay
+        self.loading_overlay = self._create_loading_overlay()
+
+        # Track which tabs exist
+        self._tab_inited = {}
+        self._categories = {}
+        self.all_scripts_map = {}
+        self._themes_tabview = None
+
+        # First, get all folders from the base path that start with "- Themes"
+        base_path = Path(self.base_path)
+        theme_folders = [
+            f.name for f in base_path.iterdir() 
+            if f.is_dir() and f.name.startswith("- Themes")
+        ]
+        print(f"\nDebug: Found theme folders: {theme_folders}")
+        
+        # Add non-theme base folders
+        self.base_config_folders = [
+            "- Advanced Configs",
+            "- Bezels Glass and Scanlines",
+            "- Mods"
+        ] + theme_folders  # Add all detected theme folders
+        
+        print(f"\nDebug: Final base_config_folders: {self.base_config_folders}")
+
+        # Get additional folders from config - ensure it's a list
+        additional_folders = self.config_manager.get_setting('Settings', 'additional_theme_folders', [])
+        if isinstance(additional_folders, str):
+            additional_folders = [additional_folders] if additional_folders else []
+        
+        # Combine base and additional folders
+        all_folders = self.base_config_folders + additional_folders
+        
+        # Convert all folders to Path objects
+        self.config_folders_all = [Path(self.base_path, folder) for folder in all_folders]
+        
+        # Filter existing folders
+        self.config_folders = [folder for folder in self.config_folders_all if folder.is_dir()]
+        print(f"\nDebug: Final config_folders: {[f.name for f in self.config_folders]}")
+        
+        # Set up path for favorites
+        self.favorites_path = Path(self.base_path) / "autochanger" / "favorites.json"
+
+        # Initialize potential_sub_tabs based on theme folders
+        self.potential_sub_tabs = []
+        for folder in theme_folders:
+            if folder.startswith("- Themes "):  # Has a suffix after "- Themes "
+                tab_name = folder.replace("- Themes ", "")
+                self.potential_sub_tabs.append((folder, tab_name))
+        
+        # Add any additional sub-tabs from config
+        additional_sub_tabs_raw = self.config_manager.get_setting('Settings', 'additional_sub_tabs', [])
+        if isinstance(additional_sub_tabs_raw, str):
+            additional_sub_tabs_raw = [additional_sub_tabs_raw] if additional_sub_tabs_raw else []
+        
+        for sub_tab in additional_sub_tabs_raw:
+            try:
+                folder, tab_name = sub_tab.split('|')
+                if (folder.strip(), tab_name.strip()) not in self.potential_sub_tabs:
+                    self.potential_sub_tabs.append((folder.strip(), tab_name.strip()))
+            except ValueError:
+                print(f"Warning: Invalid sub-tab format: {sub_tab}. Expected format: 'FolderName|TabName'")
+        
+        print(f"\nDebug: Potential sub-tabs: {self.potential_sub_tabs}")
+        
+        # Initialize remaining components
+        self._init_tab_configs()
+        self.tab_radio_vars = {}
+        self.radio_button_script_mapping = {}
+        self.radio_buttons = {}
+        self.favorite_buttons = {}
+        self.is_running_all = False
+        
+        # Load favorites and init GUI
+        self.favorites = self._load_favorites()
+        self._init_gui_elements()
+
+    def _create_loading_overlay(self):
+        overlay = ctk.CTkFrame(self.parent_tab)
+        spinner = ctk.CTkProgressBar(overlay)
+        spinner.pack(pady=20)
+        spinner.configure(mode="indeterminate")
+        label = ctk.CTkLabel(overlay, text="Loading...")
+        label.pack(pady=10)
+        return overlay
+
+    def show_loading(self, show: bool = True):
+        if show:
+            self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
+            self.loading_overlay.lift()
+            for widget in self.loading_overlay.winfo_children():
+                if isinstance(widget, ctk.CTkProgressBar):
+                    widget.start()
+        else:
+            for widget in self.loading_overlay.winfo_children():
+                if isinstance(widget, ctk.CTkProgressBar):
+                    widget.stop()
+            self.loading_overlay.place_forget()
+
+    def _get_theme_folders(self):
+        """
+        Get all theme folders and organize them into base and sub-folders.
+        Returns tuple of (base_folder, sub_folders_dict)
+        """
+        theme_folders = []
+        
+        print("\nDebug: Searching for theme folders in:", self.base_path)
+        
+        # Get dynamic theme folders
+        base_path = Path(self.base_path)
+        for folder in base_path.iterdir():
+            if folder.is_dir() and folder.name.startswith("- Themes"):
+                theme_folders.append(folder)
+                print(f"Debug: Found theme folder: {folder.name}")
+        
+        # Get additional tabs from config
+        additional_sub_tabs_raw = self.config_manager.get_setting('Settings', 'additional_sub_tabs', [])
+        if isinstance(additional_sub_tabs_raw, str):
+            additional_sub_tabs_raw = [additional_sub_tabs_raw] if additional_sub_tabs_raw else []
+        
+        print(f"Debug: Additional sub-tabs from config: {additional_sub_tabs_raw}")
+        
+        # Add folders from additional sub-tabs
+        for sub_tab in additional_sub_tabs_raw:
+            try:
+                folder_name, tab_name = sub_tab.split('|')
+                folder_path = base_path / folder_name.strip()
+                if folder_path.is_dir() and folder_path not in theme_folders:
+                    theme_folders.append(folder_path)
+                    print(f"Debug: Added additional theme folder: {folder_path}")
+            except ValueError:
+                print(f"Warning: Invalid sub-tab format: {sub_tab}. Expected format: 'FolderName|TabName'")
+        
+        if not theme_folders:
+            print("Debug: No theme folders found!")
+            return None, {}
+        
+        # Sort for consistent ordering
+        theme_folders.sort(key=lambda x: x.name)
+        print(f"\nDebug: All theme folders (sorted): {[f.name for f in theme_folders]}")
+        
+        # First, try to find "- Themes" as base
+        base_folder = next((f for f in theme_folders if f.name == "- Themes"), None)
+        
+        # If not found, try "- Themes Arcade"
+        if not base_folder:
+            base_folder = next((f for f in theme_folders if f.name == "- Themes Arcade"), None)
+        
+        # If still no base folder, use the first theme folder
+        if not base_folder and theme_folders:
+            base_folder = theme_folders[0]
+            print(f"Debug: No standard base folder found, using: {base_folder.name}")
+        
+        print(f"Debug: Selected base folder: {base_folder.name if base_folder else 'None'}")
+        
+        # Create dictionary of sub-folders with cleaned names
+        sub_folders = {}
+        for folder in theme_folders:
+            if folder != base_folder:
+                # Check if this folder is from additional_sub_tabs
+                folder_name = folder.name
+                for sub_tab in additional_sub_tabs_raw:
+                    try:
+                        config_folder, config_tab = sub_tab.split('|')
+                        if folder_name == config_folder.strip():
+                            # Use the configured tab name instead of the folder name
+                            sub_folders[folder] = config_tab.strip()
+                            print(f"Debug: Using configured name for {folder_name} -> {config_tab.strip()}")
+                            break
+                    except ValueError:
+                        continue
+                else:  # No match in additional_sub_tabs
+                    # Extract the part after "- Themes "
+                    if folder_name.startswith("- Themes "):
+                        sub_name = folder_name.replace("- Themes ", "")
+                        if sub_name:  # Only add if we have a name
+                            sub_folders[folder] = sub_name
+                            print(f"Debug: Added sub-folder: {folder_name} -> {sub_name}")
+        
+        print(f"\nDebug: Found {len(sub_folders)} sub-folders")
+        return base_folder, sub_folders
+    
+    def _init_tab_configs(self):
+        """Initialize tab configurations with optimized data structures"""
+        self.tab_keywords = {
+            "Favorites": frozenset(),
+            "Themes": frozenset(),  # Keep Themes in keywords
+            "Bezels & Effects": frozenset(["Bezel", "SCANLINE", "GLASS EFFECTS"]),
+            "Overlays": frozenset(["OVERLAY"]),
+            "InigoBeats": frozenset(["MUSIC"]),
+            "Attract": frozenset(["Attract", "Scroll"]),
+            "Monitor": frozenset(["Monitor"]),
+            "Splash": frozenset(["Splash"]),
+            "Front End": frozenset(["FRONT END"]),
+            "Other": frozenset()
+        }
+        
+        # Get theme folders
+        base_folder, sub_folders = self._get_theme_folders()
+        
+        # Update the folder_to_tab_mapping based on discovered folders
+        self.folder_to_tab_mapping = {
+            "- Bezels Glass and Scanlines": "Bezels & Effects"
+        }
+        
+        # Add base theme folder mapping
+        if base_folder:
+            self.folder_to_tab_mapping[base_folder.name] = "Themes"
+        
+        # Add sub-folder mappings
+        for folder, tab_name in sub_folders.items():
+            self.folder_to_tab_mapping[folder.name] = tab_name
+
+    def _init_gui_elements(self):
+        """Initialize GUI elements with fresh scan"""
+        self.status_label = ctk.CTkLabel(
+            self.parent_tab,
+            text="",
+            text_color="green",
+            bg_color="transparent",
+            corner_radius=8,
+            font=("", 14, "bold")
+        )
+        
+        self.loading_label = ctk.CTkLabel(
+            self.parent_tab,
+            text="Processing...",
+            text_color="gray70"
+        )
+        
+        self.progress_frame = ctk.CTkFrame(self.parent_tab)
+        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
+        self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
+        self.progress_bar.set(0)
+
+        self.tabview = ctk.CTkTabview(self.parent_tab)
+        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Do initial script scan
+        self._async_populate_tabs()
+
+    @lru_cache(maxsize=250)  # was 128; 250 is the new max size
+    def _get_script_path(self, script_name: str) -> Optional[Path]:
+        """Cached function to find script path"""
+        for folder in self.config_folders:
+            script_path = folder / script_name
+            if script_path.is_file():
+                return script_path
+        return None
+
+    def _load_favorites(self) -> List[str]:
+        """Load favorites with error handling"""
+        try:
+            return json.loads(self.favorites_path.read_text()) if self.favorites_path.exists() else []
+        except (json.JSONDecodeError, OSError):
+            return []
+
+    def _save_favorites(self):
+        """Save favorites with error handling"""
+        try:
+            self.favorites_path.parent.mkdir(parents=True, exist_ok=True)
+            self.favorites_path.write_text(json.dumps(self.favorites))
+        except OSError:
+            pass  # Handle saving error gracefully
+
+    async def _scan_folder(self, folder: Path) -> Dict[int, str]:
+        """Modified scan folder with better debug output"""
+        if not folder.is_dir():
+            print(f"Not a directory: {folder}")
+            return {}
+
+        print(f"\nScanning folder: {folder}")
+        scripts = {}
+        script_count = 0
+
+        # Get script extensions based on platform
+        if sys.platform.startswith('win'):
+            script_extensions = ('.bat', '.cmd')
+        else:
+            script_extensions = ('.sh',)
+
+        try:
+            files = list(folder.iterdir())
+            print(f"Found {len(files)} total files")
+        except Exception as e:
+            print(f"Error listing directory {folder}: {e}")
+            return {}
+
+        async def process_file(file_path):
+            nonlocal script_count
+            try:
+                if file_path.is_file() and file_path.suffix.lower() in script_extensions:
+                    script_count += 1
+                    print(f"Found script: {file_path.name}")
+                    return script_count, file_path.name
+            except OSError as e:
+                print(f"Error processing file {file_path}: {e}")
+            return None
+
+        tasks = [process_file(f) for f in files]
+        results = await asyncio.gather(*tasks)
+        
+        scripts = {idx: name for result in results if result for idx, name in [result]}
+        print(f"Found {len(scripts)} scripts in {folder}")
+        return scripts
+
+    async def _categorize_scripts_async(self) -> Dict[str, Any]:
+        """Categorize scripts asynchronously with sorting"""
+        tasks = [self._scan_folder(folder) for folder in self.config_folders]
+        folder_results = await asyncio.gather(*tasks)
+
+        # Create categories dictionary
+        script_categories = {tab: {} for tab in self.tab_keywords}
+
+        # Categorize and sort scripts from folder scan results
+        for folder_scripts in folder_results:
+            # Convert values to list and sort alphabetically
+            sorted_scripts = sorted(folder_scripts.values(), key=lambda x: x.lower())
+            # Reassign indices after sorting
+            for idx, script_name in enumerate(sorted_scripts, 1):
+                self._categorize_script(script_name, script_categories)
+
+        # Sort themes separately
+        themes_data = {}
+        for folder, sub_tab_name in self.potential_sub_tabs:
+            folder_path = Path(self.base_path, folder)
+            if not folder_path.is_dir():
+                continue
+
+            sub_tab_scripts_dict = await self._scan_folder(folder_path)
+            if sub_tab_scripts_dict:
+                # Sort scripts alphabetically
+                sorted_scripts = sorted(sub_tab_scripts_dict.values(), key=lambda x: x.lower())
+                # Create new dictionary with sorted scripts
+                themes_data[sub_tab_name] = {i+1: script for i, script in enumerate(sorted_scripts)}
+
+        script_categories["Themes"] = themes_data
+        return script_categories
+
+
+    def _categorize_script(self, script_name: str, categories: Dict[str, Dict[int, str]]):
+        """Categorize a single script"""
+        # Ignore theme scripts - they're handled separately by the themes tab
+        script_path = self._get_script_path(script_name)
+        if script_path:
+            for folder in self.config_folders:
+                if isinstance(folder, Path) and folder.name.startswith("- Themes"):
+                    if str(script_path).startswith(str(folder)):
+                        return  # Skip theme scripts entirely
+
+        # Try to match script to a specific category first
+        script_name_lower = script_name.lower()
+        for tab, keywords in self.tab_keywords.items():
+            if tab in ["Themes", "Favorites", "Other"]:  # Skip special categories
+                continue
+            if keywords and any(keyword.lower() in script_name_lower for keyword in keywords):
+                idx = len(categories[tab]) + 1
+                categories[tab][idx] = script_name
+                print(f"Debug: Categorized {script_name} into {tab}")
+                return
+
+        # If no specific category matched and it's not a theme script, put it in Other
+        idx = len(categories["Other"]) + 1
+        categories["Other"][idx] = script_name
+        print(f"Debug: Categorized {script_name} into Other")
+
+    def _async_populate_tabs(self):
+        """Kick off the async scanning and create tabs."""
+        async def populate():
+            try:
+                self.show_loading(True)
+                script_categories = await self._categorize_scripts_async()
+                self._categories = script_categories
+                self.parent_tab.after(0, lambda: self._create_tabs(script_categories))
+            finally:
+                self.show_loading(False)
+
+        asyncio.run(populate())
+
+    def _clear_current_tab_content(self, tab_name):
+        """Clear the existing content of the current tab"""
+        tab_frame = self.tabview.tab(tab_name)
+        for widget in tab_frame.winfo_children():
+            widget.destroy()
+
+    def _clear_themes_tab_content(self):
+        """Clear the existing content of the Themes tab and its sub-tabs"""
+        themes_tab = self.tabview.tab("Themes")
+        for widget in themes_tab.winfo_children():
+            widget.destroy()
+        self._themes_tabview = None
+
+    def _create_tabs(self, script_categories, restore_tab=None):
+        """Create tabs and optionally restore the previously selected tab"""
+        print("\nDebug: Creating tabs...")
+
+        # 1) Favorites Tab
+        if "Favorites" not in self._tab_inited:
+            self.tabview.add(self.favorites_display_name)
+            self._tab_inited["Favorites"] = False
+
+        # Build Favorites immediately
+        self.update_favorites_tab()
+        self._tab_inited["Favorites"] = True
+
+        # 2) Themes Tab - always create if we have any theme folders
+        base_folder, sub_folders = self._get_theme_folders()
+        if base_folder or sub_folders:
+            print("Debug: Found theme folders, adding Themes tab")
+            if "Themes" not in self._tab_inited:
+                self.tabview.add("Themes")
+                self._tab_inited["Themes"] = False
+                # If not using lazy loading, initialize immediately
+                if not self.use_lazy_loading:
+                    self._lazy_init_tab("Themes")
+                    self._tab_inited["Themes"] = True
+
+        # 3) Other script categories
+        for tab_name, scripts in script_categories.items():
+            if not scripts or tab_name in ("Favorites", "Themes"):
+                continue
+
+            if tab_name not in self._tab_inited:
+                self.tabview.add(tab_name)
+                self._tab_inited[tab_name] = False
+                # If not using lazy loading, initialize immediately
+                if not self.use_lazy_loading:
+                    self._lazy_init_tab(tab_name)
+                    self._tab_inited[tab_name] = True
+
+        # 4) Bind to detect tab changes - only if using lazy loading
+        if self.use_lazy_loading:
+            self.tabview.configure(command=self._on_tab_changed)
+
+        # 5) Restore previous tab or set initial tab
+        if restore_tab and restore_tab in self._tab_inited:
+            self.tabview.set(restore_tab)
+            if not self._tab_inited[restore_tab] and self.use_lazy_loading:
+                self._lazy_init_tab(restore_tab)
+        else:
+            self.set_initial_tab()
+
+    def _clear_tabs(self):
+        """Destroy any existing tabs in the Tabview for rebuild"""
+        # Store existing tabs that aren't Favorites
+        existing_tabs = [tab for tab in self.tabview._tab_dict.keys() 
+                        if tab != "Favorites"]
+        
+        # Remove non-Favorites tabs
+        for tab_name in existing_tabs:
+            self.tabview.delete(tab_name)
+            if tab_name in self._tab_inited:
+                del self._tab_inited[tab_name]
+
+        # Reset the Themes sub-tabview
+        self._themes_tabview = None
+
+    def _on_tab_changed(self):
+        """Handle tab changes - only used when lazy loading is enabled"""
+        if not self.use_lazy_loading:
+            return
+            
+        # Get the name of the currently selected tab from CTkTabview
+        current_tab_name = self.tabview.get()
+        
+        # Check if it's already initialized in your dictionary
+        if not self._tab_inited.get(current_tab_name, True):
+            self._lazy_init_tab(current_tab_name)
+            self._tab_inited[current_tab_name] = True
+
+    def _lazy_init_tab(self, tab_name: str):
+        """Actually build out the tab's content once, on first click."""
+        if tab_name == "Themes":
+            script_dict = self._categories.get("Themes", {})
+            self._create_themes_tab(script_dict)
+        elif tab_name == "Favorites":
+            # Already built in _create_tabs() if you call update_favorites_tab()
+            pass
+        else:
+            script_dict = self._categories.get(tab_name, {})
+            self._create_regular_tab(tab_name, script_dict)
+
+    def _create_themes_tab(self, scripts: dict[int, str]):
+        """Build the 'Themes' tab content with dynamically created sub-tabs"""
+        themes_tab = self.tabview.tab("Themes")
+
+        if self._themes_tabview is not None:
+            return
+
+        self._themes_tabview = ctk.CTkTabview(themes_tab)
+        self._themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Add the original sub-tabs (e.g., "Arcades", "Consoles", etc.)
+        base_folder, sub_folders = self._get_theme_folders()
+        
+        # Process base folder first if it exists
+        if base_folder:
+            script_list = self._get_scripts_from_folder(base_folder)
+            if script_list:
+                self._create_theme_sub_tab(self._themes_tabview, "Arcades", script_list)
+        
+        # Process sub-folders
+        for folder, tab_name in sub_folders.items():
+            script_list = self._get_scripts_from_folder(folder)
+            if script_list:
+                self._create_theme_sub_tab(self._themes_tabview, tab_name, script_list)
+
+        # Add the new sub-tab: "Console Single Collection" after all original sub-tabs
+        self._themes_tabview.add("Console Single Collection")
+        console_single_collection_tab = self._themes_tabview.tab("Console Single Collection")
+
+        # Initialize and add the ThemeManager UI to the new sub-tab
+        self.theme_manager = ThemeManager(console_single_collection_tab, self.config_manager)
+        self.theme_manager.frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+    def _get_scripts_from_folder(self, folder: Path) -> list[str]:
+        """Get list of scripts from a folder with appropriate extensions"""
+        if not folder.is_dir():
+            print(f"Debug: Folder not found or not a directory: {folder}")
+            return []
+            
+        # Get appropriate extensions based on platform
+        if sys.platform.startswith('win'):
+            extensions = ('.bat', '.cmd')
+        else:
+            extensions = ('.sh',)
+        
+        try:
+            # Get all script files
+            script_list = [
+                f.name for f in folder.iterdir()
+                if f.is_file() and f.suffix.lower() in extensions
+            ]
+            
+            # Sort alphabetically
+            sorted_scripts = sorted(script_list, key=str.lower)
+            print(f"Debug: Found {len(sorted_scripts)} scripts in {folder}")
+            return sorted_scripts
+        except Exception as e:
+            print(f"Debug: Error reading folder {folder}: {e}")
+            return []
+
+    def _create_theme_sub_tab(self, themes_tabview, sub_tab_name: str, scripts: list[str]):
+        """Create a single theme sub-tab with radio buttons, etc."""
+        print(f"\nDebug: Creating theme sub-tab: {sub_tab_name}")
+        
+        # Validate inputs
+        if not scripts:
+            print(f"Debug: No scripts provided for sub-tab {sub_tab_name}")
+            return
+        
+        if not themes_tabview:
+            print("Debug: No themes_tabview provided")
+            return
+            
+        try:
+            # Add the tab to the tabview
+            print(f"Debug: Adding tab {sub_tab_name} to themes_tabview")
+            themes_tabview.add(sub_tab_name)
+            
+            # Initialize the radio variable
+            if sub_tab_name not in self.tab_radio_vars:
+                self.tab_radio_vars[sub_tab_name] = tk.IntVar(value=0)
+            
+            # Create script mapping
+            sub_tab_scripts = {i+1: s for i, s in enumerate(scripts)}
+            self.radio_button_script_mapping[sub_tab_name] = sub_tab_scripts
+            
+            # Initialize button lists if needed
+            if sub_tab_name not in self.radio_buttons:
+                self.radio_buttons[sub_tab_name] = []
+            if sub_tab_name not in self.favorite_buttons:
+                self.favorite_buttons[sub_tab_name] = {}
+
+            # Create outer frame to properly contain the scrollable frame
+            outer_frame = ctk.CTkFrame(themes_tabview.tab(sub_tab_name), fg_color="transparent")
+            outer_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+            # Create scrollable frame with explicit size and proper containment
+            scrollable_frame = ctk.CTkScrollableFrame(
+                outer_frame,
+                width=380,
+                height=400,
+                fg_color="transparent"
+            )
+            scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+            # Set up scrolling using shared method
+            self._setup_scrolling(scrollable_frame)
+
+            # Create a frame to hold all the buttons
+            buttons_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
+            buttons_frame.pack(fill="both", expand=True)
+
+            # Create the script buttons
+            for i, script_name in sub_tab_scripts.items():
+                frame = ctk.CTkFrame(buttons_frame, fg_color="transparent")
+                frame.pack(fill="x", padx=5, pady=2)
+
+                script_label = Path(script_name).stem
+                script_exists = bool(self._get_script_path(script_name))
+
+                radio_button = ctk.CTkRadioButton(
+                    frame,
+                    text=script_label,
+                    variable=self.tab_radio_vars[sub_tab_name],
+                    value=i,
+                    command=lambda t=sub_tab_name, v=i: self.on_radio_select(t, v),
+                    state="normal" if script_exists else "disabled",
+                    text_color="gray50" if not script_exists else None
+                )
+                radio_button.pack(side="left", padx=5)
+
+                if not script_exists:
+                    warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+                    warning_frame.pack(side="left", padx=2)
+                    warning_label = ctk.CTkLabel(
+                        warning_frame,
+                        text="⚠️ Script not found",
+                        text_color="orange"
+                    )
+                    warning_label.pack(side="left")
+
+                is_favorite = script_name in self.favorites
+                star_text = "★ Starred" if is_favorite else "☆ Add to Starred"
+                
+                favorite_button = ctk.CTkButton(
+                    frame,
+                    text=star_text,
+                    width=100,
+                    command=lambda s=script_name: self.toggle_favorite(sub_tab_name, s)
+                )
+                favorite_button.pack(side="right", padx=5)
+
+                if script_exists:
+                    self.radio_buttons[sub_tab_name].append(radio_button)
+                    self.favorite_buttons[sub_tab_name][script_name] = favorite_button
+
+            # Store the frame for cleanup
+            themes_tabview.tab(sub_tab_name)._scrollable_frame = scrollable_frame
+            
+            print(f"Debug: Successfully completed sub-tab creation for {sub_tab_name}")
+        except Exception as e:
+            print(f"Debug: Error in _create_theme_sub_tab for {sub_tab_name}: {e}")
+
+    def _setup_scrolling(self, scrollable_frame):
+        """Set up mousewheel scrolling for a scrollable frame"""
+        def _on_mousewheel(event):
+            if not scrollable_frame.winfo_exists():
+                return
+                
+            if event.delta:
+                delta = -1 * (event.delta/120)
+            else:
+                if event.num == 4:
+                    delta = -1
+                else:
+                    delta = 1
+                    
+            scrollable_frame._parent_canvas.yview_scroll(int(delta), "units")
+
+        # Bind mouse wheel to the scrollable frame and its children
+        scrollable_frame.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+        scrollable_frame.bind_all("<Button-4>", _on_mousewheel, add="+")
+        scrollable_frame.bind_all("<Button-5>", _on_mousewheel, add="+")
+    
+    def _create_regular_tab(self, tab_name: str, scripts: dict[int, str]):
+        """Create a normal tab with alphabetically sorted scripts"""
+        print(f"\nDebug: Creating regular tab: {tab_name}")
+        print(f"Debug: Number of scripts: {len(scripts)}")
+        
+        tab_frame = self.tabview.tab(tab_name)
+        
+        # Clear any existing content
+        for widget in tab_frame.winfo_children():
+            widget.destroy()
+
+        self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
+        
+        # Sort scripts by name
+        sorted_scripts = sorted(scripts.values(), key=lambda x: x.lower())
+        sorted_scripts_dict = {i+1: script for i, script in enumerate(sorted_scripts, 1)}
+        
+        print(f"Debug: Sorted scripts for {tab_name}: {len(sorted_scripts_dict)}")
+        
+        self.radio_button_script_mapping[tab_name] = sorted_scripts_dict
+        self.radio_buttons[tab_name] = []
+        self.favorite_buttons[tab_name] = {}
+
+        # Create outer frame to properly contain the scrollable frame
+        outer_frame = ctk.CTkFrame(tab_frame, fg_color="transparent")
+        outer_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Create scrollable frame with explicit size and proper containment
+        scrollable_frame = ctk.CTkScrollableFrame(
+            outer_frame,
+            width=380,
+            height=400,
+            fg_color="transparent"
+        )
+        scrollable_frame.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Set up scrolling using shared method
+        self._setup_scrolling(scrollable_frame)
+
+        # Create a frame to hold all the buttons
+        buttons_frame = ctk.CTkFrame(scrollable_frame, fg_color="transparent")
+        buttons_frame.pack(fill="both", expand=True)
+
+        # Create the script buttons
+        for i, script_name in sorted_scripts_dict.items():
+            frame = ctk.CTkFrame(buttons_frame, fg_color="transparent")
+            frame.pack(fill="x", padx=5, pady=2)
+
+            script_label = Path(script_name).stem
+            script_exists = bool(self._get_script_path(script_name))
+
+            radio_button = ctk.CTkRadioButton(
+                frame,
+                text=script_label,
+                variable=self.tab_radio_vars[tab_name],
+                value=i,
+                command=lambda t=tab_name, v=i: self.on_radio_select(t, v),
+                state="normal" if script_exists else "disabled",
+                text_color="gray50" if not script_exists else None
+            )
+            radio_button.pack(side="left", padx=5)
+
+            if not script_exists:
+                warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+                warning_frame.pack(side="left", padx=2)
+                warning_label = ctk.CTkLabel(
+                    warning_frame,
+                    text="⚠️ Script not found",
+                    text_color="orange"
+                )
+                warning_label.pack(side="left")
+
+            is_favorite = script_name in self.favorites
+            star_text = "★ Starred" if is_favorite else "☆ Add to Starred"
+            
+            favorite_button = ctk.CTkButton(
+                frame,
+                text=star_text,
+                width=100,
+                command=lambda s=script_name: self.toggle_favorite(tab_name, s)
+            )
+            favorite_button.pack(side="right", padx=5)
+
+            if script_exists:
+                self.radio_buttons[tab_name].append(radio_button)
+                self.favorite_buttons[tab_name][script_name] = favorite_button
+        
+        # Store the frame for cleanup
+        tab_frame._scrollable_frame = scrollable_frame
+
+    def _create_script_buttons(self, parent_frame, tab_name: str, scripts: Dict[int, str]):
+        """Create script buttons with virtual scrolling"""
+        for widget in parent_frame.winfo_children():
+            widget.destroy()
+
+        start = self.virtual_scroll_state.start_index
+        end = start + self.virtual_scroll_state.visible_items
+
+        visible_scripts = {
+            k: v for k, v in scripts.items()
+            if isinstance(k, int) and start <= k <= end
+        }
+
+        for i, script_name in visible_scripts.items():
+            self._create_single_script_buttons(parent_frame, tab_name, i, script_name)
+
+        # Store tab_name on the frame and bind scroll
+        parent_frame.tab_name = tab_name  # Add this line
+        if not hasattr(parent_frame, '_scroll_bound'):
+            parent_frame.bind_all("<MouseWheel>",
+                                lambda e: self._handle_scroll(e, parent_frame, scripts))
+            parent_frame._scroll_bound = True
+
+    def _create_single_script_buttons(self, parent_frame, tab_name: str, index: int, script_name: str):
+        frame = ctk.CTkFrame(parent_frame)
+        frame.pack(fill="x", padx=5, pady=2)
+
+        script_label = Path(script_name).stem
+        script_exists = bool(self._get_script_path(script_name))
+
+        radio_button = ctk.CTkRadioButton(
+            frame,
+            text=script_label,
+            variable=self.tab_radio_vars[tab_name],
+            value=index,
+            command=lambda t=tab_name, v=index: self.on_radio_select(t, v),
+            state="normal" if script_exists else "disabled",
+            text_color="gray50" if not script_exists else None
+        )
+        radio_button.pack(side="left", padx=5)
+
+        if not script_exists:
+            warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+            warning_frame.pack(side="left", padx=2)
+            warning_label = ctk.CTkLabel(
+                warning_frame,
+                text="⚠️ Script not found",
+                text_color="orange"
+            )
+            warning_label.pack(side="left")
+
+        if tab_name == self.favorites_display_name:
+            remove_button = ctk.CTkButton(
+                frame,
+                text="Remove from Starred",
+                width=120,
+                command=lambda s=script_name: self.remove_favorite(s, radio_button)
+            )
+            remove_button.pack(side="right", padx=5)
+        else:
+            is_favorite = script_name in self.favorites
+            star_text = "★ Starred" if is_favorite else "☆ Add to Starred"
+            
+            favorite_button = ctk.CTkButton(
+                frame,
+                text=star_text,
+                width=100,
+                command=lambda s=script_name: self.toggle_favorite(tab_name, s)
+            )
+            favorite_button.pack(side="right", padx=5)
+
+            # Store button reference
+            if tab_name not in self.favorite_buttons:
+                self.favorite_buttons[tab_name] = {}
+            self.favorite_buttons[tab_name][script_name] = favorite_button
+
+    def _handle_scroll(self, event, frame, scripts):
+        """Handle scrolling for virtual list"""
+        if not scripts:
+            return
+
+        # Calculate new start index
+        delta = -1 if event.delta > 0 else 1
+        new_start = max(0, min(
+            self.virtual_scroll_state.start_index + delta,
+            len(scripts) - self.virtual_scroll_state.visible_items
+        ))
+
+        # Update if changed
+        if new_start != self.virtual_scroll_state.start_index:
+            self.virtual_scroll_state.start_index = new_start
+            self._create_script_buttons(frame, frame.tab_name, scripts)
+
+
+    def cleanup(self):
+        """Enhanced cleanup method"""
+        try:
+            # Stop background worker
+            if hasattr(self, 'background_worker'):
+                self.background_worker.shutdown()
+            
+            # Remove scroll bindings and destroy frames
+            if hasattr(self, 'tabview'):
+                for tab_name in self.tabview._tab_dict:
+                    tab_frame = self.tabview.tab(tab_name)
+                    if hasattr(tab_frame, '_scrollable_frame'):
+                        tab_frame._scrollable_frame.unbind_all("<MouseWheel>")
+                        tab_frame._scrollable_frame.unbind_all("<Button-4>")
+                        tab_frame._scrollable_frame.unbind_all("<Button-5>")
+
+            # Clear other resources
+            if hasattr(self, '_categories'):
+                self._categories.clear()
+            if hasattr(self, '_tab_inited'):
+                self._tab_inited.clear()
+
+            # Clear GUI elements
+            if hasattr(self, 'loading_overlay'):
+                self.loading_overlay.destroy()
+
+            # Clear any remaining widgets
+            for widget in self.parent_tab.winfo_children():
+                widget.destroy()
+
+        except Exception as e:
+            print(f"Error during cleanup: {e}")
+            
+    def _init_tab_configs(self):
+        """Initialize tab configurations with optimized data structures"""
+        self.tab_keywords = {
+            "Favorites": frozenset(),
+            "Themes": frozenset(),
+            "Bezels & Effects": frozenset(["Bezel", "SCANLINE", "GLASS EFFECTS"]),
+            "Overlays": frozenset(["OVERLAY"]),
+            "InigoBeats": frozenset(["MUSIC"]),
+            "Attract": frozenset(["Attract", "Scroll"]),
+            "Monitor": frozenset(["Monitor", "MONITOR"]),  # Added uppercase variant
+            "Splash": frozenset(["Splash"]),
+            "Front End": frozenset(["FRONT END"]),
+            "Other": frozenset()
+        }
+
+    def run_script_threaded(self, script_path: Path):
+        """Modified to use background worker"""
+        def script_task():
+            try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                process = subprocess.Popen(
+                    ["cmd.exe", "/c", str(script_path)],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=script_path.parent,
+                    startupinfo=startupinfo
+                )
+                stdout, stderr = process.communicate()
+                return stdout, stderr, process.returncode
+            except Exception as e:
+                return None, str(e), -1
+
+        def script_complete(future):
+            try:
+                stdout, stderr, returncode = future.result()
+                if returncode != 0:
+                    self.show_status(f"Script error: {stderr}", color="red")
+                else:
+                    self.show_status("Script completed successfully")
+            finally:
+                self.set_gui_state(True)
+
+        self.set_gui_state(False)
+        self.background_worker.submit_task(script_task, script_complete)
+
+    def update_favorites_tab(self):
+        """Update favorites tab with optimized GUI updates"""
+        tab = self.tabview.tab(self.favorites_display_name)  # Changed from "Favorites"
+        for widget in tab.winfo_children():
+            widget.destroy()
+
+        scrollable_frame = ctk.CTkScrollableFrame(tab, width=400, height=400)
+        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        if self.favorites:
+            run_all_frame = ctk.CTkFrame(scrollable_frame)
+            run_all_frame.pack(fill="x", padx=5, pady=5)
+            
+            run_all_button = ctk.CTkButton(
+                run_all_frame,
+                text="Run All Favorites Sequentially",
+                command=self.run_all_favorites
+            )
+            run_all_button.pack(fill="x", padx=5, pady=5)
+
+        if not self.favorites:
+            ctk.CTkLabel(scrollable_frame, text="No favorites added yet").pack(pady=10)
+            return
+
+        self.tab_radio_vars["Favorites"] = tk.IntVar(value=0)
+        self.radio_buttons["Favorites"] = []
+        self.radio_button_script_mapping["Favorites"] = {}
+
+        for i, script_name in enumerate(self.favorites, 1):
+            script_label = Path(script_name).stem
+            script_exists = bool(self._get_script_path(script_name))
+            
+            frame = ctk.CTkFrame(scrollable_frame)
+            frame.pack(fill="x", padx=5, pady=2)
+
+            radio_button = ctk.CTkRadioButton(
+                frame,
+                text=script_label,
+                variable=self.tab_radio_vars["Favorites"],
+                value=i,
+                command=lambda t="Favorites", v=i: self.on_radio_select(t, v),
+                state="normal" if script_exists else "disabled",
+                text_color="gray50" if not script_exists else None
+            )
+            radio_button.pack(side="left", padx=5)
+
+            if not script_exists:
+                warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
+                warning_frame.pack(side="left", padx=2)
+                
+                warning_label = ctk.CTkLabel(
+                    warning_frame,
+                    text="⚠️ Script not found",
+                    text_color="orange"
+                )
+                warning_label.pack(side="left")
+
+            remove_button = ctk.CTkButton(
+                frame,
+                text="Remove",
+                width=60,
+                command=lambda s=script_name, b=radio_button: 
+                    self.remove_favorite(s, b)
+            )
+            remove_button.pack(side="right", padx=5)
+
+            if script_exists:
+                self.radio_buttons["Favorites"].append(radio_button)
+                self.radio_button_script_mapping["Favorites"][i] = script_name
+
+    def run_script_threaded(self, script_path: Path):
+        """Run script using background worker with platform support"""
+        def script_task():
+            try:
+                script_path_str = str(script_path.resolve())
+                cwd = script_path.parent.resolve()
+
+                if sys.platform.startswith('win'):
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+                    
+                    # For Windows, directly execute the batch file
+                    process = subprocess.Popen(
+                        [script_path_str],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        cwd=cwd,
+                        startupinfo=startupinfo,
+                        shell=True  # Add shell=True for Windows
+                    )
+                else:
+                    # Make script executable on Unix-like systems
+                    os.chmod(script_path_str, 0o755)
+                    process = subprocess.Popen(
+                        ["/bin/bash", script_path_str],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        cwd=cwd
+                    )
+                
+                stdout, stderr = process.communicate()
+                print(f"Script output: {stdout}")
+                print(f"Script error (if any): {stderr}")
+                if process.returncode != 0:
+                    print(f"Script exited with code: {process.returncode}")
+                    
+                return stdout, stderr, process.returncode
+
+            except Exception as e:
+                print(f"Error executing script: {e}")
+                return None, str(e), -1
+
+        def script_complete(future):
+            try:
+                stdout, stderr, returncode = future.result()
+                # Always show success message to user regardless of errors
+                self.show_status("Script completed successfully")
+            finally:
+                self.set_gui_state(True)
+
+        self.set_gui_state(False)
+        self.background_worker.submit_task(script_task, script_complete)
+
+    async def run_script_async(self, script_path: Path) -> bool:
+        """Run script asynchronously with platform support"""
+        try:
+            script_path_str = str(script_path.resolve())
+            cwd = script_path.parent.resolve()
+
+            if sys.platform.startswith('win'):
+                process = await asyncio.create_subprocess_exec(
+                    script_path_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    shell=True  # Add shell=True for Windows
+                )
+            else:
+                # Make script executable on Unix-like systems
+                os.chmod(script_path_str, 0o755)
+                process = await asyncio.create_subprocess_exec(
+                    "/bin/bash",
+                    script_path_str,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd
+                )
+            
+            stdout, stderr = await process.communicate()
+            return True
+            
+        except Exception as e:
+            print(f"Error running script: {e}")
+            return False
+
+    def set_gui_state(self, enabled: bool):
+        """Update GUI state with minimal redraws"""
+        for buttons in self.radio_buttons.values():
+            for button in buttons:
+                button.configure(state="normal" if enabled else "disabled")
+
+        # Only show processing message when disabled
+        if enabled:
+            self.loading_label.pack_forget()
+            # Show success message once processing is complete
+            self.show_status("Script completed successfully")
+        else:
+            # Show started message in green instead of gray processing
+            self.show_status("Script started...", duration=None)
+        
+        self.parent_tab.update_idletasks()
+
+    def show_status(self, message: str, duration: int = 2000, color: str = "green"):
+        """Show status with optimized animation"""
+        # Hide any existing loading label first
+        self.loading_label.pack_forget()
+        
+        # Configure and show the status
+        self.status_label.configure(text=message, text_color=color)
+        self.status_label.pack(side="bottom", pady=10)
+        
+        # Only do fade out if duration is specified
+        if duration is not None:
+            def fade_out(alpha: float = 1.0):
+                if alpha <= 0:
+                    self.status_label.pack_forget()
+                    return
+                
+                if color.startswith('#'):
+                    rgb = [int(int(color[i:i+2], 16) * alpha) for i in (1, 3, 5)]
+                    color_with_alpha = f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
+                    self.status_label.configure(text_color=color_with_alpha)
+                
+                self.parent_tab.after(50, lambda: fade_out(alpha - 0.1))
+            
+            self.parent_tab.after(duration, lambda: fade_out())
+
+    def toggle_favorite(self, tab_name: str, script_name: str):
+        """Toggle favorite status and update all relevant buttons"""
+        is_now_favorite = script_name not in self.favorites
+        
+        if is_now_favorite:
+            self.favorites.append(script_name)
+            new_state = "★ Starred"
+            #status_msg = f"Added '{Path(script_name).stem}' to Starred tab"
+        else:
+            self.favorites.remove(script_name)
+            new_state = "☆ Add to Starred"
+            #status_msg = f"Removed '{Path(script_name).stem}' from Starred tab"
+
+        # Update all instances of this script's star button
+        for tab_buttons in self.favorite_buttons.values():
+            if script_name in tab_buttons:
+                tab_buttons[script_name].configure(text=new_state)
+
+        self._save_favorites()
+        self.update_favorites_tab()
+        #self.show_status(status_msg, duration=2000, color="#2ecc71")
+
+    def remove_favorite(self, script_name: str, button: ctk.CTkRadioButton):
+        """Remove from favorites and update buttons"""
+        if script_name in self.favorites:
+            self.favorites.remove(script_name)
+            
+            # Update all star buttons for this script
+            for tab_buttons in self.favorite_buttons.values():
+                if script_name in tab_buttons:
+                    tab_buttons[script_name].configure(text="☆ Add to Starred")
+            
+            self._save_favorites()
+            self.update_favorites_tab()
+            #self.show_status(f"Removed '{Path(script_name).stem}' from Starred tab", 
+                            #duration=2000, color="#2ecc71")
+
+    def on_radio_select(self, tab_name: str, value: int):
+        """Handle radio selection with optimized script execution"""
+        if value not in self.radio_button_script_mapping[tab_name]:
+            return
+
+        script_name = self.radio_button_script_mapping[tab_name][value]
+        script_path = self._get_script_path(script_name)
+
+        if not script_path:
+            messagebox.showerror("Error", f"Script not found: {script_name}")
+            return
+
+        self.set_gui_state(False)
+        self.run_script_threaded(script_path)
+
+    async def run_all_favorites_async(self):
+        """Run all favorite scripts sequentially with progress tracking"""
+        if not self.favorites or self.is_running_all:
+            return
+
+        self.is_running_all = True
+        self.set_gui_state(False)
+        
+        # Filter to existing scripts
+        existing_scripts = [
+            script for script in self.favorites 
+            if self._get_script_path(script)
+        ]
+        total_scripts = len(existing_scripts)
+        
+        if total_scripts == 0:
+            self.show_status("No valid scripts found in favorites!", color="orange")
+            self.is_running_all = False
+            self.set_gui_state(True)
+            return
+
+        self.show_progress(True)
+        completed = 0
+        
+        try:
+            for script_name in existing_scripts:
+                script_path = self._get_script_path(script_name)
+                if script_path:
+                    # Update progress before running script
+                    self.update_progress(completed, total_scripts, script_name)
+                    
+                    # Run script and wait for completion
+                    await self.run_script_async(script_path)
+                    
+                    # Update progress after script completion
+                    completed += 1
+                    self.update_progress(completed, total_scripts, script_name)
+
+        finally:
+            self.is_running_all = False
+            self.set_gui_state(True)
+            self.show_progress(False)
+            self.show_status("All available favorites executed successfully!", color="#2ecc71")
+
+    def run_all_favorites(self):
+        """Start the async run_all_favorites operation"""
+        asyncio.run(self.run_all_favorites_async())
+
+    def show_progress(self, show: bool = True):
+        """Show or hide the progress bar and label"""
+        if show:
+            self.progress_frame.pack(side="bottom", fill="x", padx=10, pady=5)
+            self.progress_label.pack(pady=(0, 5))
+            self.progress_bar.pack(fill="x", padx=10, pady=(0, 5))
+        else:
+            self.progress_frame.pack_forget()
+
+    def update_progress(self, current: int, total: int, script_name: str):
+        """Update progress bar and label"""
+        progress = current / total if total > 0 else 0
+        self.progress_bar.set(progress)
+        self.progress_label.configure(
+            text=f"Running {current}/{total}: {Path(script_name).stem}"
+        )
+        self.parent_tab.update_idletasks()
+
+    def set_initial_tab(self):
+        """Pick your initial tab if you want to open Favorites or Themes first."""
+        if not self._tab_inited:
+            return
+        
+        # 1) If you want Favorites first
+        if self.favorites and "Favorites" in self._tab_inited:
+            self.tabview.set(self.favorites_display_name)  # Changed from "Favorites"
+            if not self._tab_inited["Favorites"]:
+                self._lazy_init_tab("Favorites")
+            return
+
+        # 2) If you want Themes second
+        if "Themes" in self._tab_inited:
+            self.tabview.set("Themes")
+            if not self._tab_inited["Themes"]:
+                self._lazy_init_tab("Themes")
+            return
+        
+        # 3) Otherwise just pick the first key
+        try:
+            first_tab = next(iter(self._tab_inited.keys()))
+            self.tabview.set(first_tab)
+            if not self._tab_inited[first_tab]:
+                self._lazy_init_tab(first_tab)
+        except (StopIteration, ValueError):
+            pass
+
+class FilterGames:
+    def __init__(self, parent_tab):
+        self.parent_tab = parent_tab
+        # Fix path separators for cross-platform compatibility
+        self.output_dir = os.path.join('collections', 'Arcades')
+        self.include_output_file = os.path.join(self.output_dir, "include.txt")
+        self.exclude_output_file = os.path.join(self.output_dir, "exclude.txt")
+        self.playlist_location = 'U'
+
+        # Control type mapping for dropdown and checkboxes
+        self.control_type_mapping = {
+            "8 way": "8 way",
+            "4 way": "4 way",
+            "analog": "analog",
+            "trackball": "trackball",
+            "twin stick": "twin stick",
+            "lightgun": "lightgun",
+            "Vertical Games Only": "VERTICAL"
+        }
+
+        # Load DLL and CSV with proper path handling
+        self.load_custom_dll()
+        self.csv_file_path = self.get_csv_file_path()
+        
+        # Create main UI
+        self.create_main_interface()
+
+    def create_main_interface(self):
+        # Create main container frame with weight distribution
+        main_container = ctk.CTkFrame(self.parent_tab)
+        main_container.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Create left sidebar frame (1/3 width)
+        sidebar_frame = ctk.CTkFrame(main_container, width=200, corner_radius=10)
+        sidebar_frame.pack(side='left', fill='y', padx=10, pady=10)
+
+        # Create right content frame (2/3 width)
+        right_frame = ctk.CTkFrame(main_container, corner_radius=10)
+        right_frame.pack(side='left', fill='both', expand=True, padx=10, pady=10)
+
+        # Initialize status bar first
+        self.status_bar = ctk.CTkLabel(right_frame, text="Ready", anchor='w')
+
+        # Create a TabView for Control Types, Buttons, and Vertical Filter
+        tabview = ctk.CTkTabview(sidebar_frame, width=200)
+        tabview.pack(fill='both', expand=True, padx=10, pady=10)
+
+        # Add Control Types, Buttons, and Vertical tabs
+        control_types_tab = tabview.add("Control Types")
+        buttons_tab = tabview.add("Buttons")
+        vertical_tab = tabview.add("Vertical")
+
+        # Control Types checkboxes
+        self.control_type_vars = {}
+        control_types = ["8 way", "4 way", "analog", "trackball", "twin stick", "lightgun"]
+        control_label = ctk.CTkLabel(control_types_tab, text="Control Types", font=("Arial", 14, "bold"))
+        control_label.pack(pady=(10,5))
+
+        for control_type in control_types:
+            var = tk.IntVar()
+            checkbox = ctk.CTkCheckBox(control_types_tab, text=control_type, variable=var, command=self.update_filtered_list)
+            checkbox.pack(padx=20, pady=5, anchor='w')
+            self.control_type_vars[control_type] = var
+
+        # Buttons tab content
+        self.buttons_var = ctk.StringVar(value="Select number of buttons")
+        self.buttons_var.trace_add('write', lambda *args: self.update_filtered_list())
+        button_options = ["Select number of buttons", "0", "1", "2", "3", "4", "5", "6"]
+        buttons_label = ctk.CTkLabel(buttons_tab, text="Number of Buttons", font=("Arial", 14, "bold"))
+        buttons_label.pack(pady=(10,5))
+        buttons_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.buttons_var, values=button_options)
+        buttons_dropdown.pack(padx=20, pady=5)
+
+        # Players tab content
+        self.players_var = ctk.StringVar(value="Select number of players")
+        self.players_var.trace_add('write', lambda *args: self.update_filtered_list())
+        player_options = ["Select number of players", "1", "2", "3", "4", "5", "6", "7", "8"]
+        players_label = ctk.CTkLabel(buttons_tab, text="Number of Players", font=("Arial", 14, "bold"))
+        players_label.pack(pady=(10, 5))
+        players_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.players_var, values=player_options)
+        players_dropdown.pack(padx=20, pady=5)
+
+        # Vertical tab content
+        self.vertical_checkbox_var = tk.IntVar()
+        vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games",
+                                          variable=self.vertical_checkbox_var,
+                                          command=self.update_filtered_list)
+        vertical_checkbox.pack(padx=20, pady=10, anchor='w')
+
+        # Toggle button frame
+        toggle_frame = ctk.CTkFrame(sidebar_frame)
+        toggle_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
+        # Toggle button
+        self.toggle_var = tk.StringVar(value="Switch to Exclude Options")
+        toggle_button = ctk.CTkButton(toggle_frame, textvariable=self.toggle_var, command=self.toggle_mode)
+        toggle_button.pack(pady=(0, 5), fill='x')
+
+        # Include Games frame
+        self.include_frame = ctk.CTkFrame(sidebar_frame)
+        self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
+        # Include Games buttons
+        filter_button = ctk.CTkButton(self.include_frame, text="Save Filter", command=self.filter_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
+        filter_button.pack(pady=(0, 5), fill='x')
+
+        clear_filters_button = ctk.CTkButton(self.include_frame, text="Clear Filters",
+                                           command=self.clear_filters)
+        clear_filters_button.pack(pady=(0, 5), fill='x')
+
+        show_all_button = ctk.CTkButton(self.include_frame, text="Reset to Default",
+                                       command=self.show_all_games, fg_color="red")
+        show_all_button.pack(fill='x')
+
+        # Exclude Games frame
+        self.exclude_frame = ctk.CTkFrame(sidebar_frame)
+
+        # Exclude Games buttons
+        exclude_button = ctk.CTkButton(self.exclude_frame, text="Exclude Games",
+                                           command=self.exclude_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
+        exclude_button.pack(pady=(0, 5), fill='x')
+
+        clear_filters_button = ctk.CTkButton(self.exclude_frame, text="Clear Filters",
+                                           command=self.clear_filters)
+        clear_filters_button.pack(pady=(0, 5), fill='x')
+
+        reset_exclude_button = ctk.CTkButton(self.exclude_frame, text="Reset Exclude to Default",
+                                              command=self.reset_exclude_to_default, fg_color="red")
+        reset_exclude_button.pack(pady=(0, 5), fill='x')
+
+        # Initially show the Include Games frame
+        self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
+        # Create right side games list
+        # Add a search entry at the top
+        search_frame = ctk.CTkFrame(right_frame)
+        search_frame.pack(fill='x', padx=5, pady=5)
+
+        search_label = ctk.CTkLabel(search_frame, text="Search Games:")
+        search_label.pack(side='left', padx=5)
+
+        self.search_var = tk.StringVar()
+        self.search_var.trace_add('write', lambda *args: self.update_filtered_list())
+        search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var)
+        search_entry.pack(side='left', fill='x', expand=True, padx=5)
+
+        # Create games list with scrollbar
+        list_frame = ctk.CTkFrame(right_frame)
+        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
+
+        self.games_text = ctk.CTkTextbox(list_frame)
+        self.games_text.pack(fill='both', expand=True, side='left')
+
+        # Pack status bar last
+        self.status_bar.pack(fill='x', padx=5, pady=(5, 0))
+
+        # Initial population of the games list
+        self.update_filtered_list()
+
+    def toggle_mode(self):
+        if self.toggle_var.get() == "Switch to Exclude Options":
+            self.toggle_var.set("Switch to Include Options")
+            self.include_frame.pack_forget()
+            self.exclude_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+        else:
+            self.toggle_var.set("Switch to Exclude Options")
+            self.exclude_frame.pack_forget()
+            self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
+
+    def clear_filters(self):
+        """Reset all filters to their default states"""
+        # Reset control type checkboxes
+        for var in self.control_type_vars.values():
+            var.set(0)
+
+        # Reset dropdowns
+        self.buttons_var.set("Select number of buttons")
+        self.players_var.set("Select number of players")
+
+        # Reset vertical checkbox
+        self.vertical_checkbox_var.set(0)
+
+        # Clear search box
+        self.search_var.set("")
+
+        # Update the filtered list
+        self.update_filtered_list()
+        self.status_bar.configure(text="All filters cleared")
+
+    def update_filtered_list(self, *args):
+        try:
+            # Clear current display
+            self.games_text.delete('1.0', 'end')
+
+            # Get search term
+            search_term = self.search_var.get().lower()
+
+            # Get current filter settings
+            selected_ctrltypes = self.get_selected_control_types()
+            selected_buttons = self.buttons_var.get().strip()
+            selected_players = self.players_var.get().strip()
+            vertical_filter = self.vertical_checkbox_var.get()
+
+            # Update status to show we're working
+            self.status_bar.configure(text="Updating list...")
+
+            # Get ROMs in build
+            roms_in_build = self.scan_collections_for_roms()
+
+            # Read existing exclude file to check for duplicates
+            existing_excludes = set()
+            if os.path.exists(self.exclude_output_file):
+                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = set(line.strip() for line in f if line.strip())
+
+            # Read CSV and apply filters
+            self.filtered_games = []  # Store filtered games for export
+            games_info = []
+            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
+                reader = csv.DictReader(csv_file)
+                for row in reader:
+                    rom_name = row.get('ROM Name', '').strip()
+                    if rom_name not in roms_in_build:
+                        continue
+
+                    description = row.get('Description', '').strip()
+                    joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
+                    vertical = row.get('Vertical')
+                    buttons = row.get('Buttons', '0')
+                    players = row.get('numberPlayers', '1')
+
+                    # Convert buttons and players to integers for comparison
+                    buttons = int(buttons) if buttons.isdigit() else float('inf')
+                    players = int(players) if players.isdigit() else float('inf')
+
+                    # Check if the ROM is in the exclude list
+                    if rom_name in existing_excludes:
+                        continue
+
+                    # Apply filters
+                    if vertical_filter and (not vertical or vertical.strip().upper() != "VERTICAL"):
+                        continue
+                    if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
+                        continue
+                    if selected_players != "Select number of players" and players != int(selected_players):
+                        continue
+                    if selected_ctrltypes:
+                        matches_control = False
+                        for selected_ctrltype in selected_ctrltypes:
+                            mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
+                            if self.control_type_exists(joystick_input, mapped_ctrltype):
+                                matches_control = True
+                                break
+                        if not matches_control:
+                            continue
+
+                    # Apply search filter
+                    if search_term and search_term not in description.lower() and search_term not in rom_name.lower():
+                        continue
+
+                    # Store the full row data for export
+                    self.filtered_games.append(row)
+
+                    # Format the display string
+                    if description:
+                        display_string = f"{description} ({rom_name})\n"
+                    else:
+                        display_string = f"{rom_name}\n"
+
+                    games_info.append(display_string)
+
+            # Sort and display results
+            games_info.sort()
+            self.games_text.insert('1.0', f"Matching Games: {len(games_info)}\n\n")
+            for game in games_info:
+                self.games_text.insert('end', game)
+
+            # Update status bar with count
+            self.status_bar.configure(text=f"Found {len(games_info)} matching games")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error updating filtered list: {str(e)}")
+            self.status_bar.configure(text="Error updating list")
+
+
+    def export_filtered_list(self):
+        """Export the current filtered list to a CSV file"""
+        if not hasattr(self, 'filtered_games') or not self.filtered_games:
+            messagebox.showinfo("Export", "No games to export")
+            return
+
+        try:
+            # Ask user for save location
+            file_path = filedialog.asksaveasfilename(
+                defaultextension='.csv',
+                filetypes=[('CSV files', '*.csv'), ('All files', '*.*')],
+                initialdir=PathManager.get_base_path(),
+                initialfile='filtered_games.csv'
+            )
+
+            if not file_path:  # User cancelled
+                return
+
+            # Get the fieldnames from the first row
+            fieldnames = self.filtered_games[0].keys()
+
+            # Write to CSV
+            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(self.filtered_games)
+
+            self.status_bar.configure(text=f"Exported {len(self.filtered_games)} games to CSV")
+            messagebox.showinfo("Export Complete", f"Successfully exported {len(self.filtered_games)} games to:\n{file_path}")
+
+        except Exception as e:
+            messagebox.showerror("Export Error", f"Error exporting games: {str(e)}")
+            self.status_bar.configure(text="Error exporting games")
+
+    def load_custom_dll(self):
+        """Load custom DLL with cross-platform path handling"""
+        if sys.platform.startswith('win'):  # Only load DLL on Windows
+            dll_path = os.path.join(os.path.dirname(sys.argv[0]), 'autochanger', 'python', 'VCRUNTIME140.dll')
+            print(f"Checking DLL path: {dll_path}")
+            ctypes.windll.kernel32.SetDllDirectoryW(os.path.dirname(dll_path))
+            if os.path.exists(dll_path):
+                ctypes.windll.kernel32.LoadLibraryW(dll_path)
+                print("Custom DLL loaded successfully.")
+            else:
+                print("Custom DLL not found.")
+
+    def get_csv_file_path(self):
+        """Get CSV file path with cross-platform compatibility"""
+        # Check for external CSV in autochanger folder
+        autochanger_csv_path = os.path.join('autochanger', 'META.csv')
+        if os.path.exists(autochanger_csv_path):
+            return os.path.abspath(autochanger_csv_path)
+
+        # If not found, use bundled CSV
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+
+        return os.path.join(base_path, 'meta', 'hyperlist', 'META.csv')
+
+    def sanitize_csv_cell(self, cell_content):
+        if cell_content:
+            return re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)', '&amp;', str(cell_content))
+        return cell_content
+
+    def get_selected_control_types(self):
+        selected_controls = []
+        for control_type, var in self.control_type_vars.items():
+            if var.get() == 1:
+                selected_controls.append(control_type)
+        return selected_controls
+
+    def control_type_exists(self, input_field, selected_ctrltype):
+        if input_field:
+            types_in_field = [t.strip().lower() for t in input_field.split('/')]
+            return selected_ctrltype.lower() in types_in_field
+        return False
+
+    def check_output_dir(self):
+        """Check and create output directory if needed"""
+        if not os.path.exists(self.output_dir):
+            try:
+                os.makedirs(self.output_dir, exist_ok=True)
+                print(f"Created output directory: {self.output_dir}")
+            except Exception as e:
+                messagebox.showerror("Error", 
+                    f"Could not create output directory: {self.output_dir}\nError: {str(e)}")
+                self.parent_tab.quit()
+                sys.exit()
+
+    # Method to scan collections for ROMs
+    def scan_collections_for_roms(self):
+        """Scan collections with cross-platform path handling"""
+        root_dir = PathManager.get_base_path()
+        collections_dir = os.path.join(root_dir, 'collections')
+        rom_list = []
+
+        for collection_name in os.listdir(collections_dir):
+            if "settings" in collection_name.lower() or "zzz" in collection_name.lower():
+                continue
+
+            collection_path = os.path.join(collections_dir, collection_name)
+            settings_path = os.path.join(collection_path, 'settings.conf')
+
+            if os.path.isdir(collection_path) and os.path.isfile(settings_path):
+                rom_folder = None
+                extensions = []
+
+                with open(settings_path, 'r', encoding='utf-8') as settings_file:
+                    for line in settings_file:
+                        line = line.strip()
+                        if line.startswith("#"):
+                            continue
+                        if line.startswith("list.path"):
+                            rom_folder = line.split("=", 1)[1].strip()
+                            rom_folder = os.path.join(root_dir, rom_folder)
+                        elif line.startswith("list.extensions"):
+                            ext_line = line.split("=", 1)[1].strip()
+                            extensions = [ext.strip() for ext in ext_line.split(",")]
+
+                if rom_folder and extensions and os.path.isdir(rom_folder):
+                    for root, _, files in os.walk(rom_folder):
+                        for file in files:
+                            if any(file.endswith(ext) for ext in extensions):
+                                filename_without_extension = os.path.splitext(file)[0]
+                                rom_list.append(filename_without_extension)
+
+        return set(rom_list)
+
+    # Updated filter_games_from_csv method
+    def filter_games_from_csv(self):
+        self.status_bar.configure(text="Saving filters...")
+        self.check_output_dir()
+        roms_in_build = self.scan_collections_for_roms()
+
+        try:
+            # Read existing exclude file to check for duplicates
+            existing_excludes = set()
+            if os.path.exists(self.exclude_output_file):
+                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = set(line.strip() for line in f if line.strip())
+
+            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
+                reader = csv.DictReader(csv_file)
+                with open(self.include_output_file, 'w', encoding='utf-8') as f:
+                    game_count = 0
+                    selected_ctrltypes = self.get_selected_control_types()
+                    selected_players = self.players_var.get().strip()  # New player selection
+                    selected_buttons = self.buttons_var.get().strip()
+                    vertical_filter = self.vertical_checkbox_var.get()
+
+                    for row in reader:
+                        joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
+                        rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
+                        vertical = row.get('Vertical')
+                        buttons = row.get('Buttons')
+                        players = row.get('numberPlayers')  # Get the Players column
+
+                        buttons = int(buttons) if buttons.isdigit() else float('inf')
+                        players = int(players) if players.isdigit() else float('inf')
+
+                        # Check if the ROM is in the current build
+                        if rom_name not in roms_in_build:
+                            continue
+
+                        # Check if the ROM is in the exclude list
+                        if rom_name in existing_excludes:
+                            continue
+
+                        # Apply filters
+                        if vertical_filter == 1 and (not vertical or vertical.strip().upper() != "VERTICAL"):
+                            continue
+                        if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
+                            continue
+                        if selected_players != "Select number of players" and players != int(selected_players):
+                            continue
+                        if selected_ctrltypes:
+                            for selected_ctrltype in selected_ctrltypes:
+                                mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
+                                if self.control_type_exists(joystick_input, mapped_ctrltype):
+                                    f.write(f"{rom_name}\n")
+                                    game_count += 1
+                                    break
+                        else:
+                            f.write(f"{rom_name}\n")
+                            game_count += 1
+
+                    # Feedback for users
+                    if game_count == 0:
+                        messagebox.showinfo("No Games Found", "No games matched the selected filters.")
+                        self.status_bar.configure(text="No games matched filters")
+                    else:
+                        self.status_bar.configure(text=f"Saved {game_count} games to filter")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error opening CSV file: {e}")
+
+
+    def exclude_games_from_csv(self):
+        self.status_bar.configure(text="Excluding games...")
+        self.check_output_dir()
+        roms_in_build = self.scan_collections_for_roms()
+
+        try:
+            # Read existing exclude file to check for duplicates
+            existing_excludes = set()
+            if os.path.exists(self.exclude_output_file):
+                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
+                    existing_excludes = set(line.strip() for line in f if line.strip())
+
+            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
+                reader = csv.DictReader(csv_file)
+                with open(self.exclude_output_file, 'a', encoding='utf-8') as f:
+                    game_count = 0
+                    already_excluded_count = 0
+                    selected_ctrltypes = self.get_selected_control_types()
+                    selected_players = self.players_var.get().strip()  # New player selection
+                    selected_buttons = self.buttons_var.get().strip()
+                    vertical_filter = self.vertical_checkbox_var.get()
+
+                    for row in reader:
+                        joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
+                        rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
+                        vertical = row.get('Vertical')
+                        buttons = row.get('Buttons')
+                        players = row.get('numberPlayers')  # Get the Players column
+
+                        buttons = int(buttons) if buttons.isdigit() else float('inf')
+                        players = int(players) if players.isdigit() else float('inf')
+
+                        # Check if the ROM is in the current build
+                        if rom_name not in roms_in_build:
+                            continue
+
+                        # Apply filters
+                        if vertical_filter == 1 and (not vertical or vertical.strip().upper() != "VERTICAL"):
+                            continue
+                        if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
+                            continue
+                        if selected_players != "Select number of players" and players != int(selected_players):
+                            continue
+                        if selected_ctrltypes:
+                            for selected_ctrltype in selected_ctrltypes:
+                                mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
+                                if self.control_type_exists(joystick_input, mapped_ctrltype):
+                                    if rom_name not in existing_excludes:
+                                        f.write(f"{rom_name}\n")
+                                        game_count += 1
+                                    else:
+                                        already_excluded_count += 1
+                                    break
+                        else:
+                            if rom_name not in existing_excludes:
+                                f.write(f"{rom_name}\n")
+                                game_count += 1
+                            else:
+                                already_excluded_count += 1
+
+                    # Feedback for users
+                    if game_count == 0 and already_excluded_count == 0:
+                        messagebox.showinfo("No Games Found", "No games matched the selected filters.")
+                        self.status_bar.configure(text="No games matched filters")
+                    else:
+                        feedback_message = f"Excluded {game_count} games from filter."
+                        if already_excluded_count > 0:
+                            feedback_message += f" {already_excluded_count} games were already excluded."
+                        self.status_bar.configure(text=feedback_message)
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error opening CSV file: {e}")
+
+    def reset_exclude_to_default(self):
+        self.status_bar.configure(text="Resetting exclude to default...")
+        try:
+            if os.path.exists(self.exclude_output_file):
+                os.remove(self.exclude_output_file)
+                self.status_bar.configure(text=f"Exclude file deleted successfully.")
+            else:
+                self.status_bar.configure(text=f"Exclude file does not exist.")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error resetting exclude to default: {e}")
+            self.status_bar.configure(text=f"Error resetting exclude to default: {e}")
+
+    def show_all_games(self):
+        """Reset to default with proper path handling"""
+        self.status_bar.configure(text="Resetting to default...")
+        try:
+            source = os.path.join("autochanger", "include.txt")
+            destination = os.path.join("collections", "Arcades", "include.txt")
+
+            if os.path.exists(source):
+                # Ensure destination directory exists
+                os.makedirs(os.path.dirname(destination), exist_ok=True)
+                shutil.copyfile(source, destination)
+                print(f"Success: Copied '{source}' to '{destination}'.")
+                self.status_bar.configure(text=f"Successfully reset to default games list.")
+            else:
+                if os.path.exists(destination):
+                    os.remove(destination)
+                    print(f"Success: '{destination}' has been deleted.")
+                    self.status_bar.configure(text="Successfully removed custom games list.")
+                else:
+                    print(f"Info: No file to delete. '{destination}' does not exist.")
+                    self.status_bar.configure(text="No custom games list found.")
+
+        except Exception as e:
+            print(f"Error: Failed to process files: {str(e)}")
+            self.status_bar.configure(text=f"Failed to process files: {str(e)}")
+
+class Playlists:
+    def __init__(self, root, parent_tab):
+        self.root = root
+        self.parent_tab = parent_tab
+        self.base_path = PathManager.get_base_path()
+        self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
+        
+        # Initialize the configuration manager
+        self.config_manager = ConfigManager()
+        
+        # Get playlist location setting from INI
+        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S', 'D', or 'U'
+        
+        # Set up paths
+        if self.playlist_location == 'U':
+            # Use Universe settings file
+            self.settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+            self.custom_settings_path = os.path.join(self.base_path, "autochanger", "settingsCustomisation.conf")
+            self.autochanger_conf_path = self.custom_settings_path
+        else:
+            # Original behavior - use settings file from config
+            settings_file = self.config_manager.get_settings_file()
+            self.settings_file_path = os.path.join(self.base_path, "autochanger", settings_file)
+            self.autochanger_conf_path = self.settings_file_path     
+        
+        self.check_vars = []
+        self.check_buttons = []
+        self.excluded_playlists = self.config_manager.get_excluded_playlists()
+        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]
+        self.sort_type_playlists = ["ctrltype", "manufacturer", "numberplayers", "year"]
+        
+        # Define playlists to exclude from genres
+        self.excluded_from_genres = ["vertical", "horizontal"]  # Add your playlists here
+
+        # Create UI elements
+        self.create_ui_elements()
+        
+        # Set up custom settings if needed
+        if self.playlist_location == 'U':
+            self.setup_custom_settings()
+            
+        # Initialize the toggle state dictionary
+        self.toggle_state = {
+            "genres": False,
+            "manufacturer": False,
+            "sort_type": False
+        }
+        
+        # Populate checkboxes
+        self.populate_checkboxes()
+        self.update_reset_button_state()
+
+    def create_ui_elements(self):
+        """Create all UI elements"""
+        # Create a main frame for all content
+        self.main_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
+        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        # Create a frame for the scrollable checkbox area
+        self.scrollable_checklist = ctk.CTkScrollableFrame(self.main_frame, width=400, height=400)
+        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=(10, 5))
+
+        # Create status message label
+        self.status_label = ctk.CTkLabel(
+            self.main_frame,
+            text="",
+            height=25,
+            fg_color=("gray85", "gray25"),
+            corner_radius=8
+        )
+        self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
+        self.status_label.pack_forget()  # Hide initially
+
+        # Create button frames
+        button_frame = ctk.CTkFrame(self.parent_tab)
+        button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
+
+        top_button_frame = ctk.CTkFrame(button_frame)
+        top_button_frame.pack(fill="x", padx=2, pady=2)
+
+        bottom_button_frame = ctk.CTkFrame(button_frame)
+        bottom_button_frame.pack(fill="x", padx=2, pady=2)
+
+        # Create main action buttons
+        self.create_playlist_button = ctk.CTkButton(
+            top_button_frame,
+            text="Show Selected Playlists",
+            command=self.create_playlist,
+            fg_color="#4CAF50",
+            hover_color="#45A049"
+        )
+        self.create_playlist_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        self.reset_button = ctk.CTkButton(
+            top_button_frame,
+            text="Reset Playlists",
+            fg_color="#D32F2F",
+            hover_color="#C62828",
+            command=self.reset_playlists,
+            state="disabled"
+        )
+        self.reset_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        # Create category buttons
+        self.genres_button = ctk.CTkButton(
+            bottom_button_frame,
+            text="All Genres",
+            command=lambda: self.activate_special_playlist("genres", self.get_genre_playlists()),
+            fg_color="#2196F3",
+            hover_color="#1976D2"
+        )
+        self.genres_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        self.manufacturer_button = ctk.CTkButton(
+            bottom_button_frame,
+            text="All Manufacturer",
+            command=lambda: self.activate_special_playlist("manufacturer", self.manufacturer_playlists),
+            fg_color="#2196F3",
+            hover_color="#1976D2"
+        )
+        self.manufacturer_button.pack(side="left", fill="x", expand=True, padx=2)
+
+        self.sort_type_button = ctk.CTkButton(
+            bottom_button_frame,
+            text="All Sort Types",
+            command=lambda: self.activate_special_playlist("sort_type", self.sort_type_playlists),
+            fg_color="#2196F3",
+            hover_color="#1976D2"
+        )
+        self.sort_type_button.pack(side="left", fill="x", expand=True, padx=2)
+
+    def setup_custom_settings(self):
+        """Set up custom settings file and backup if they don't exist"""
+        try:
+            # Create autochanger directory if it doesn't exist
+            autochanger_dir = os.path.join(self.base_path, "autochanger")
+            os.makedirs(autochanger_dir, exist_ok=True)
+            
+            # Check for original settings.conf in Arcades folder
+            arcade_settings = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+            if os.path.exists(arcade_settings):
+                # Create settingsCustomisation.conf if it doesn't exist
+                if not os.path.exists(self.custom_settings_path):
+                    shutil.copy2(arcade_settings, self.custom_settings_path)
+                    self.show_status_message("✓ Created settingsCustomisation.conf backup")
+            else:
+                self.show_status_message("⚠️ Original settings.conf not found in Arcades folder")
+                
+        except Exception as e:
+            self.show_status_message(f"⚠️ Error setting up custom settings: {str(e)}")
+
+    def update_conf_file(self, playlist_list):
+        try:
+            target_file = self.settings_file_path if self.playlist_location == 'U' else self.autochanger_conf_path
+            
+            # Use self.get_cycle_playlist() instead of self.config_manager.get_cycle_playlist()
+            if self.playlist_location == 'U':
+                default_playlists = ["all", "favorites", "lastplayed"]
+            else:
+                default_playlists = self.config_manager.get_cycle_playlist()
+            
+            with open(target_file, 'r') as file:
+                lines = file.readlines()
+
+            cycle_playlist_found = False
+            updated_lines = []
+            
+            for line in lines:
+                if line.startswith("cyclePlaylist ="):
+                    # Combine default playlists with selected playlists
+                    new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                    updated_lines.append(new_line)
+                    cycle_playlist_found = True
+                else:
+                    updated_lines.append(line)
+
+            # Add cyclePlaylist if not found
+            if not cycle_playlist_found:
+                new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
+                updated_lines.append(new_line)
+
+            # Write the updated lines back to the file
+            with open(target_file, 'w') as file:
+                file.writelines(updated_lines)
+
+            self.show_status_message("✓ Playlists updated successfully")
+        except Exception as e:
+            self.show_status_message(f"⚠️ Error: {str(e)}")
+                    
+    def read_settings_file_name(self):
+        return self.config_manager.get_settings_file()
+    
+    def read_default_playlists(self):
+        return self.config_manager.get_cycle_playlist()
+    
+    def read_excluded_playlists(self):
+        return self.config_manager.get_excluded_playlists()
+
+    def show_temp_message(self, message):
+         # Create a temporary window to show a message
+        temp_window = tk.Toplevel(self.root)
+        temp_window.title("Message")
+        
+        # Set up the label with the message
+        label = tk.Label(temp_window, text=message, wraplength=250)  # Wrap long messages at 250px width
+        label.pack(pady=20, padx=20)  # Add padding to the label
+
+        # Calculate width based on message content
+        font = tkFont.Font(font=label.cget("font"))
+        text_width = font.measure(message) + 40  # Add some padding
+
+        # Limit the minimum and maximum width
+        window_width = min(max(text_width, 200), 400)  # Min 200, Max 400
+        window_height = 100  # Set a default height; adjust if needed for larger messages
+        
+        # Center the temporary window relative to the main window
+        self.root.update_idletasks()  # Ensure root's dimensions are up-to-date
+        main_width = self.root.winfo_width()
+        main_height = self.root.winfo_height()
+        main_x = self.root.winfo_x()
+        main_y = self.root.winfo_y()
+
+        # Calculate position for the temp window to be centered
+        temp_x = main_x + (main_width // 2) - (window_width // 2)
+        temp_y = main_y + (main_height // 2) - (window_height // 2)
+        temp_window.geometry(f"{window_width}x{window_height}+{temp_x}+{temp_y}")
+
+        # Auto-close the temporary window after a brief period (e.g., 2 seconds)
+        temp_window.after(1000, temp_window.destroy)  # 2000ms = 2 seconds
+
+    def show_status_message(self, message, duration=2000):
+        # Show the status label if it's hidden
+        self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
+        
+        # Update the message
+        self.status_label.configure(text=message)
+        
+        # Schedule the message to be hidden
+        self.root.after(duration, self.hide_status_message)
+    
+    def hide_status_message(self):
+        self.status_label.pack_forget()
+
+    # Gets all playlists not included in manufacturer and sort types
+    def get_genre_playlists(self):
+        return [name for name, _ in self.check_vars
+            if name not in self.sort_type_playlists and name not in self.manufacturer_playlists and name not in self.excluded_from_genres]
+
+    def toggle_genres(self):
+        genre_playlists = self.get_genre_playlists()  # Fetch genre playlists correctly
+        if self.genre_switch.get() == "off":
+            for genre in genre_playlists:
+                if genre not in self.excluded_playlists:
+                    self.excluded_playlists.append(genre)
+        else:
+            for genre in genre_playlists:
+                if genre in self.excluded_playlists:
+                    self.excluded_playlists.remove(genre)
+
+        self.refresh_checkboxes()
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
+    
+    def toggle_manufacturers(self):
+        if self.manufacturer_switch.get() == "off":
+            for manufacturer in self.manufacturer_playlists:
+                if manufacturer not in self.excluded_playlists:
+                    print(f"Adding {manufacturer} to excluded playlists")  # Debugging statement
+                    self.excluded_playlists.append(manufacturer)
+        else:
+            for manufacturer in self.manufacturer_playlists:
+                if manufacturer in self.excluded_playlists:
+                    print(f"Removing {manufacturer} from excluded playlists")  # Debugging statement
+                    self.excluded_playlists.remove(manufacturer)
+
+        self.refresh_checkboxes()
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
+    
+    def toggle_sort_types(self):
+        print(f"Sort Switch State Before: {self.sort_types_switch.get()}")
+        if self.sort_types_switch.get() == "off":
+            for sort in self.sort_type_playlists:
+                if sort not in self.excluded_playlists:
+                    self.excluded_playlists.append(sort)
+        else:
+            for sort in self.sort_type_playlists:
+                if sort in self.excluded_playlists:
+                    self.excluded_playlists.remove(sort)
+        
+        self.refresh_checkboxes()
+        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
+    
+    def refresh_checkboxes(self):
+        for widget in self.scrollable_checklist.winfo_children():
+            widget.destroy()
+        self.populate_checkboxes()
+
+    def populate_checkboxes(self):
+        """Populates the initial checkboxes with manufacturer playlists at the end."""
+        try:
+            all_playlists = []
+            manufacturer_playlists = []
+            sort_type_playlists = []
+
+            for playlist_file in os.listdir(self.playlists_path):
+                playlist_name, ext = os.path.splitext(playlist_file)
+                # Normalize the playlist name for comparison
+                normalized_name = playlist_name.lower().strip()
+                # Normalize the excluded playlists for comparison
+                normalized_excluded = [excluded.lower().strip() for excluded in self.excluded_playlists]
+                
+                # Check if it's a .txt file and not excluded
+                if ext == ".txt" and normalized_name not in normalized_excluded:
+                    all_playlists.append(playlist_name)
+                    
+                    # Check if it's a manufacturer playlist
+                    if normalized_name in [m.lower() for m in self.manufacturer_playlists]:
+                        manufacturer_playlists.append(playlist_name)
+                        
+                    # Check if it's a sort type playlist
+                    if normalized_name in [s.lower() for s in self.sort_type_playlists]:
+                        sort_type_playlists.append(playlist_name)
+            
+            # Remove manufacturer playlists from all_playlists
+            for manufacturer_playlist in manufacturer_playlists:
+                if manufacturer_playlist in all_playlists:
+                    all_playlists.remove(manufacturer_playlist)
+            
+            # Remove sort type playlists from all_playlists
+            for sort_playlist in sort_type_playlists:
+                if sort_playlist in all_playlists:
+                    all_playlists.remove(sort_playlist)
+                
+            # Sort playlists to handle numeric prefixes properly
+            all_playlists.sort(key=str.lower)
+            
+            # Append manufacturer and sort type playlists to the end
+            all_playlists.extend(manufacturer_playlists)
+            all_playlists.extend(sort_type_playlists)
+
+            # Populate checkboxes in the desired order
+            for playlist_name in all_playlists:
+                var = tk.BooleanVar()
+                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist_name, variable=var)
+                checkbutton.pack(anchor="w", padx=10, pady=5)
+                self.check_vars.append((playlist_name, var))
+
+        except FileNotFoundError:
+            print(f"Playlists folder not found at: {self.playlists_path}")
+        except Exception as e:
+            print("An error occurred:", str(e))
+
+    def add_playlists_to_checklist(self, playlist_names):
+        """Adds playlists to the checklist."""
+        current_playlists = [name for name, var in self.check_vars]
+        
+        for playlist in playlist_names:
+            if playlist not in current_playlists:
+                var = tk.BooleanVar()
+                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist, variable=var)
+                checkbutton.pack(anchor="w", padx=10, pady=5)
+                self.check_vars.append((playlist, var))
+
+    def add_playlists_to_checklist(self, playlist_names):
+        """Adds playlists to the checklist."""
+        current_playlists = [name for name, var in self.check_vars]
+        
+        for playlist in playlist_names:
+            if playlist not in current_playlists:
+                var = tk.BooleanVar()
+                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist, variable=var)
+                checkbutton.pack(anchor="w", padx=10, pady=5)
+                self.check_vars.append((playlist, var))
+
+    def remove_playlists_from_checklist(self, playlist_names):
+        """Removes playlists from the checklist."""
+        for playlist in playlist_names:
+            for name, var in self.check_vars:
+                if name == playlist:
+                    var.set(False)  # Uncheck the checkbox
+                    self.check_vars.remove((name, var))  # Remove from the list
+                    break
+
+    def create_playlist(self):
+        selected_playlists = [name for name, var in self.check_vars if var.get()]
+        self.update_conf_file(selected_playlists)
+    
+    def activate_special_playlist(self, button_type, playlist_type):
+        # Check the toggle state to determine if we select or unselect
+        current_state = self.toggle_state[button_type]
+        
+        for name, var in self.check_vars:
+            if name in playlist_type:
+                var.set(not current_state)  # Set to True if unselected, False if already selected
+
+        # Toggle the button's state for next click
+        self.toggle_state[button_type] = not current_state
+               
+    def update_reset_button_state(self):
+        """Check if backup settings file exists and update reset button state."""
+        try:
+            if self.playlist_location == 'U':
+                # For 'U' location, always enable the reset defaults button
+                self.reset_button.configure(state="normal")
+            else:
+                # For 'S' and 'D', check if backup exists
+                current_settings = self.config_manager.get_settings_file()
+                backup_file = current_settings.replace(".conf", "x.conf")
+                backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
+                
+                # Enable button if backup exists, disable if it doesn't
+                if os.path.exists(backup_conf_path):
+                    self.reset_button.configure(state="normal")
+                else:
+                    self.reset_button.configure(state="disabled")
+        
+        except Exception as e:
+            print(f"Error checking backup file: {str(e)}")
+            self.reset_button.configure(state="disabled")
+
+    def reset_playlists(self):
+        """Reset the settings based on playlist location setting."""
+        try:
+            if self.playlist_location == 'U':
+                # For 'U' mode, update CyclePlaylist with a hardcoded value
+                try:
+                    hardcoded_cycle_playlist = (
+                        "all,favorites,lastplayed,01 old school,02 beat em up,03 run n gun, "
+                        "04 fight club,05 shoot n up,06 racer,year,manufacturer,ctrltype,numberplayers"
+                    )
+                    settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
+                    
+                    if os.path.exists(settings_file_path):
+                        # Update CyclePlaylist in settings.conf
+                        self.update_cycle_playlist_value(settings_file_path, hardcoded_cycle_playlist)
+                        self.show_status_message("✓ CyclePlaylist successfully reset to custom value")
+                    else:
+                        self.show_status_message("⚠️ settings.conf not found in collections/Arcades")
+                except Exception as e:
+                    self.show_status_message(f"⚠️ Error during reset for U: {str(e)}")
+            else:
+                # Common behavior for 'S' and 'D' modes
+                current_settings = self.config_manager.get_settings_file()
+                backup_file = current_settings.replace(".conf", "x.conf")
+                backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
+                
+                if os.path.exists(backup_conf_path):
+                    shutil.copy2(backup_conf_path, self.autochanger_conf_path)
+                    self.show_status_message("✓ Playlists have been reset successfully")
+                else:
+                    self.show_status_message("⚠️ Backup configuration file not found")
+        except Exception as e:
+            self.show_status_message(f"⚠️ Error during reset: {str(e)}")
+
+    def update_cycle_playlist_value(self, file_path, new_value):
+        """Update the cyclePlaylist value in the configuration file."""
+        try:
+            updated_lines = []
+            found = False
+
+            with open(file_path, "r") as file:
+                for line in file:
+                    if line.strip().startswith("cyclePlaylist ="):
+                        updated_lines.append(f"cyclePlaylist = {new_value}\n")
+                        found = True
+                    else:
+                        updated_lines.append(line)
+
+            # If CyclePlaylist was not found, add it to the file
+            if not found:
+                updated_lines.append(f"cyclePlaylist = {new_value}\n")
+
+            # Write the updated configuration back to the file
+            with open(file_path, "w") as file:
+                file.writelines(updated_lines)
+        except Exception as e:
+            raise Exception(f"Failed to update cyclePlaylist: {str(e)}")
+        
 class Controls:
     def __init__(self, parent):
         self.parent = parent
@@ -4397,3418 +7943,6 @@ class Controls:
 
         self.parent.after(1000, self.check_controller)
 
-class ExeFileSelector:
-    def __init__(self, parent_frame, config_manager):
-        self.parent_frame = parent_frame
-        self.config_manager = config_manager
-        self.base_path = self.config_manager.base_path  # Get base path from config manager
-
-        # Get close_gui_after_running setting
-        close_gui_after_running = self.config_manager.get_setting('Settings', 'close_gui_after_running', True)
-
-        # Create the exe frame inside parent frame
-        self.exe_frame = ctk.CTkFrame(parent_frame, corner_radius=10)
-        self.exe_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
-        
-        # Configure the exe_frame grid
-        self.exe_frame.grid_rowconfigure(0, weight=0)  # Logo row
-        self.exe_frame.grid_rowconfigure(1, weight=1)  # Scrollable frame
-        self.exe_frame.grid_rowconfigure(2, weight=0)  # Switch
-        self.exe_frame.grid_rowconfigure(3, weight=0)  # Button
-        self.exe_frame.grid_columnconfigure(0, weight=1)
-
-        # Modified logo loading section
-        try:
-            print("\nLogo loading debug:")
-            
-            # Try multiple possible logo locations relative to base_path
-            possible_paths = [
-                os.path.join(self.base_path, 'autochanger', 'Logo.png'),
-                os.path.join(self.base_path, 'Logo.png'),
-                os.path.join(self.base_path, 'assets', 'Logo.png')
-            ]
-
-            if sys.platform == 'darwin':
-                # For macOS
-                possible_paths = [
-                    os.path.join(self.base_path, "Customisation.app/Contents/Resources", "Logo.png")
-                ]
-            
-            logo_found = None
-            for path in possible_paths:
-                print(f"Checking path: {path}")
-                if os.path.exists(path):
-                    logo_found = path
-                    print(f"Found logo at: {logo_found}")
-                    break
-                    
-            if not logo_found:
-                raise FileNotFoundError("Logo file not found in any of the expected locations")
-
-            # Load and process the logo
-            logo_original = Image.open(logo_found)
-            print(f"Logo loaded successfully! Dimensions: {logo_original.width}x{logo_original.height}")
-            
-            # Calculate scaled dimensions
-            MAX_WIDTH = 300
-            MAX_HEIGHT = 150
-            width_ratio = MAX_WIDTH / logo_original.width
-            height_ratio = MAX_HEIGHT / logo_original.height
-            scale_ratio = min(width_ratio, height_ratio)
-            new_width = int(logo_original.width * scale_ratio)
-            new_height = int(logo_original.height * scale_ratio)
-            
-            # Create and display the logo
-            logo_image = ctk.CTkImage(
-                light_image=logo_original,
-                dark_image=logo_original,
-                size=(new_width, new_height)
-            )
-            
-            logo_label = ctk.CTkLabel(self.exe_frame, text="", image=logo_image)
-            logo_label.grid(row=0, column=0, pady=(10, 0))
-            
-            # Store reference
-            self.logo_image = logo_image
-            
-        except Exception as e:
-            print(f"Error loading logo: {str(e)}")
-            print(f"Full error traceback:", traceback.format_exc())
-            title_label = ctk.CTkLabel(self.exe_frame, text="Select Executable", font=("Arial", 14, "bold"))
-            title_label.grid(row=0, column=0, padx=10, pady=10)
-
-        # Create a scrollable frame inside exe_frame
-        self.scrollable_frame = ctk.CTkScrollableFrame(self.exe_frame, width=300, height=200, corner_radius=10)
-        self.scrollable_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
-        
-        # Find all .exe files
-        self.exe_files = self.find_exe_files()
-        default_exe = self.exe_files[0] if self.exe_files else ""
-        self.exe_var = tk.StringVar(value=default_exe)
-        
-        # Add radio buttons for each exe
-        for i, exe in enumerate(self.exe_files):
-            rbutton = ctk.CTkRadioButton(self.scrollable_frame, text=exe, variable=self.exe_var, value=exe)
-            rbutton.grid(row=i, column=0, sticky="w", padx=20, pady=5)
-
-        # Create the switch
-        self.close_gui_var = tk.BooleanVar(value=close_gui_after_running)
-        self.close_gui_switch = ctk.CTkSwitch(
-            self.exe_frame,
-            text="Close GUI After Running",
-            onvalue=True,
-            offvalue=False,
-            variable=self.close_gui_var,
-            command=self.update_switch_text
-        )
-        self.close_gui_switch.grid(row=2, column=0, pady=10)
-        
-        # Update switch text initially
-        self.update_switch_text()
-        
-        # Add run button
-        run_exe_button = ctk.CTkButton(self.exe_frame, text="Run Selected Executable", command=self.run_selected_exe)
-        run_exe_button.grid(row=3, column=0, pady=(0, 20))
-
-        self.add_batch_file_dropdown(parent_frame)  # Add this line
-
-    def update_switch_text(self):
-        # Update the visual text based on the current switch state
-        if self.close_gui_var.get():
-            self.close_gui_switch.configure(text="Exit the GUI after execution")
-        else:
-            self.close_gui_switch.configure(text="Stay in the GUI after execution")
-        
-        # Save the current switch state to the configuration
-        self.config_manager.config['Settings']['close_gui_after_running'] = str(self.close_gui_var.get()).lower()
-        self.config_manager.save_config()
-
-    def add_batch_file_dropdown(self, parent_frame):
-        # Create a frame for batch file dropdown below the exe frame
-        self.batch_file_frame = ctk.CTkFrame(parent_frame, corner_radius=10, fg_color="transparent")
-        # Change from column=1 to stay in column=0, but move to next row
-        self.batch_file_frame.grid(row=1, column=0, sticky="nswe", padx=20, pady=(5, 10))
-
-        # Add a title for the reset section
-        reset_label = ctk.CTkLabel(self.batch_file_frame, text="Reset Build to Defaults", font=("Arial", 14, "bold"))
-        reset_label.pack(pady=(10, 5))
-
-        # Get batch files and ensure it's a list
-        batch_files = self.find_reset_batch_files()
-        display_names = [os.path.splitext(batch_file)[0].replace("- ", "") for batch_file in batch_files]
-        if not display_names:
-            display_names = ["No reset scripts found"]
-        
-        # Set up the StringVar with the first value
-        self.selected_batch = tk.StringVar(value=display_names[0])
-
-        # Create dropdown with values list
-        self.dropdown = ctk.CTkComboBox(
-            self.batch_file_frame, 
-            values=display_names,
-            variable=self.selected_batch,
-            state="disabled" if len(display_names) == 1 and display_names[0] == "No reset scripts found" else "normal"
-        )
-        self.dropdown.pack(padx=10, pady=10, fill='x')
-
-        # Add run button - disabled if no scripts found
-        run_batch_button = ctk.CTkButton(
-            self.batch_file_frame,
-            text="Run Selected Script",
-            command=self.run_selected_script,
-            hover_color="red",
-            state="disabled" if len(display_names) == 1 and display_names[0] == "No reset scripts found" else "normal"
-        )
-        run_batch_button.pack(pady=10, padx=10, fill='x')
-
-    def find_reset_batch_files(self):
-        """Find reset scripts with cross-platform support"""
-        # Define script extensions based on platform
-        if sys.platform.startswith('win'):
-            extensions = ['.bat', '.cmd']
-        else:
-            extensions = ['.sh']
-            
-        base_path = self.base_path
-        files = []
-        
-        for ext in extensions:
-            files.extend([
-                f for f in os.listdir(base_path) 
-                if f.endswith(ext) and "Restore" in f
-            ])
-            
-        print(f"Found reset scripts: {files}")
-        return files if files else []
-
-    def run_selected_script(self):
-        # Get the selected display name and find the corresponding batch file
-        selected_display_name = self.selected_batch.get()
-        batch_files = self.find_reset_batch_files()
-
-        # Find the batch file that matches the display name (without "- ")
-        matching_batch = next(
-            (bf for bf in batch_files if os.path.splitext(bf)[0].replace("- ", "") == selected_display_name), None
-        )
-
-        if matching_batch:
-            self.run_script(matching_batch)
-        else:
-            messagebox.showerror("File Not Found", f"No matching batch file found for '{selected_display_name}'.")
-    
-    def run_selected_exe(self):
-        selected_exe = self.exe_var.get()
-        if not selected_exe:
-            messagebox.showinfo("No Selection", "Please select an executable.")
-            return
-        
-        exe_path = os.path.join(self.base_path, selected_exe)
-        try:
-            # Just launch the exe without any window state changes
-            if sys.platform.startswith('win'):
-                subprocess.Popen([exe_path], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
-            else:
-                os.chmod(exe_path, 0o755)
-                subprocess.Popen([exe_path])
-            
-            # If user wants to close GUI, destroy it after a slight delay
-            if self.close_gui_switch.get():
-                self.parent_frame.winfo_toplevel().after(100, self.parent_frame.winfo_toplevel().destroy)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to run {selected_exe}: {e}")
-
-    def run_script(self, script_name):
-        """Run scripts with cross-platform support"""
-        confirm = messagebox.askyesno(
-            "Confirmation",
-            f"Are you sure you want to run the '{script_name}' script?"
-        )
-
-        if not confirm:
-            return
-
-        try:
-            script_path = os.path.join(self.base_path, script_name)
-
-            # Check if the script exists
-            if not os.path.isfile(script_path):
-                messagebox.showerror("File Not Found", f"Script not found: {script_path}")
-                return
-
-            print(f"Running script: {script_path}")
-
-            # Create a modal progress window
-            progress_window = tk.Toplevel(self.parent_frame)
-            progress_window.title("Running Script")
-            
-            # Make it modal (blocks main window interaction)
-            progress_window.grab_set()
-            
-            # Center the progress window
-            window_width = 400
-            window_height = 150
-            screen_width = progress_window.winfo_screenwidth()
-            screen_height = progress_window.winfo_screenheight()
-            center_x = int((screen_width - window_width) / 2)
-            center_y = int((screen_height - window_height) / 2)
-            progress_window.geometry(f'{window_width}x{window_height}+{center_x}+{center_y}')
-            
-            # Make it non-resizable and always on top
-            progress_window.resizable(False, False)
-            progress_window.transient(self.parent_frame)
-            progress_window.attributes('-topmost', True)
-
-            # Add message
-            message_label = ctk.CTkLabel(
-                progress_window,
-                text="Please wait while the restore script runs...\n\nThis window will close automatically when complete.",
-                font=("Arial", 12),
-                wraplength=350
-            )
-            message_label.pack(pady=20, padx=20)
-
-            # Add spinning progress indicator
-            progress = ctk.CTkProgressBar(progress_window)
-            progress.pack(pady=10, padx=20)
-            progress.configure(mode='indeterminate')
-            progress.start()
-
-            # Function to run the script and close the progress window
-            def run_script_thread():
-                try:
-                    if sys.platform.startswith('win'):
-                        # Windows
-                        subprocess.run(
-                            f'cmd.exe /c "{script_path}"',
-                            shell=True,
-                            text=True,
-                            check=False
-                        )
-                    else:
-                        # Linux/MacOS
-                        os.chmod(script_path, 0o755)  # Make executable
-                        subprocess.run(
-                            ['/bin/bash', script_path],
-                            shell=False,
-                            text=True,
-                            check=False
-                        )
-                    
-                    # Schedule the window closure and success message on the main thread
-                    progress_window.after(0, lambda: [
-                        progress_window.destroy(),
-                        messagebox.showinfo("Success", "Restore Defaults (Arcades and Consoles) has completed.")
-                    ])
-                    
-                except Exception as e:
-                    # Schedule error handling on the main thread
-                    progress_window.after(0, lambda: [
-                        progress_window.destroy(),
-                        messagebox.showerror("Error", f"An error occurred: {str(e)}")
-                    ])
-
-            # Run the script in a separate thread
-            thread = Thread(target=run_script_thread)
-            thread.daemon = True
-            thread.start()
-
-        except Exception as e:
-            messagebox.showerror("Error", f"An unexpected error occurred while running {script_name}: {str(e)}")
-
-    def find_exe_files(self):
-        """Find executable files with cross-platform support"""
-        # Get the executable extension based on platform
-        if sys.platform.startswith('win'):
-            exe_extension = '.exe'
-        elif sys.platform == 'darwin':
-            exe_extension = '.app'
-        else:
-            exe_extension = ''
-
-        exe_dir = self.base_path
-        current_exe = "Customisation" + exe_extension
-
-        print(f"Searching for executables in: {exe_dir}")
-        
-        # Get list of executables, excluding the current one
-        executables = [
-            f for f in os.listdir(exe_dir) 
-            if f.endswith(exe_extension) and f != current_exe
-        ]
-        
-        print(f"Found executables: {executables}")
-        return executables
-
-    def run_selected_exe(self):
-        selected_exe = self.exe_var.get()
-        if not selected_exe:
-            messagebox.showinfo("No Selection", "Please select an executable.")
-            return
-        
-        exe_path = os.path.join(PathManager.get_base_path(), selected_exe)
-        try:
-            # 1) Remove topmost if we want the EXE to appear on top
-            #    (only if 'stay in the GUI' is toggled off, for example)
-            if not self.close_gui_switch.get():
-                # “Stay in the GUI”
-                parent_window = self.parent_frame.winfo_toplevel()
-                parent_window.attributes('-topmost', False)
-                parent_window.lift()  # or parent_window.lower() if you prefer
-            
-            # 2) Launch the EXE
-            os.startfile(exe_path)
-            
-            # 3) If user selected “close GUI after running,” just destroy
-            if self.close_gui_switch.get():
-                self.parent_frame.winfo_toplevel().destroy()
-
-            # Optionally do a small sleep to give Windows time to reorder windows
-            time.sleep(0.5)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to run {selected_exe}: {e}")
-
-class FilterGames:
-    def __init__(self, parent_tab):
-        self.parent_tab = parent_tab
-        # Fix path separators for cross-platform compatibility
-        self.output_dir = os.path.join('collections', 'Arcades')
-        self.include_output_file = os.path.join(self.output_dir, "include.txt")
-        self.exclude_output_file = os.path.join(self.output_dir, "exclude.txt")
-        self.playlist_location = 'U'
-
-        # Control type mapping for dropdown and checkboxes
-        self.control_type_mapping = {
-            "8 way": "8 way",
-            "4 way": "4 way",
-            "analog": "analog",
-            "trackball": "trackball",
-            "twin stick": "twin stick",
-            "lightgun": "lightgun",
-            "Vertical Games Only": "VERTICAL"
-        }
-
-        # Load DLL and CSV with proper path handling
-        self.load_custom_dll()
-        self.csv_file_path = self.get_csv_file_path()
-        
-        # Create main UI
-        self.create_main_interface()
-
-    def create_main_interface(self):
-        # Create main container frame with weight distribution
-        main_container = ctk.CTkFrame(self.parent_tab)
-        main_container.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Create left sidebar frame (1/3 width)
-        sidebar_frame = ctk.CTkFrame(main_container, width=200, corner_radius=10)
-        sidebar_frame.pack(side='left', fill='y', padx=10, pady=10)
-
-        # Create right content frame (2/3 width)
-        right_frame = ctk.CTkFrame(main_container, corner_radius=10)
-        right_frame.pack(side='left', fill='both', expand=True, padx=10, pady=10)
-
-        # Initialize status bar first
-        self.status_bar = ctk.CTkLabel(right_frame, text="Ready", anchor='w')
-
-        # Create a TabView for Control Types, Buttons, and Vertical Filter
-        tabview = ctk.CTkTabview(sidebar_frame, width=200)
-        tabview.pack(fill='both', expand=True, padx=10, pady=10)
-
-        # Add Control Types, Buttons, and Vertical tabs
-        control_types_tab = tabview.add("Control Types")
-        buttons_tab = tabview.add("Buttons")
-        vertical_tab = tabview.add("Vertical")
-
-        # Control Types checkboxes
-        self.control_type_vars = {}
-        control_types = ["8 way", "4 way", "analog", "trackball", "twin stick", "lightgun"]
-        control_label = ctk.CTkLabel(control_types_tab, text="Control Types", font=("Arial", 14, "bold"))
-        control_label.pack(pady=(10,5))
-
-        for control_type in control_types:
-            var = tk.IntVar()
-            checkbox = ctk.CTkCheckBox(control_types_tab, text=control_type, variable=var, command=self.update_filtered_list)
-            checkbox.pack(padx=20, pady=5, anchor='w')
-            self.control_type_vars[control_type] = var
-
-        # Buttons tab content
-        self.buttons_var = ctk.StringVar(value="Select number of buttons")
-        self.buttons_var.trace_add('write', lambda *args: self.update_filtered_list())
-        button_options = ["Select number of buttons", "0", "1", "2", "3", "4", "5", "6"]
-        buttons_label = ctk.CTkLabel(buttons_tab, text="Number of Buttons", font=("Arial", 14, "bold"))
-        buttons_label.pack(pady=(10,5))
-        buttons_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.buttons_var, values=button_options)
-        buttons_dropdown.pack(padx=20, pady=5)
-
-        # Players tab content
-        self.players_var = ctk.StringVar(value="Select number of players")
-        self.players_var.trace_add('write', lambda *args: self.update_filtered_list())
-        player_options = ["Select number of players", "1", "2", "3", "4", "5", "6", "7", "8"]
-        players_label = ctk.CTkLabel(buttons_tab, text="Number of Players", font=("Arial", 14, "bold"))
-        players_label.pack(pady=(10, 5))
-        players_dropdown = ctk.CTkOptionMenu(buttons_tab, variable=self.players_var, values=player_options)
-        players_dropdown.pack(padx=20, pady=5)
-
-        # Vertical tab content
-        self.vertical_checkbox_var = tk.IntVar()
-        vertical_checkbox = ctk.CTkCheckBox(vertical_tab, text="Include only Vertical Games",
-                                          variable=self.vertical_checkbox_var,
-                                          command=self.update_filtered_list)
-        vertical_checkbox.pack(padx=20, pady=10, anchor='w')
-
-        # Toggle button frame
-        toggle_frame = ctk.CTkFrame(sidebar_frame)
-        toggle_frame.pack(side='bottom', fill='x', padx=10, pady=10)
-
-        # Toggle button
-        self.toggle_var = tk.StringVar(value="Switch to Exclude Options")
-        toggle_button = ctk.CTkButton(toggle_frame, textvariable=self.toggle_var, command=self.toggle_mode)
-        toggle_button.pack(pady=(0, 5), fill='x')
-
-        # Include Games frame
-        self.include_frame = ctk.CTkFrame(sidebar_frame)
-        self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
-
-        # Include Games buttons
-        filter_button = ctk.CTkButton(self.include_frame, text="Save Filter", command=self.filter_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
-        filter_button.pack(pady=(0, 5), fill='x')
-
-        clear_filters_button = ctk.CTkButton(self.include_frame, text="Clear Filters",
-                                           command=self.clear_filters)
-        clear_filters_button.pack(pady=(0, 5), fill='x')
-
-        show_all_button = ctk.CTkButton(self.include_frame, text="Reset to Default",
-                                       command=self.show_all_games, fg_color="red")
-        show_all_button.pack(fill='x')
-
-        # Exclude Games frame
-        self.exclude_frame = ctk.CTkFrame(sidebar_frame)
-
-        # Exclude Games buttons
-        exclude_button = ctk.CTkButton(self.exclude_frame, text="Exclude Games",
-                                           command=self.exclude_games_from_csv, fg_color="#4CAF50", hover_color="#45A049")
-        exclude_button.pack(pady=(0, 5), fill='x')
-
-        clear_filters_button = ctk.CTkButton(self.exclude_frame, text="Clear Filters",
-                                           command=self.clear_filters)
-        clear_filters_button.pack(pady=(0, 5), fill='x')
-
-        reset_exclude_button = ctk.CTkButton(self.exclude_frame, text="Reset Exclude to Default",
-                                              command=self.reset_exclude_to_default, fg_color="red")
-        reset_exclude_button.pack(pady=(0, 5), fill='x')
-
-        # Initially show the Include Games frame
-        self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
-
-        # Create right side games list
-        # Add a search entry at the top
-        search_frame = ctk.CTkFrame(right_frame)
-        search_frame.pack(fill='x', padx=5, pady=5)
-
-        search_label = ctk.CTkLabel(search_frame, text="Search Games:")
-        search_label.pack(side='left', padx=5)
-
-        self.search_var = tk.StringVar()
-        self.search_var.trace_add('write', lambda *args: self.update_filtered_list())
-        search_entry = ctk.CTkEntry(search_frame, textvariable=self.search_var)
-        search_entry.pack(side='left', fill='x', expand=True, padx=5)
-
-        # Create games list with scrollbar
-        list_frame = ctk.CTkFrame(right_frame)
-        list_frame.pack(fill='both', expand=True, padx=5, pady=5)
-
-        self.games_text = ctk.CTkTextbox(list_frame)
-        self.games_text.pack(fill='both', expand=True, side='left')
-
-        # Pack status bar last
-        self.status_bar.pack(fill='x', padx=5, pady=(5, 0))
-
-        # Initial population of the games list
-        self.update_filtered_list()
-
-    def toggle_mode(self):
-        if self.toggle_var.get() == "Switch to Exclude Options":
-            self.toggle_var.set("Switch to Include Options")
-            self.include_frame.pack_forget()
-            self.exclude_frame.pack(side='bottom', fill='x', padx=10, pady=10)
-        else:
-            self.toggle_var.set("Switch to Exclude Options")
-            self.exclude_frame.pack_forget()
-            self.include_frame.pack(side='bottom', fill='x', padx=10, pady=10)
-
-    def clear_filters(self):
-        """Reset all filters to their default states"""
-        # Reset control type checkboxes
-        for var in self.control_type_vars.values():
-            var.set(0)
-
-        # Reset dropdowns
-        self.buttons_var.set("Select number of buttons")
-        self.players_var.set("Select number of players")
-
-        # Reset vertical checkbox
-        self.vertical_checkbox_var.set(0)
-
-        # Clear search box
-        self.search_var.set("")
-
-        # Update the filtered list
-        self.update_filtered_list()
-        self.status_bar.configure(text="All filters cleared")
-
-    def update_filtered_list(self, *args):
-        try:
-            # Clear current display
-            self.games_text.delete('1.0', 'end')
-
-            # Get search term
-            search_term = self.search_var.get().lower()
-
-            # Get current filter settings
-            selected_ctrltypes = self.get_selected_control_types()
-            selected_buttons = self.buttons_var.get().strip()
-            selected_players = self.players_var.get().strip()
-            vertical_filter = self.vertical_checkbox_var.get()
-
-            # Update status to show we're working
-            self.status_bar.configure(text="Updating list...")
-
-            # Get ROMs in build
-            roms_in_build = self.scan_collections_for_roms()
-
-            # Read existing exclude file to check for duplicates
-            existing_excludes = set()
-            if os.path.exists(self.exclude_output_file):
-                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
-                    existing_excludes = set(line.strip() for line in f if line.strip())
-
-            # Read CSV and apply filters
-            self.filtered_games = []  # Store filtered games for export
-            games_info = []
-            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
-                reader = csv.DictReader(csv_file)
-                for row in reader:
-                    rom_name = row.get('ROM Name', '').strip()
-                    if rom_name not in roms_in_build:
-                        continue
-
-                    description = row.get('Description', '').strip()
-                    joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
-                    vertical = row.get('Vertical')
-                    buttons = row.get('Buttons', '0')
-                    players = row.get('numberPlayers', '1')
-
-                    # Convert buttons and players to integers for comparison
-                    buttons = int(buttons) if buttons.isdigit() else float('inf')
-                    players = int(players) if players.isdigit() else float('inf')
-
-                    # Check if the ROM is in the exclude list
-                    if rom_name in existing_excludes:
-                        continue
-
-                    # Apply filters
-                    if vertical_filter and (not vertical or vertical.strip().upper() != "VERTICAL"):
-                        continue
-                    if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
-                        continue
-                    if selected_players != "Select number of players" and players != int(selected_players):
-                        continue
-                    if selected_ctrltypes:
-                        matches_control = False
-                        for selected_ctrltype in selected_ctrltypes:
-                            mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
-                            if self.control_type_exists(joystick_input, mapped_ctrltype):
-                                matches_control = True
-                                break
-                        if not matches_control:
-                            continue
-
-                    # Apply search filter
-                    if search_term and search_term not in description.lower() and search_term not in rom_name.lower():
-                        continue
-
-                    # Store the full row data for export
-                    self.filtered_games.append(row)
-
-                    # Format the display string
-                    if description:
-                        display_string = f"{description} ({rom_name})\n"
-                    else:
-                        display_string = f"{rom_name}\n"
-
-                    games_info.append(display_string)
-
-            # Sort and display results
-            games_info.sort()
-            self.games_text.insert('1.0', f"Matching Games: {len(games_info)}\n\n")
-            for game in games_info:
-                self.games_text.insert('end', game)
-
-            # Update status bar with count
-            self.status_bar.configure(text=f"Found {len(games_info)} matching games")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error updating filtered list: {str(e)}")
-            self.status_bar.configure(text="Error updating list")
-
-
-    def export_filtered_list(self):
-        """Export the current filtered list to a CSV file"""
-        if not hasattr(self, 'filtered_games') or not self.filtered_games:
-            messagebox.showinfo("Export", "No games to export")
-            return
-
-        try:
-            # Ask user for save location
-            file_path = filedialog.asksaveasfilename(
-                defaultextension='.csv',
-                filetypes=[('CSV files', '*.csv'), ('All files', '*.*')],
-                initialdir=PathManager.get_base_path(),
-                initialfile='filtered_games.csv'
-            )
-
-            if not file_path:  # User cancelled
-                return
-
-            # Get the fieldnames from the first row
-            fieldnames = self.filtered_games[0].keys()
-
-            # Write to CSV
-            with open(file_path, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(self.filtered_games)
-
-            self.status_bar.configure(text=f"Exported {len(self.filtered_games)} games to CSV")
-            messagebox.showinfo("Export Complete", f"Successfully exported {len(self.filtered_games)} games to:\n{file_path}")
-
-        except Exception as e:
-            messagebox.showerror("Export Error", f"Error exporting games: {str(e)}")
-            self.status_bar.configure(text="Error exporting games")
-
-    def load_custom_dll(self):
-        """Load custom DLL with cross-platform path handling"""
-        if sys.platform.startswith('win'):  # Only load DLL on Windows
-            dll_path = os.path.join(os.path.dirname(sys.argv[0]), 'autochanger', 'python', 'VCRUNTIME140.dll')
-            print(f"Checking DLL path: {dll_path}")
-            ctypes.windll.kernel32.SetDllDirectoryW(os.path.dirname(dll_path))
-            if os.path.exists(dll_path):
-                ctypes.windll.kernel32.LoadLibraryW(dll_path)
-                print("Custom DLL loaded successfully.")
-            else:
-                print("Custom DLL not found.")
-
-    def get_csv_file_path(self):
-        """Get CSV file path with cross-platform compatibility"""
-        # Check for external CSV in autochanger folder
-        autochanger_csv_path = os.path.join('autochanger', 'META.csv')
-        if os.path.exists(autochanger_csv_path):
-            return os.path.abspath(autochanger_csv_path)
-
-        # If not found, use bundled CSV
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS
-        else:
-            base_path = os.path.dirname(os.path.abspath(__file__))
-
-        return os.path.join(base_path, 'meta', 'hyperlist', 'META.csv')
-
-    def sanitize_csv_cell(self, cell_content):
-        if cell_content:
-            return re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;)', '&amp;', str(cell_content))
-        return cell_content
-
-    def get_selected_control_types(self):
-        selected_controls = []
-        for control_type, var in self.control_type_vars.items():
-            if var.get() == 1:
-                selected_controls.append(control_type)
-        return selected_controls
-
-    def control_type_exists(self, input_field, selected_ctrltype):
-        if input_field:
-            types_in_field = [t.strip().lower() for t in input_field.split('/')]
-            return selected_ctrltype.lower() in types_in_field
-        return False
-
-    def check_output_dir(self):
-        """Check and create output directory if needed"""
-        if not os.path.exists(self.output_dir):
-            try:
-                os.makedirs(self.output_dir, exist_ok=True)
-                print(f"Created output directory: {self.output_dir}")
-            except Exception as e:
-                messagebox.showerror("Error", 
-                    f"Could not create output directory: {self.output_dir}\nError: {str(e)}")
-                self.parent_tab.quit()
-                sys.exit()
-
-    # Method to scan collections for ROMs
-    def scan_collections_for_roms(self):
-        """Scan collections with cross-platform path handling"""
-        root_dir = PathManager.get_base_path()
-        collections_dir = os.path.join(root_dir, 'collections')
-        rom_list = []
-
-        for collection_name in os.listdir(collections_dir):
-            if "settings" in collection_name.lower() or "zzz" in collection_name.lower():
-                continue
-
-            collection_path = os.path.join(collections_dir, collection_name)
-            settings_path = os.path.join(collection_path, 'settings.conf')
-
-            if os.path.isdir(collection_path) and os.path.isfile(settings_path):
-                rom_folder = None
-                extensions = []
-
-                with open(settings_path, 'r', encoding='utf-8') as settings_file:
-                    for line in settings_file:
-                        line = line.strip()
-                        if line.startswith("#"):
-                            continue
-                        if line.startswith("list.path"):
-                            rom_folder = line.split("=", 1)[1].strip()
-                            rom_folder = os.path.join(root_dir, rom_folder)
-                        elif line.startswith("list.extensions"):
-                            ext_line = line.split("=", 1)[1].strip()
-                            extensions = [ext.strip() for ext in ext_line.split(",")]
-
-                if rom_folder and extensions and os.path.isdir(rom_folder):
-                    for root, _, files in os.walk(rom_folder):
-                        for file in files:
-                            if any(file.endswith(ext) for ext in extensions):
-                                filename_without_extension = os.path.splitext(file)[0]
-                                rom_list.append(filename_without_extension)
-
-        return set(rom_list)
-
-    # Updated filter_games_from_csv method
-    def filter_games_from_csv(self):
-        self.status_bar.configure(text="Saving filters...")
-        self.check_output_dir()
-        roms_in_build = self.scan_collections_for_roms()
-
-        try:
-            # Read existing exclude file to check for duplicates
-            existing_excludes = set()
-            if os.path.exists(self.exclude_output_file):
-                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
-                    existing_excludes = set(line.strip() for line in f if line.strip())
-
-            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
-                reader = csv.DictReader(csv_file)
-                with open(self.include_output_file, 'w', encoding='utf-8') as f:
-                    game_count = 0
-                    selected_ctrltypes = self.get_selected_control_types()
-                    selected_players = self.players_var.get().strip()  # New player selection
-                    selected_buttons = self.buttons_var.get().strip()
-                    vertical_filter = self.vertical_checkbox_var.get()
-
-                    for row in reader:
-                        joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
-                        rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
-                        vertical = row.get('Vertical')
-                        buttons = row.get('Buttons')
-                        players = row.get('numberPlayers')  # Get the Players column
-
-                        buttons = int(buttons) if buttons.isdigit() else float('inf')
-                        players = int(players) if players.isdigit() else float('inf')
-
-                        # Check if the ROM is in the current build
-                        if rom_name not in roms_in_build:
-                            continue
-
-                        # Check if the ROM is in the exclude list
-                        if rom_name in existing_excludes:
-                            continue
-
-                        # Apply filters
-                        if vertical_filter == 1 and (not vertical or vertical.strip().upper() != "VERTICAL"):
-                            continue
-                        if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
-                            continue
-                        if selected_players != "Select number of players" and players != int(selected_players):
-                            continue
-                        if selected_ctrltypes:
-                            for selected_ctrltype in selected_ctrltypes:
-                                mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
-                                if self.control_type_exists(joystick_input, mapped_ctrltype):
-                                    f.write(f"{rom_name}\n")
-                                    game_count += 1
-                                    break
-                        else:
-                            f.write(f"{rom_name}\n")
-                            game_count += 1
-
-                    # Feedback for users
-                    if game_count == 0:
-                        messagebox.showinfo("No Games Found", "No games matched the selected filters.")
-                        self.status_bar.configure(text="No games matched filters")
-                    else:
-                        self.status_bar.configure(text=f"Saved {game_count} games to filter")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error opening CSV file: {e}")
-
-
-    def exclude_games_from_csv(self):
-        self.status_bar.configure(text="Excluding games...")
-        self.check_output_dir()
-        roms_in_build = self.scan_collections_for_roms()
-
-        try:
-            # Read existing exclude file to check for duplicates
-            existing_excludes = set()
-            if os.path.exists(self.exclude_output_file):
-                with open(self.exclude_output_file, 'r', encoding='utf-8') as f:
-                    existing_excludes = set(line.strip() for line in f if line.strip())
-
-            with open(self.csv_file_path, newline='', encoding='utf-8') as csv_file:
-                reader = csv.DictReader(csv_file)
-                with open(self.exclude_output_file, 'a', encoding='utf-8') as f:
-                    game_count = 0
-                    already_excluded_count = 0
-                    selected_ctrltypes = self.get_selected_control_types()
-                    selected_players = self.players_var.get().strip()  # New player selection
-                    selected_buttons = self.buttons_var.get().strip()
-                    vertical_filter = self.vertical_checkbox_var.get()
-
-                    for row in reader:
-                        joystick_input = self.sanitize_csv_cell(row.get('ctrlType'))
-                        rom_name = self.sanitize_csv_cell(row.get('ROM Name'))
-                        vertical = row.get('Vertical')
-                        buttons = row.get('Buttons')
-                        players = row.get('numberPlayers')  # Get the Players column
-
-                        buttons = int(buttons) if buttons.isdigit() else float('inf')
-                        players = int(players) if players.isdigit() else float('inf')
-
-                        # Check if the ROM is in the current build
-                        if rom_name not in roms_in_build:
-                            continue
-
-                        # Apply filters
-                        if vertical_filter == 1 and (not vertical or vertical.strip().upper() != "VERTICAL"):
-                            continue
-                        if selected_buttons != "Select number of buttons" and buttons > int(selected_buttons):
-                            continue
-                        if selected_players != "Select number of players" and players != int(selected_players):
-                            continue
-                        if selected_ctrltypes:
-                            for selected_ctrltype in selected_ctrltypes:
-                                mapped_ctrltype = self.control_type_mapping.get(selected_ctrltype)
-                                if self.control_type_exists(joystick_input, mapped_ctrltype):
-                                    if rom_name not in existing_excludes:
-                                        f.write(f"{rom_name}\n")
-                                        game_count += 1
-                                    else:
-                                        already_excluded_count += 1
-                                    break
-                        else:
-                            if rom_name not in existing_excludes:
-                                f.write(f"{rom_name}\n")
-                                game_count += 1
-                            else:
-                                already_excluded_count += 1
-
-                    # Feedback for users
-                    if game_count == 0 and already_excluded_count == 0:
-                        messagebox.showinfo("No Games Found", "No games matched the selected filters.")
-                        self.status_bar.configure(text="No games matched filters")
-                    else:
-                        feedback_message = f"Excluded {game_count} games from filter."
-                        if already_excluded_count > 0:
-                            feedback_message += f" {already_excluded_count} games were already excluded."
-                        self.status_bar.configure(text=feedback_message)
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error opening CSV file: {e}")
-
-    def reset_exclude_to_default(self):
-        self.status_bar.configure(text="Resetting exclude to default...")
-        try:
-            if os.path.exists(self.exclude_output_file):
-                os.remove(self.exclude_output_file)
-                self.status_bar.configure(text=f"Exclude file deleted successfully.")
-            else:
-                self.status_bar.configure(text=f"Exclude file does not exist.")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error resetting exclude to default: {e}")
-            self.status_bar.configure(text=f"Error resetting exclude to default: {e}")
-
-    def show_all_games(self):
-        """Reset to default with proper path handling"""
-        self.status_bar.configure(text="Resetting to default...")
-        try:
-            source = os.path.join("autochanger", "include.txt")
-            destination = os.path.join("collections", "Arcades", "include.txt")
-
-            if os.path.exists(source):
-                # Ensure destination directory exists
-                os.makedirs(os.path.dirname(destination), exist_ok=True)
-                shutil.copyfile(source, destination)
-                print(f"Success: Copied '{source}' to '{destination}'.")
-                self.status_bar.configure(text=f"Successfully reset to default games list.")
-            else:
-                if os.path.exists(destination):
-                    os.remove(destination)
-                    print(f"Success: '{destination}' has been deleted.")
-                    self.status_bar.configure(text="Successfully removed custom games list.")
-                else:
-                    print(f"Info: No file to delete. '{destination}' does not exist.")
-                    self.status_bar.configure(text="No custom games list found.")
-
-        except Exception as e:
-            print(f"Error: Failed to process files: {str(e)}")
-            self.status_bar.configure(text=f"Failed to process files: {str(e)}")
-
-class Playlists:
-    def __init__(self, root, parent_tab):
-        self.root = root
-        self.parent_tab = parent_tab
-        self.base_path = PathManager.get_base_path()
-        self.playlists_path = os.path.join(self.base_path, "collections", "Arcades", "playlists")
-        
-        # Initialize the configuration manager
-        self.config_manager = ConfigManager()
-        
-        # Get playlist location setting from INI
-        self.playlist_location = self.config_manager.get_playlist_location()  # Should return 'S', 'D', or 'U'
-        
-        # Set up paths
-        if self.playlist_location == 'U':
-            # Use Universe settings file
-            self.settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
-            self.custom_settings_path = os.path.join(self.base_path, "autochanger", "settingsCustomisation.conf")
-            self.autochanger_conf_path = self.custom_settings_path
-        else:
-            # Original behavior - use settings file from config
-            settings_file = self.config_manager.get_settings_file()
-            self.settings_file_path = os.path.join(self.base_path, "autochanger", settings_file)
-            self.autochanger_conf_path = self.settings_file_path     
-        
-        self.check_vars = []
-        self.check_buttons = []
-        self.excluded_playlists = self.config_manager.get_excluded_playlists()
-        self.manufacturer_playlists = ["atari", "capcom", "cave", "data east", "irem", "konami", "midway", "namco", "neogeo", "nintendo", "psikyo", "raizing", "sega", "snk", "taito", "technos", "tecmo", "toaplan", "williams"]
-        self.sort_type_playlists = ["ctrltype", "manufacturer", "numberplayers", "year"]
-        
-        # Define playlists to exclude from genres
-        self.excluded_from_genres = ["vertical", "horizontal"]  # Add your playlists here
-
-        # Create UI elements
-        self.create_ui_elements()
-        
-        # Set up custom settings if needed
-        if self.playlist_location == 'U':
-            self.setup_custom_settings()
-            
-        # Initialize the toggle state dictionary
-        self.toggle_state = {
-            "genres": False,
-            "manufacturer": False,
-            "sort_type": False
-        }
-        
-        # Populate checkboxes
-        self.populate_checkboxes()
-        self.update_reset_button_state()
-
-    def create_ui_elements(self):
-        """Create all UI elements"""
-        # Create a main frame for all content
-        self.main_frame = ctk.CTkFrame(self.parent_tab, corner_radius=10)
-        self.main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-        
-        # Create a frame for the scrollable checkbox area
-        self.scrollable_checklist = ctk.CTkScrollableFrame(self.main_frame, width=400, height=400)
-        self.scrollable_checklist.pack(fill="both", expand=True, padx=10, pady=(10, 5))
-
-        # Create status message label
-        self.status_label = ctk.CTkLabel(
-            self.main_frame,
-            text="",
-            height=25,
-            fg_color=("gray85", "gray25"),
-            corner_radius=8
-        )
-        self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
-        self.status_label.pack_forget()  # Hide initially
-
-        # Create button frames
-        button_frame = ctk.CTkFrame(self.parent_tab)
-        button_frame.pack(side="bottom", fill="x", padx=10, pady=10)
-
-        top_button_frame = ctk.CTkFrame(button_frame)
-        top_button_frame.pack(fill="x", padx=2, pady=2)
-
-        bottom_button_frame = ctk.CTkFrame(button_frame)
-        bottom_button_frame.pack(fill="x", padx=2, pady=2)
-
-        # Create main action buttons
-        self.create_playlist_button = ctk.CTkButton(
-            top_button_frame,
-            text="Create Playlist",
-            command=self.create_playlist,
-            fg_color="#4CAF50",
-            hover_color="#45A049"
-        )
-        self.create_playlist_button.pack(side="left", fill="x", expand=True, padx=2)
-
-        self.reset_button = ctk.CTkButton(
-            top_button_frame,
-            text="Reset Playlists",
-            fg_color="#D32F2F",
-            hover_color="#C62828",
-            command=self.reset_playlists,
-            state="disabled"
-        )
-        self.reset_button.pack(side="left", fill="x", expand=True, padx=2)
-
-        # Create category buttons
-        self.genres_button = ctk.CTkButton(
-            bottom_button_frame,
-            text="All Genres",
-            command=lambda: self.activate_special_playlist("genres", self.get_genre_playlists()),
-            fg_color="#2196F3",
-            hover_color="#1976D2"
-        )
-        self.genres_button.pack(side="left", fill="x", expand=True, padx=2)
-
-        self.manufacturer_button = ctk.CTkButton(
-            bottom_button_frame,
-            text="All Manufacturer",
-            command=lambda: self.activate_special_playlist("manufacturer", self.manufacturer_playlists),
-            fg_color="#2196F3",
-            hover_color="#1976D2"
-        )
-        self.manufacturer_button.pack(side="left", fill="x", expand=True, padx=2)
-
-        self.sort_type_button = ctk.CTkButton(
-            bottom_button_frame,
-            text="All Sort Types",
-            command=lambda: self.activate_special_playlist("sort_type", self.sort_type_playlists),
-            fg_color="#2196F3",
-            hover_color="#1976D2"
-        )
-        self.sort_type_button.pack(side="left", fill="x", expand=True, padx=2)
-
-    def setup_custom_settings(self):
-        """Set up custom settings file and backup if they don't exist"""
-        try:
-            # Create autochanger directory if it doesn't exist
-            autochanger_dir = os.path.join(self.base_path, "autochanger")
-            os.makedirs(autochanger_dir, exist_ok=True)
-            
-            # Check for original settings.conf in Arcades folder
-            arcade_settings = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
-            if os.path.exists(arcade_settings):
-                # Create settingsCustomisation.conf if it doesn't exist
-                if not os.path.exists(self.custom_settings_path):
-                    shutil.copy2(arcade_settings, self.custom_settings_path)
-                    self.show_status_message("✓ Created settingsCustomisation.conf backup")
-            else:
-                self.show_status_message("⚠️ Original settings.conf not found in Arcades folder")
-                
-        except Exception as e:
-            self.show_status_message(f"⚠️ Error setting up custom settings: {str(e)}")
-
-    def update_conf_file(self, playlist_list):
-        try:
-            target_file = self.settings_file_path if self.playlist_location == 'U' else self.autochanger_conf_path
-            
-            # Use self.get_cycle_playlist() instead of self.config_manager.get_cycle_playlist()
-            if self.playlist_location == 'U':
-                default_playlists = ["all", "favorites", "lastplayed"]
-            else:
-                default_playlists = self.config_manager.get_cycle_playlist()
-            
-            with open(target_file, 'r') as file:
-                lines = file.readlines()
-
-            cycle_playlist_found = False
-            updated_lines = []
-            
-            for line in lines:
-                if line.startswith("cyclePlaylist ="):
-                    # Combine default playlists with selected playlists
-                    new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
-                    updated_lines.append(new_line)
-                    cycle_playlist_found = True
-                else:
-                    updated_lines.append(line)
-
-            # Add cyclePlaylist if not found
-            if not cycle_playlist_found:
-                new_line = f"cyclePlaylist = {', '.join(default_playlists)}, {', '.join(playlist_list)}\n"
-                updated_lines.append(new_line)
-
-            # Write the updated lines back to the file
-            with open(target_file, 'w') as file:
-                file.writelines(updated_lines)
-
-            self.show_status_message("✓ Playlists updated successfully")
-        except Exception as e:
-            self.show_status_message(f"⚠️ Error: {str(e)}")
-                    
-    def read_settings_file_name(self):
-        return self.config_manager.get_settings_file()
-    
-    def read_default_playlists(self):
-        return self.config_manager.get_cycle_playlist()
-    
-    def read_excluded_playlists(self):
-        return self.config_manager.get_excluded_playlists()
-
-    def show_temp_message(self, message):
-         # Create a temporary window to show a message
-        temp_window = tk.Toplevel(self.root)
-        temp_window.title("Message")
-        
-        # Set up the label with the message
-        label = tk.Label(temp_window, text=message, wraplength=250)  # Wrap long messages at 250px width
-        label.pack(pady=20, padx=20)  # Add padding to the label
-
-        # Calculate width based on message content
-        font = tkFont.Font(font=label.cget("font"))
-        text_width = font.measure(message) + 40  # Add some padding
-
-        # Limit the minimum and maximum width
-        window_width = min(max(text_width, 200), 400)  # Min 200, Max 400
-        window_height = 100  # Set a default height; adjust if needed for larger messages
-        
-        # Center the temporary window relative to the main window
-        self.root.update_idletasks()  # Ensure root's dimensions are up-to-date
-        main_width = self.root.winfo_width()
-        main_height = self.root.winfo_height()
-        main_x = self.root.winfo_x()
-        main_y = self.root.winfo_y()
-
-        # Calculate position for the temp window to be centered
-        temp_x = main_x + (main_width // 2) - (window_width // 2)
-        temp_y = main_y + (main_height // 2) - (window_height // 2)
-        temp_window.geometry(f"{window_width}x{window_height}+{temp_x}+{temp_y}")
-
-        # Auto-close the temporary window after a brief period (e.g., 2 seconds)
-        temp_window.after(1000, temp_window.destroy)  # 2000ms = 2 seconds
-
-    def show_status_message(self, message, duration=2000):
-        # Show the status label if it's hidden
-        self.status_label.pack(fill="x", padx=10, pady=(0, 10), ipady=5)
-        
-        # Update the message
-        self.status_label.configure(text=message)
-        
-        # Schedule the message to be hidden
-        self.root.after(duration, self.hide_status_message)
-    
-    def hide_status_message(self):
-        self.status_label.pack_forget()
-
-    # Gets all playlists not included in manufacturer and sort types
-    def get_genre_playlists(self):
-        return [name for name, _ in self.check_vars
-            if name not in self.sort_type_playlists and name not in self.manufacturer_playlists and name not in self.excluded_from_genres]
-
-    def toggle_genres(self):
-        genre_playlists = self.get_genre_playlists()  # Fetch genre playlists correctly
-        if self.genre_switch.get() == "off":
-            for genre in genre_playlists:
-                if genre not in self.excluded_playlists:
-                    self.excluded_playlists.append(genre)
-        else:
-            for genre in genre_playlists:
-                if genre in self.excluded_playlists:
-                    self.excluded_playlists.remove(genre)
-
-        self.refresh_checkboxes()
-        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
-    
-    def toggle_manufacturers(self):
-        if self.manufacturer_switch.get() == "off":
-            for manufacturer in self.manufacturer_playlists:
-                if manufacturer not in self.excluded_playlists:
-                    print(f"Adding {manufacturer} to excluded playlists")  # Debugging statement
-                    self.excluded_playlists.append(manufacturer)
-        else:
-            for manufacturer in self.manufacturer_playlists:
-                if manufacturer in self.excluded_playlists:
-                    print(f"Removing {manufacturer} from excluded playlists")  # Debugging statement
-                    self.excluded_playlists.remove(manufacturer)
-
-        self.refresh_checkboxes()
-        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
-    
-    def toggle_sort_types(self):
-        print(f"Sort Switch State Before: {self.sort_types_switch.get()}")
-        if self.sort_types_switch.get() == "off":
-            for sort in self.sort_type_playlists:
-                if sort not in self.excluded_playlists:
-                    self.excluded_playlists.append(sort)
-        else:
-            for sort in self.sort_type_playlists:
-                if sort in self.excluded_playlists:
-                    self.excluded_playlists.remove(sort)
-        
-        self.refresh_checkboxes()
-        self.update_reset_button_state()  # Ensure reset button is enabled or disabled
-    
-    def refresh_checkboxes(self):
-        for widget in self.scrollable_checklist.winfo_children():
-            widget.destroy()
-        self.populate_checkboxes()
-
-    def populate_checkboxes(self):
-        """Populates the initial checkboxes with manufacturer playlists at the end."""
-        try:
-            all_playlists = []
-            manufacturer_playlists = []
-            sort_type_playlists = []
-
-            for playlist_file in os.listdir(self.playlists_path):
-                playlist_name, ext = os.path.splitext(playlist_file)
-                # Normalize the playlist name for comparison
-                normalized_name = playlist_name.lower().strip()
-                # Normalize the excluded playlists for comparison
-                normalized_excluded = [excluded.lower().strip() for excluded in self.excluded_playlists]
-                
-                # Check if it's a .txt file and not excluded
-                if ext == ".txt" and normalized_name not in normalized_excluded:
-                    all_playlists.append(playlist_name)
-                    
-                    # Check if it's a manufacturer playlist
-                    if normalized_name in [m.lower() for m in self.manufacturer_playlists]:
-                        manufacturer_playlists.append(playlist_name)
-                        
-                    # Check if it's a sort type playlist
-                    if normalized_name in [s.lower() for s in self.sort_type_playlists]:
-                        sort_type_playlists.append(playlist_name)
-            
-            # Remove manufacturer playlists from all_playlists
-            for manufacturer_playlist in manufacturer_playlists:
-                if manufacturer_playlist in all_playlists:
-                    all_playlists.remove(manufacturer_playlist)
-            
-            # Remove sort type playlists from all_playlists
-            for sort_playlist in sort_type_playlists:
-                if sort_playlist in all_playlists:
-                    all_playlists.remove(sort_playlist)
-                
-            # Sort playlists to handle numeric prefixes properly
-            all_playlists.sort(key=str.lower)
-            
-            # Append manufacturer and sort type playlists to the end
-            all_playlists.extend(manufacturer_playlists)
-            all_playlists.extend(sort_type_playlists)
-
-            # Populate checkboxes in the desired order
-            for playlist_name in all_playlists:
-                var = tk.BooleanVar()
-                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist_name, variable=var)
-                checkbutton.pack(anchor="w", padx=10, pady=5)
-                self.check_vars.append((playlist_name, var))
-
-        except FileNotFoundError:
-            print(f"Playlists folder not found at: {self.playlists_path}")
-        except Exception as e:
-            print("An error occurred:", str(e))
-
-    def add_playlists_to_checklist(self, playlist_names):
-        """Adds playlists to the checklist."""
-        current_playlists = [name for name, var in self.check_vars]
-        
-        for playlist in playlist_names:
-            if playlist not in current_playlists:
-                var = tk.BooleanVar()
-                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist, variable=var)
-                checkbutton.pack(anchor="w", padx=10, pady=5)
-                self.check_vars.append((playlist, var))
-
-    def add_playlists_to_checklist(self, playlist_names):
-        """Adds playlists to the checklist."""
-        current_playlists = [name for name, var in self.check_vars]
-        
-        for playlist in playlist_names:
-            if playlist not in current_playlists:
-                var = tk.BooleanVar()
-                checkbutton = ctk.CTkCheckBox(self.scrollable_checklist, text=playlist, variable=var)
-                checkbutton.pack(anchor="w", padx=10, pady=5)
-                self.check_vars.append((playlist, var))
-
-    def remove_playlists_from_checklist(self, playlist_names):
-        """Removes playlists from the checklist."""
-        for playlist in playlist_names:
-            for name, var in self.check_vars:
-                if name == playlist:
-                    var.set(False)  # Uncheck the checkbox
-                    self.check_vars.remove((name, var))  # Remove from the list
-                    break
-
-    def create_playlist(self):
-        selected_playlists = [name for name, var in self.check_vars if var.get()]
-        self.update_conf_file(selected_playlists)
-    
-    def activate_special_playlist(self, button_type, playlist_type):
-        # Check the toggle state to determine if we select or unselect
-        current_state = self.toggle_state[button_type]
-        
-        for name, var in self.check_vars:
-            if name in playlist_type:
-                var.set(not current_state)  # Set to True if unselected, False if already selected
-
-        # Toggle the button's state for next click
-        self.toggle_state[button_type] = not current_state
-               
-    def update_reset_button_state(self):
-        """Check if backup settings file exists and update reset button state."""
-        try:
-            if self.playlist_location == 'U':
-                # For 'U' location, always enable the reset defaults button
-                self.reset_button.configure(state="normal")
-            else:
-                # For 'S' and 'D', check if backup exists
-                current_settings = self.config_manager.get_settings_file()
-                backup_file = current_settings.replace(".conf", "x.conf")
-                backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
-                
-                # Enable button if backup exists, disable if it doesn't
-                if os.path.exists(backup_conf_path):
-                    self.reset_button.configure(state="normal")
-                else:
-                    self.reset_button.configure(state="disabled")
-        
-        except Exception as e:
-            print(f"Error checking backup file: {str(e)}")
-            self.reset_button.configure(state="disabled")
-
-    def reset_playlists(self):
-        """Reset the settings based on playlist location setting."""
-        try:
-            if self.playlist_location == 'U':
-                # For 'U' mode, update CyclePlaylist with a hardcoded value
-                try:
-                    hardcoded_cycle_playlist = (
-                        "all,favorites,lastplayed,01 old school,02 beat em up,03 run n gun, "
-                        "04 fight club,05 shoot n up,06 racer,year,manufacturer,ctrltype,numberplayers"
-                    )
-                    settings_file_path = os.path.join(self.base_path, "collections", "Arcades", "settings.conf")
-                    
-                    if os.path.exists(settings_file_path):
-                        # Update CyclePlaylist in settings.conf
-                        self.update_cycle_playlist_value(settings_file_path, hardcoded_cycle_playlist)
-                        self.show_status_message("✓ CyclePlaylist successfully reset to custom value")
-                    else:
-                        self.show_status_message("⚠️ settings.conf not found in collections/Arcades")
-                except Exception as e:
-                    self.show_status_message(f"⚠️ Error during reset for U: {str(e)}")
-            else:
-                # Common behavior for 'S' and 'D' modes
-                current_settings = self.config_manager.get_settings_file()
-                backup_file = current_settings.replace(".conf", "x.conf")
-                backup_conf_path = os.path.join(self.base_path, "autochanger", backup_file)
-                
-                if os.path.exists(backup_conf_path):
-                    shutil.copy2(backup_conf_path, self.autochanger_conf_path)
-                    self.show_status_message("✓ Playlists have been reset successfully")
-                else:
-                    self.show_status_message("⚠️ Backup configuration file not found")
-        except Exception as e:
-            self.show_status_message(f"⚠️ Error during reset: {str(e)}")
-
-    def update_cycle_playlist_value(self, file_path, new_value):
-        """Update the cyclePlaylist value in the configuration file."""
-        try:
-            updated_lines = []
-            found = False
-
-            with open(file_path, "r") as file:
-                for line in file:
-                    if line.strip().startswith("cyclePlaylist ="):
-                        updated_lines.append(f"cyclePlaylist = {new_value}\n")
-                        found = True
-                    else:
-                        updated_lines.append(line)
-
-            # If CyclePlaylist was not found, add it to the file
-            if not found:
-                updated_lines.append(f"cyclePlaylist = {new_value}\n")
-
-            # Write the updated configuration back to the file
-            with open(file_path, "w") as file:
-                file.writelines(updated_lines)
-        except Exception as e:
-            raise Exception(f"Failed to update cyclePlaylist: {str(e)}")
-
-class ThemeViewer:
-    def __init__(self, video_path=None, image_path=None):
-        self.video_path = video_path
-        self.image_path = image_path
-        self.thumbnail = None
-        self.video_cap = None
-        self.is_playing = False
-        self.lock = Lock()
-        
-    def extract_thumbnail(self):
-        """Extract thumbnail from video file or load PNG with fallback handling"""
-        # Try video first
-        if self.video_path:
-            try:
-                cap = cv2.VideoCapture(self.video_path)
-                ret, frame = cap.read()
-                cap.release()
-                
-                if ret:
-                    return frame
-            except Exception as e:
-                print(f"Error extracting video thumbnail: {e}")
-        
-        # Try specific image if provided (but not logo)
-        if self.image_path and not any(folder in self.image_path for folder in ['logos', 'Logos']):
-            try:
-                image = cv2.imread(self.image_path)
-                if image is not None:
-                    return image
-            except Exception as e:
-                print(f"Error loading specific image: {e}")
-        
-        # Try fallback image
-        fallback_path = os.path.join("assets", "images", "theme_fallback.png")
-        if not os.path.exists(fallback_path):
-            fallback_path = os.path.join("assets", "images", "theme_fallback.jpg")
-        
-        if os.path.exists(fallback_path):
-            try:
-                fallback_image = cv2.imread(fallback_path)
-                if fallback_image is not None:
-                    return fallback_image
-            except Exception as e:
-                print(f"Error loading fallback image: {e}")
-        
-        return None
-
-    def start_video(self):
-        """Start video playback"""
-        with self.lock:
-            if not self.is_playing and self.video_path:
-                try:
-                    self.video_cap = cv2.VideoCapture(self.video_path)
-                    if self.video_cap.isOpened():
-                        self.is_playing = True
-                        #print(f"Video started successfully: {self.video_path}")
-                        return True
-                    else:
-                        print("Failed to open video file")
-                        self.video_cap = None
-                except Exception as e:
-                    print(f"Error starting video: {e}")
-                    self.video_cap = None
-            return False
-
-    def stop_video(self):
-        """Stop video playback"""
-        with self.lock:
-            self.is_playing = False
-            if self.video_cap:
-                try:
-                    self.video_cap.release()
-                except Exception as e:
-                    print(f"Error stopping video: {e}")
-                finally:
-                    self.video_cap = None
-
-    def get_frame(self):
-        """Get next video frame if playing"""
-        if not self.is_playing or not self.video_cap:
-            return None
-            
-        try:
-            ret, frame = self.video_cap.read()
-            if ret:
-                return frame
-            else:
-                # Reset video to start
-                self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                ret, frame = self.video_cap.read()
-                return frame if ret else None
-        except Exception as e:
-            print(f"Error reading frame: {e}")
-            return None
-            
-class MultiPathThemes:
-    def __init__(self, parent_tab):
-        #print("Initializing MultiPathThemes...")
-        self.parent_tab = parent_tab
-        self.base_path = PathManager.get_base_path()
-
-        # Initialize configuration manager
-        self.config_manager = ConfigManager()
-        self.theme_paths = self.config_manager.get_theme_paths_multi()
-        self.ignore_list = self.config_manager.get_ignore_list()
-
-        # Validate that we have required paths
-        if not self.theme_paths.get('roms'):
-            print("No ROM paths configured")
-            self.rom_folders = []
-        else:
-            self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
-
-        if not self.theme_paths.get('videos'):
-            print("No video paths configured")
-            self.video_folders = []
-        else:
-            self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
-            
-        if not self.theme_paths.get('logos'):
-            print("No logo paths configured")
-            self.logo_folders = []
-        else:
-            self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
-
-        # Resolve relative paths to absolute paths
-        #self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
-        #self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
-        #self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
-
-        # State management
-        self.themes_list = []
-        self.current_theme_index = 0
-        self.current_viewer = None
-        self.default_size = (640, 360)
-        self.thumbnail_cache = {}
-        self.current_frame = None
-        self.autoplay_after = None
-        self.last_resize_time = 0
-        self.resize_delay = 200  # ms
-        self.last_frame_time = 0
-        self.target_fps = 40
-        self.frame_interval = 1000 / self.target_fps  # ms
-        self.current_rom_folder_index = 0  # Track the current ROM folder index
-
-        self._setup_ui()
-        self.load_themes()
-        if self.themes_list:
-            self.show_initial_theme()
-
-    def show_status_message(self, message):
-        """Utility to display a status message in the theme label."""
-        self.theme_label.configure(text=message)
-        print(f"Status Update: {message}")
-
-    def cancel_autoplay(self):
-        """Cancel any scheduled autoplay"""
-        if self.autoplay_after:
-            try:
-                self.parent_tab.after_cancel(self.autoplay_after)
-                print("Cancelled scheduled autoplay")
-            except Exception as e:
-                print(f"Error cancelling autoplay: {e}")
-            finally:
-                self.autoplay_after = None
-
-    def schedule_autoplay(self):
-        """Schedule video autoplay after 2 seconds"""
-        self.cancel_autoplay()
-
-        if self.current_viewer and self.current_viewer.video_path:
-            print("Scheduling autoplay...")
-            self.autoplay_after = self.parent_tab.after(250, self.start_autoplay)
-
-    def start_autoplay(self):
-        """Start video playback immediately"""
-        print("Starting autoplay...")
-        self.config_manager.add_to_log("Starting autoplay...")
-        if self.current_viewer and self.current_viewer.video_path:
-            if not self.current_viewer.is_playing:
-                if self.current_viewer.start_video():
-                    print("Autoplay started successfully")
-                    self.play_video()
-                else:
-                    print("Failed to start autoplay")
-                    self.show_thumbnail()
-
-    def clear_logo_cache(self):
-        """Clear all cached logo images"""
-        for attr in list(vars(self)):
-            if attr.startswith('logo_cache_'):
-                delattr(self, attr)
-
-    def show_current_theme(self):
-        """Display the current theme and start video if available"""
-        print("Showing current theme...")
-        if not self.themes_list:
-            return
-
-        # Stop any playing video and cancel any pending autoplay
-        self.cancel_autoplay()
-        if self.current_viewer and self.current_viewer.is_playing:
-            self.current_viewer.stop_video()
-
-        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
-        display_name = os.path.splitext(theme_name)[0]
-        self.theme_label.configure(text=f"Theme: {display_name}")
-
-        # Create viewer with both video and image paths
-        self.current_viewer = ThemeViewer(video_path, png_path)
-
-        # Show thumbnail
-        self.show_thumbnail()
-
-        # Start video immediately if available
-        if video_path:
-            print("Starting video immediately...")
-            if self.current_viewer.start_video():
-                self.play_video()
-
-    def force_initial_display(self):
-        """Force the initial theme display"""
-        print("Forcing initial display...")
-        if self.themes_list:
-            self.parent_tab.update_idletasks()
-            self.show_initial_theme()
-
-    def show_initial_theme(self):
-        """Show the first theme and start video playback"""
-        if not self.themes_list:
-            return
-
-        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
-        display_name = os.path.splitext(theme_name)[0]
-        self.theme_label.configure(text=f"Theme: {display_name}")
-
-        # Initialize viewer
-        self.current_viewer = ThemeViewer(video_path, png_path)
-
-        # Force immediate thumbnail extraction and display
-        thumbnail = self.current_viewer.extract_thumbnail()
-        
-        # Ensure the canvas is properly sized before displaying anything
-        self.parent_tab.update_idletasks()
-        
-        if thumbnail is not None:
-            self._display_frame(thumbnail)
-            # Start video immediately if available
-            if video_path:
-                if self.current_viewer.start_video():
-                    self.play_video()
-        else:
-            # Force canvas update before showing message
-            self.video_canvas.update_idletasks()
-            self._show_no_video_message()
-
-    def schedule_autoplay(self):
-        """Schedule immediate video autoplay"""
-        self.cancel_autoplay()
-        if self.current_viewer and self.current_viewer.video_path:
-            print("Scheduling immediate autoplay...")
-            self.autoplay_after = self.parent_tab.after(100, self.start_autoplay)
-
-    def play_video(self):
-        """Play video with frame timing control"""
-        if not self.current_viewer or not self.current_viewer.is_playing:
-            return
-
-        try:
-            current_time = time.time() * 1000
-            if current_time - self.last_frame_time >= self.frame_interval:
-                frame = self.current_viewer.get_frame()
-                if frame is not None:
-                    self._display_frame(frame)
-                    self.last_frame_time = current_time
-                else:
-                    print("No frame available, restarting video")
-                    self.current_viewer.stop_video()
-                    self.current_viewer.start_video()
-                    return
-
-            # Schedule next frame
-            self.parent_tab.after(max(1, int(self.frame_interval)), self.play_video)
-
-        except Exception as e:
-            print(f"Error during video playback: {e}")
-            self.current_viewer.stop_video()
-            self.show_thumbnail()
-
-    def _show_no_video_message(self):
-        """Display message when no video or image is available"""
-        self.video_canvas.delete("all")
-        
-        # Get canvas size, use minimum dimensions if not yet properly sized
-        canvas_width = max(640, self.video_canvas.winfo_width())
-        canvas_height = max(360, self.video_canvas.winfo_height())
-        
-        # Create a dark gray rectangle as background
-        self.video_canvas.create_rectangle(
-            0, 0, canvas_width, canvas_height,
-            fill="#2B2B2B"
-        )
-        
-        # Calculate center position
-        center_x = canvas_width // 2
-        center_y = canvas_height // 2
-        
-        # Add "No video available" text
-        self.video_canvas.create_text(
-            center_x,
-            center_y,
-            text="No video available",
-            fill="white",
-            font=("Arial", 14),
-            anchor="center"
-        )
-        
-        # Get current theme name and build type for helper text
-        if self.themes_list and len(self.themes_list) > self.current_theme_index:
-            theme_name = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
-            _, _, _, rom_folder = self.themes_list[self.current_theme_index]
-            
-            # Determine build type from folder path
-            build_type = None
-            if 'zzzSettings' in rom_folder:
-                build_type = 'S'
-            elif 'zzzShutdown' in rom_folder:
-                build_type = 'U'
-            else:
-                build_type = 'D'
-            
-            # Get the correct video path from BUILD_TYPE_PATHS
-            if build_type in self.config_manager.BUILD_TYPE_PATHS:
-                video_path = self.config_manager.BUILD_TYPE_PATHS[build_type]['videos']
-                helper_text = f"Place {theme_name}.mp4 in {video_path}"
-            else:
-                helper_text = "Video folder not configured"
-        else:
-            helper_text = "Video folder not configured"
-
-        # Add helper text about video location
-        self.video_canvas.create_text(
-            center_x,
-            center_y + 30,
-            text=helper_text,
-            fill="#808080",
-            font=("Arial", 10),
-            anchor="center"
-        )
-
-    def load_themes(self):
-        """Load themes and their video/image paths with fallback handling"""
-        self.themes_list = []
-
-        # Look for fallback image first
-        fallback_path = None
-        potential_fallback_paths = [
-            os.path.join("assets", "images", "theme_fallback.png"),
-            os.path.join("assets", "images", "theme_fallback.jpg")
-        ]
-        
-        for path in potential_fallback_paths:
-            if os.path.isfile(path):
-                fallback_path = path
-                break
-
-        for rom_folder in self.rom_folders:
-            if not os.path.isdir(rom_folder):
-                print("Error", f"ROM folder not found: {rom_folder}")
-                continue
-
-            for filename in os.listdir(rom_folder):
-                if (filename.endswith(".bat") or filename.endswith(".sh")) and filename not in self.ignore_list:
-                    theme_name = os.path.splitext(filename)[0]
-                    video_path = None
-                    png_path = None
-
-                    # Look for video
-                    for video_folder in self.video_folders:
-                        video_path = os.path.join(video_folder, f"{theme_name}.mp4")
-                        if os.path.isfile(video_path):
-                            break
-                        video_path = None
-
-                    # Look for theme-specific PNG in video folders only
-                    if video_path is None:
-                        for video_folder in self.video_folders:
-                            png_path = os.path.join(video_folder, f"{theme_name}.png")
-                            if os.path.isfile(png_path):
-                                break
-                            png_path = None
-
-                    # Add to themes list with appropriate fallback
-                    if video_path and os.path.isfile(video_path):
-                        self.themes_list.append((filename, video_path, None, rom_folder))
-                    elif png_path and os.path.isfile(png_path):
-                        self.themes_list.append((filename, None, png_path, rom_folder))
-                    elif fallback_path:
-                        self.themes_list.append((filename, None, fallback_path, rom_folder))
-                    else:
-                        self.themes_list.append((filename, None, None, rom_folder))
-
-    def show_thumbnail(self):
-        """Display the current theme's thumbnail"""
-        if not self.current_viewer:
-            self._show_no_video_message()
-            return
-
-        # Use cached thumbnail if available
-        cache_key = self.current_viewer.video_path or self.current_viewer.image_path
-        if cache_key and cache_key in self.thumbnail_cache:
-            thumbnail = self.thumbnail_cache[cache_key].copy()
-        else:
-            thumbnail = self.current_viewer.extract_thumbnail()
-            if thumbnail is not None and cache_key:
-                self.thumbnail_cache[cache_key] = thumbnail.copy()
-
-        if thumbnail is not None:
-            self._display_frame(thumbnail)
-        else:
-            self._show_no_video_message()
-
-    def _display_frame(self, frame, force_resize=False):
-        """Display a frame or thumbnail on the canvas with proper aspect ratio"""
-        try:
-            current_time = time.time() * 1000
-
-            if not force_resize:
-                self.current_frame = frame.copy()
-
-            # Validate input frame
-            if frame is None or frame.size == 0:
-                raise ValueError("Invalid frame: frame is None or empty")
-
-            # Get current display size
-            canvas_width = self.video_canvas.winfo_width()
-            canvas_height = self.video_canvas.winfo_height()
-
-            # Ensure minimum display dimensions
-            canvas_width = max(1, canvas_width)
-            canvas_height = max(1, canvas_height)
-
-            if canvas_width < 1 or canvas_height < 1:
-                canvas_width, canvas_height = self.default_size
-
-            # Get original frame dimensions
-            frame_height, frame_width = frame.shape[:2]
-
-            # Validate frame dimensions
-            if frame_width <= 0 or frame_height <= 0:
-                raise ValueError(f"Invalid frame dimensions: {frame_width}x{frame_height}")
-
-            frame_aspect = frame_width / frame_height
-            canvas_aspect = canvas_width / canvas_height
-
-            # Calculate new dimensions maintaining aspect ratio
-            if canvas_aspect > frame_aspect:
-                new_height = max(1, canvas_height)
-                new_width = max(1, int(canvas_height * frame_aspect))
-            else:
-                new_width = max(1, canvas_width)
-                new_height = max(1, int(canvas_width / frame_aspect))
-
-            # Skip frame if falling behind
-            if not force_resize and self.current_viewer and self.current_viewer.is_playing:
-                if current_time - self.last_frame_time < self.frame_interval:
-                    return
-
-            # Validate final dimensions before resize
-            if new_width <= 0 or new_height <= 0:
-                raise ValueError(f"Invalid resize dimensions: {new_width}x{new_height}")
-
-            # Resize frame maintaining aspect ratio
-            if new_width * new_height > 1920 * 1080:
-                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
-            else:
-                frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
-
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            main_image = Image.fromarray(frame)
-
-            # Logo handling (rest of the logo code remains the same)
-            try:
-                current_theme = os.path.splitext(self.themes_list[self.current_theme_index][0])[0]
-                logo_path = None
-
-                for logo_folder in self.logo_folders:
-                    logo_path = os.path.join(logo_folder, f"{current_theme}.png")
-                    if os.path.exists(logo_path):
-                        break
-
-                if logo_path and os.path.exists(logo_path):
-                    # Create a cache key that includes the canvas dimensions
-                    cache_key = f'logo_cache_{current_theme}_{new_width}_{new_height}'
-
-                    if not hasattr(self, cache_key):
-                        # Load original logo
-                        logo_img = Image.open(logo_path)
-
-                        # Calculate logo size based on current frame dimensions
-                        logo_max_width = max(1, int(new_width * 0.15))  # 15% of frame width
-                        logo_max_height = max(1, int(new_height * 0.15))  # 15% of frame height
-
-                        # Get original logo dimensions
-                        logo_w, logo_h = logo_img.size
-
-                        # Calculate scale factor maintaining aspect ratio
-                        logo_scale = min(
-                            logo_max_width / logo_w,
-                            logo_max_height / logo_h
-                        )
-
-                        # Calculate new logo dimensions
-                        logo_new_size = (
-                            max(1, int(logo_w * logo_scale)),
-                            max(1, int(logo_h * logo_scale))
-                        )
-
-                        # Resize logo
-                        resized_logo = logo_img.resize(logo_new_size, Image.Resampling.LANCZOS)
-
-                        # Cache the resized logo
-                        setattr(self, cache_key, resized_logo)
-                    else:
-                        resized_logo = getattr(self, cache_key)
-
-                    # Calculate padding based on frame size
-                    padding = max(1, int(min(new_width, new_height) * 0.02))  # 2% of smaller dimension
-
-                    # Calculate position
-                    pos_x = new_width - resized_logo.size[0] - padding
-                    pos_y = new_height - resized_logo.size[1] - padding
-
-                    # Overlay logo
-                    if resized_logo.mode == 'RGBA':
-                        main_image.paste(resized_logo, (pos_x, pos_y), resized_logo)
-                    else:
-                        main_image.paste(resized_logo, (pos_x, pos_y))
-
-            except Exception as e:
-                print(f"Error loading or applying logo: {e}")
-
-            # Convert to PhotoImage
-            photo = ImageTk.PhotoImage(image=main_image)
-
-            # Clear canvas
-            self.video_canvas.delete("all")
-
-            # Calculate center position
-            x = canvas_width // 2
-            y = canvas_height // 2
-
-            # Create black background to fill canvas
-            self.video_canvas.configure(bg="#2B2B2B")
-
-            # Display image centered
-            self.video_canvas.create_image(
-                x, y,
-                image=photo,
-                anchor="center"
-            )
-            self.video_canvas.image = photo
-
-            self.last_frame_time = current_time
-
-        except Exception as e:
-            print(f"Error displaying frame: {e}")
-            self._show_no_video_message()
-
-    def _setup_ui(self):
-        # Main display frame
-        self.display_frame = ctk.CTkFrame(self.parent_tab)
-        self.display_frame.pack(expand=True, fill="both", padx=10, pady=10)
-
-        # Video canvas - Set minimum size
-        self.video_canvas = ctk.CTkCanvas(
-            self.display_frame,
-            bg="#2B2B2B",
-            bd=0,
-            highlightthickness=0,
-            width=640,  # Set minimum width
-            height=360  # Set minimum height
-        )
-        self.video_canvas.pack(expand=True, fill="both", padx=10, pady=10)
-        self.video_canvas.bind('<Configure>', self.handle_resize)
-
-        # Theme label - commented out but kept for future reference
-        """
-        self.theme_label = ctk.CTkLabel(self.display_frame, text="")
-        self.theme_label.pack(pady=(0, 5))
-        """
-        # We still need the theme_label attribute for other methods that use it
-        self.theme_label = ctk.CTkLabel(self.display_frame, text="")
-        self.theme_label.pack_forget()  # Create but don't display it
-
-        # Button frame
-        self.button_frame = ctk.CTkFrame(self.display_frame, fg_color="transparent")
-        self.button_frame.pack(fill="x", padx=5, pady=5)
-
-        # Configure button frame grid
-        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
-        should_show_jump = len(roms_list) > 1
-
-        # Define buttons
-        base_buttons = [
-            ("Previous", self.show_previous_theme),
-            ("Apply Theme", self.run_selected_script, "green", "darkgreen"),
-            ("Next", self.show_next_theme)
-        ]
-
-        if should_show_jump:
-            base_buttons.append(("Jump Category", self.jump_to_start))
-
-        # Configure button columns
-        num_buttons = len(base_buttons)
-        for i in range(num_buttons):
-            self.button_frame.grid_columnconfigure(i, weight=1)
-
-        # Create buttons
-        self.buttons = {}
-        for i, btn_data in enumerate(base_buttons):
-            if len(btn_data) == 2:
-                text, command = btn_data
-                fg_color = None
-                hover_color = None
-            else:
-                text, command, fg_color, hover_color = btn_data
-
-            btn = ctk.CTkButton(
-                self.button_frame,
-                text=text,
-                command=command,
-                fg_color=fg_color,
-                hover_color=hover_color,
-                border_width=0
-            )
-            btn.grid(row=0, column=i, sticky="ew", padx=5)
-            self.buttons[text] = btn
-
-        # Location frame (if needed)
-        self.location_frame = ctk.CTkFrame(self.display_frame)
-        self.location_frame.pack(fill="x", padx=10, pady=5)
-
-        self.update_location_frame_visibility()
-        
-    def _update_button_layout(self, event=None):
-        """Update button layout proportionally based on frame size"""
-        frame_width = self.button_frame.winfo_width()
-        if frame_width > 0:
-            # Calculate proportional padding (1% of frame width)
-            padding = int(frame_width * 0.01)
-            
-            # Update padding for all buttons
-            for btn in self.buttons.values():
-                btn.grid_configure(padx=padding, pady=padding)
-
-        # Maintain button visibility
-        roms_list = self.config_manager.get_theme_paths_multi().get('roms', [])
-        should_show_jump = len(roms_list) > 1
-        
-        if 'Jump Category' in self.buttons:
-            if should_show_jump:
-                self.buttons['Jump Category'].grid()
-                self.button_frame.grid_columnconfigure(3, weight=1)
-            else:
-                self.buttons['Jump Category'].grid_remove()
-                self.button_frame.grid_columnconfigure(3, weight=0)
-
-    def _adjust_button_weights(self, columns):
-        """Adjust the button frame column weights dynamically."""
-        for col in range(4):  # Reset all columns
-            self.button_frame.grid_columnconfigure(col, weight=0)
-        for col in range(columns):  # Adjust the active columns
-            self.button_frame.grid_columnconfigure(col, weight=1)
-
-    def update_location_frame_visibility(self):
-        """Update the visibility of the location frame based on config settings"""
-        show_location_controls = self.config_manager.config.getboolean('Settings', 'show_location_controls', fallback=False)
-        #print(f"show_location_controls value: {show_location_controls}")  # Debug
-
-        if show_location_controls:
-            self.location_frame.pack(fill="x", padx=10, pady=5)
-            #print("Location frame is visible")  # Debug
-        else:
-            self.location_frame.pack_forget()
-            #print("Location frame is hidden")  # Debug
-
-    def show_custom_paths_dialog(self):
-        """Show dialog for configuring custom paths"""
-        dialog = ctk.CTkToplevel(self.parent_tab)
-        dialog.title("Configure Custom Paths")
-        dialog.geometry("600x200")
-        dialog.transient(self.parent_tab)
-        dialog.grab_set()
-
-        # Create entry fields for each path
-        paths = {
-            'ROMs Path': 'custom_roms_path',
-            'Videos Path': 'custom_videos_path',
-            'Logos Path': 'custom_logos_path'
-        }
-
-        entries = {}
-
-        for i, (label_text, config_key) in enumerate(paths.items()):
-            frame = ctk.CTkFrame(dialog)
-            frame.pack(fill="x", padx=10, pady=5)
-
-            ctk.CTkLabel(frame, text=label_text).pack(side="left", padx=5)
-
-            entry = ctk.CTkEntry(frame, width=400)
-            entry.pack(side="left", padx=5, fill="x", expand=True)
-            entry.insert(0, self.config_manager.config.get('Settings', config_key, fallback=''))
-
-            entries[config_key] = entry
-
-            def browse_path(entry_widget):
-                path = filedialog.askdirectory()
-                if path:
-                    entry_widget.delete(0, 'end')
-                    entry_widget.insert(0, path)
-
-            browse_btn = ctk.CTkButton(
-                frame,
-                text="Browse",
-                command=lambda e=entry: browse_path(e)
-            )
-            browse_btn.pack(side="right", padx=5)
-
-        def save_paths():
-            self.config_manager.update_custom_paths(
-                roms_path=entries['custom_roms_path'].get(),
-                videos_path=entries['custom_videos_path'].get(),
-                logos_path=entries['custom_logos_path'].get()
-            )
-            if self.location_var.get() == 'custom':
-                self.change_location('custom')
-            dialog.destroy()
-
-        # Save button
-        ctk.CTkButton(
-            dialog,
-            text="Save",
-            command=save_paths
-        ).pack(pady=10)
-
-    def change_location(self, location):
-        """Handle location change"""
-        # Update configuration
-        self.config_manager.update_theme_location(location)
-
-        # Update paths
-        self.theme_paths = self.config_manager.get_theme_paths_multi()
-        self.rom_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['roms']]
-        self.video_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['videos']]
-        self.logo_folders = [os.path.join(self.base_path, path) for path in self.theme_paths['logos']]
-
-        # Clear caches
-        self.thumbnail_cache.clear()
-        self.clear_logo_cache()
-
-        # Reload themes and refresh display
-        self.load_themes()
-        if self.themes_list:
-            self.current_theme_index = 0
-            self.show_current_theme()
-
-        # Update status
-        self.show_status_message(f"Changed theme location to: {location}")
-
-    def handle_resize(self, event=None):
-        """Handle window resize events"""
-        if hasattr(self, 'current_frame') and self.current_frame is not None:
-            self._display_frame(self.current_frame, force_resize=True)
-        elif self.current_viewer is None or (self.current_viewer.video_path is None and self.current_viewer.image_path is None):
-            # If no content to display, refresh the no video message
-            self._show_no_video_message()
-
-    def toggle_video(self):
-        """Toggle video playback"""
-        if not self.current_viewer:
-            return
-
-        if not self.current_viewer.is_playing:
-            # Start video
-            success = self.current_viewer.start_video()
-            if success:
-                self.play_button.configure(text="Stop Video")
-                self.play_video()
-            else:
-                self.show_thumbnail()
-        else:
-            # Stop video and show thumbnail
-            self.current_viewer.stop_video()
-            self.play_button.configure(text="Play Video")
-            self.show_thumbnail()
-
-    def initialize_first_theme(self):
-        """Initialize and display the first theme"""
-        print("Initializing first theme...")
-        if not self.themes_list:
-            print("No themes available")
-            return
-
-        theme_name, video_path, png_path, rom_folder = self.themes_list[self.current_theme_index]
-        display_name = os.path.splitext(theme_name)[0]
-        self.theme_label.configure(text=f"Theme: {display_name}")
-
-        # Initialize viewer with both video and image paths
-        self.current_viewer = ThemeViewer(video_path, png_path)
-        self.play_button.configure(state="normal" if video_path else "disabled")
-
-        # Force immediate thumbnail display
-        print("Forcing thumbnail display...")
-        thumbnail = self.current_viewer.extract_thumbnail()
-        if thumbnail is not None:
-            cache_key = video_path or png_path
-            if cache_key:
-                self.thumbnail_cache[cache_key] = thumbnail
-
-            # Force canvas update and display
-            self.parent_tab.update_idletasks()
-            self._display_frame(thumbnail)
-
-            # Schedule autoplay if video exists
-            if video_path:
-                print("Scheduling initial autoplay...")
-                self.schedule_autoplay()
-        else:
-            print("No thumbnail available")
-            self._show_no_video_message()
-
-    def show_next_theme(self):
-        """Navigate to next theme"""
-        if self.themes_list:
-            self.current_theme_index = (self.current_theme_index + 1) % len(self.themes_list)
-            self.show_current_theme()
-
-    def show_previous_theme(self):
-        """Navigate to previous theme"""
-        if self.themes_list:
-            self.current_theme_index = (self.current_theme_index - 1) % len(self.themes_list)
-            self.show_current_theme()
-
-    def run_selected_script(self):
-        """Execute the selected theme script."""
-        if not self.themes_list:
-            print("No themes found in themes_list. Exiting function.")
-            self.show_status_message("Error: No themes available!")
-            return
-
-        # Get the script filename (without extension)
-        script_filename, _, _, _ = self.themes_list[self.current_theme_index]
-        script_name_without_extension = os.path.splitext(script_filename)[0]  # Remove extension
-        script_path = os.path.join(self.rom_folders[0], script_filename)
-        
-        self.config_manager.add_to_log(f"Attempting to run theme script: {script_name_without_extension}")
-
-        # Print the selected theme information for debugging
-        print(f"Selected script: {script_filename}")
-        print(f"Full script path: {script_path}")
-        self.config_manager.add_to_log(f"Executing script at path: {script_path}")
-
-        # Check if the script file exists
-        print(f"Checking if script exists at path: {script_path}")
-        if not os.path.isfile(script_path):
-            print(f"Script not found: {script_path}")  # Log the error instead of showing it
-            self.show_status_message(f"Error: Script '{script_name_without_extension}' not found.")
-            return
-
-        try:
-            # Show status message that the script is being executed
-            self.show_status_message(f"Applying theme '{script_name_without_extension}'...")
-
-            # Debugging information
-            print(f"Executing script: {script_path}")
-            print(f"Working directory: {os.path.dirname(script_path)}")
-
-            # Set up subprocess startup information to hide the command window
-            startupinfo = None
-            if hasattr(subprocess, 'STARTUPINFO'):
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-                print(f"StartupInfo flags: {startupinfo.dwFlags}")
-
-            # Run the batch file
-            print("Command execution details:", [script_path])
-            process = subprocess.run(
-                [script_path],
-                check=False,  # Do not raise an error for non-zero exit codes
-                shell=True,
-                text=True,
-                capture_output=True,
-                cwd=os.path.dirname(script_path),  # Set the working directory to the script's directory
-                startupinfo=startupinfo
-            )
-
-            # Print process outputs for debugging
-            print("Process completed with return code:", process.returncode)
-            print("Standard output from script:", process.stdout)
-
-            if process.returncode != 0:
-                # Log non-critical errors for debugging
-                print(f"Non-critical script error (stderr): {process.stderr}")
-
-            # Show success status to user regardless of return code
-            self.show_status_message(f"Theme: {script_name_without_extension} applied successfully!")
-
-        except Exception as e:
-            # Catch any unexpected critical errors
-            print(f"Critical error while executing script: {e}")
-            self.show_status_message(f"Error: Could not apply theme '{script_name_without_extension}'.")
-            self.config_manager.add_to_log(f"Error applying theme '{script_name_without_extension}': {str(e)}", "ERROR")
-
-    def jump_to_start(self):
-        """Jump to the start of each ROM folder for quick navigation"""
-        print("Jumping to the start of each ROM folder...")
-        self.cycle_rom_folders()
-
-    def cycle_rom_folders(self):
-        """Cycle through the ROM folders and display the first theme in each folder"""
-        print("Cycling through ROM folders...")
-        if not self.rom_folders:
-            print("No ROM folders available")
-            return
-
-        # Move to the next ROM folder
-        self.current_rom_folder_index = (self.current_rom_folder_index + 1) % len(self.rom_folders)
-        current_rom_folder = self.rom_folders[self.current_rom_folder_index]
-        print(f"Moved to next ROM folder: {current_rom_folder}")
-
-        # Find the first theme in the current ROM folder
-        first_theme_found = False
-        for theme_index, (theme_name, video_path, png_path, rom_folder) in enumerate(self.themes_list):
-            if rom_folder == current_rom_folder:
-                self.current_theme_index = theme_index
-                self.show_current_theme()
-                first_theme_found = True
-                break
-
-        if not first_theme_found:
-            print(f"No themes found in folder: {current_rom_folder}")
-
-@dataclass
-class ScriptMetadata:
-    name: str
-    path: Path
-    size: int
-    modified: float
-    last_accessed: float
-    
-@dataclass
-class VirtualScrollState:
-    start_index: int = 0
-    visible_items: int = 20
-    total_items: int = 0
-
-"""
-3. Add this new MetadataCache class:
-"""
-class MetadataCache:
-    def __init__(self, cache_duration: timedelta = timedelta(minutes=5)):
-        self._cache: Dict[str, ScriptMetadata] = {}
-        self._cache_duration = cache_duration
-        self._last_refresh = datetime.now()
-        self._lock = threading.Lock()
-
-    def get(self, script_name: str) -> Optional[ScriptMetadata]:
-        with self._lock:
-            return self._cache.get(script_name)
-
-    def set(self, script_name: str, metadata: ScriptMetadata):
-        with self._lock:
-            self._cache[script_name] = metadata
-
-    def clear(self):
-        with self._lock:
-            self._cache.clear()
-            self._last_refresh = datetime.now()
-
-    def is_stale(self) -> bool:
-        return datetime.now() - self._last_refresh > self._cache_duration
-
-"""
-4. Add this BackgroundWorker class:
-"""
-class BackgroundWorker:
-    def __init__(self, max_workers: int = 4):
-        self.executor = ThreadPoolExecutor(max_workers=max_workers)
-        self.task_queue = queue.Queue()
-        self.running = True
-        self.worker_thread = threading.Thread(target=self._process_queue, daemon=True)
-        self.worker_thread.start()
-
-    def _process_queue(self):
-        while self.running:
-            try:
-                task, callback = self.task_queue.get(timeout=1)
-                future = self.executor.submit(task)
-                future.add_done_callback(callback)
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"Worker error: {e}")
-
-    def submit_task(self, task, callback):
-        self.task_queue.put((task, callback))
-
-    def shutdown(self):
-        self.running = False
-        self.executor.shutdown(wait=True)
-
-class AdvancedConfigs:
-    def __init__(self, parent_tab):
-        # First, set the parent_tab
-        self.parent_tab = parent_tab
-        self.favorites_display_name = "Starred"
-        
-        # Get base path once from ConfigManager since it's already using PathManager
-        self.config_manager = ConfigManager()
-        self.base_path = self.config_manager.base_path
-        print(f"Using base path: {self.base_path}")  # Debug print
-        
-        # Initialize support classes
-        self.background_worker = BackgroundWorker()
-        self.virtual_scroll_state = VirtualScrollState()
-        
-        # Add loading overlay
-        self.loading_overlay = self._create_loading_overlay()
-
-        # Track which tabs exist
-        self._tab_inited = {}
-        self._categories = {}
-        self.all_scripts_map = {}
-        self._themes_tabview = None
-
-        # Base folders that are always included
-        self.base_config_folders = [
-            "- Advanced Configs", 
-            "- Themes", 
-            "- Themes 2nd Screen", 
-            "- Bezels Glass and Scanlines",
-            "- Mods",
-            "- Themes Arcade", 
-            "- Themes Console", 
-            "- Themes Handheld", 
-            "- Themes Home",
-        ]
-
-        # Get additional folders from config - ensure it's a list
-        additional_folders = self.config_manager.get_setting('Settings', 'additional_theme_folders', [])
-        if isinstance(additional_folders, str):
-            additional_folders = [additional_folders] if additional_folders else []
-        
-        # Combine base and additional folders
-        all_folders = self.base_config_folders + additional_folders
-        
-        # Convert all folders to Path objects
-        self.config_folders_all = [Path(self.base_path, folder) for folder in all_folders]
-
-        # Set up path for favorites
-        self.favorites_path = Path(self.base_path) / "autochanger" / "favorites.json"
-        # Base sub-tabs that are always included
-        self.base_sub_tabs = [
-            ("- Themes", "Themes"),
-            ("- Themes Arcade", "Themes"),
-            ("- Themes Console", "Themes Console"),
-            ("- Themes Handheld", "Themes Handheld"),
-            ("- Themes Home", "Themes Home"),
-            ("- Themes 2nd Screen", "2nd Screen")
-        ]
-
-        # Get additional sub-tabs from config - ensure it's a list
-        additional_sub_tabs_raw = self.config_manager.get_setting('Settings', 'additional_sub_tabs', [])
-        if isinstance(additional_sub_tabs_raw, str):
-            additional_sub_tabs_raw = [additional_sub_tabs_raw] if additional_sub_tabs_raw else []
-        
-        additional_sub_tabs = []
-        
-        # Process the additional sub-tabs
-        for sub_tab in additional_sub_tabs_raw:
-            try:
-                folder, tab_name = sub_tab.split('|')
-                additional_sub_tabs.append((folder.strip(), tab_name.strip()))
-            except ValueError:
-                print(f"Warning: Invalid sub-tab format: {sub_tab}. Expected format: 'FolderName|TabName'")
-
-        # Combine base and additional sub-tabs
-        self.potential_sub_tabs = self.base_sub_tabs + additional_sub_tabs
-        
-        # Filter existing folders
-        self.config_folders = [folder for folder in self.config_folders_all if folder.is_dir()]
-        
-        # Initialize remaining components
-        self._init_tab_configs()
-        self.tab_radio_vars = {}
-        self.radio_button_script_mapping = {}
-        self.radio_buttons = {}
-        self.favorite_buttons = {}
-        self.is_running_all = False
-        
-        # Load favorites and init GUI
-        self.favorites = self._load_favorites()
-        self._init_gui_elements()
-
-    def _create_loading_overlay(self):
-        overlay = ctk.CTkFrame(self.parent_tab)
-        spinner = ctk.CTkProgressBar(overlay)
-        spinner.pack(pady=20)
-        spinner.configure(mode="indeterminate")
-        label = ctk.CTkLabel(overlay, text="Loading...")
-        label.pack(pady=10)
-        return overlay
-
-    def show_loading(self, show: bool = True):
-        if show:
-            self.loading_overlay.place(relx=0.5, rely=0.5, anchor="center")
-            self.loading_overlay.lift()
-            for widget in self.loading_overlay.winfo_children():
-                if isinstance(widget, ctk.CTkProgressBar):
-                    widget.start()
-        else:
-            for widget in self.loading_overlay.winfo_children():
-                if isinstance(widget, ctk.CTkProgressBar):
-                    widget.stop()
-            self.loading_overlay.place_forget()
-
-    def _init_tab_configs(self):
-        """Initialize tab configurations with optimized data structures"""
-        self.tab_keywords = {
-            "Favorites": frozenset(),
-            "Themes": frozenset(),
-            "Bezels & Effects": frozenset(["Bezel", "SCANLINE", "GLASS EFFECTS"]),
-            "Overlays": frozenset(["OVERLAY"]),
-            "InigoBeats": frozenset(["MUSIC"]),
-            "Attract": frozenset(["Attract", "Scroll"]),
-            "Monitor": frozenset(["Monitor"]),
-            "Splash": frozenset(["Splash"]),
-            "Front End": frozenset(["FRONT END"]),
-            "Other": frozenset()
-        }
-
-        self.folder_to_tab_mapping = {
-            "- Themes": "Themes",
-            "- Themes Arcade": "Themes",   
-            "- Bezels Glass and Scanlines": "Bezels & Effects"
-        }
-
-    def _init_gui_elements(self):
-        """Initialize GUI elements with fresh scan"""
-        self.status_label = ctk.CTkLabel(
-            self.parent_tab,
-            text="",
-            text_color="green",
-            bg_color="transparent",
-            corner_radius=8,
-            font=("", 14, "bold")
-        )
-        
-        self.loading_label = ctk.CTkLabel(
-            self.parent_tab,
-            text="Processing...",
-            text_color="gray70"
-        )
-        
-        self.progress_frame = ctk.CTkFrame(self.parent_tab)
-        self.progress_bar = ctk.CTkProgressBar(self.progress_frame)
-        self.progress_label = ctk.CTkLabel(self.progress_frame, text="")
-        self.progress_bar.set(0)
-
-        self.tabview = ctk.CTkTabview(self.parent_tab)
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
-        # Do initial script scan
-        self._async_populate_tabs()
-
-    @lru_cache(maxsize=250)  # was 128; 250 is the new max size
-    def _get_script_path(self, script_name: str) -> Optional[Path]:
-        """Cached function to find script path"""
-        for folder in self.config_folders:
-            script_path = folder / script_name
-            if script_path.is_file():
-                return script_path
-        return None
-
-    def _load_favorites(self) -> List[str]:
-        """Load favorites with error handling"""
-        try:
-            return json.loads(self.favorites_path.read_text()) if self.favorites_path.exists() else []
-        except (json.JSONDecodeError, OSError):
-            return []
-
-    def _save_favorites(self):
-        """Save favorites with error handling"""
-        try:
-            self.favorites_path.parent.mkdir(parents=True, exist_ok=True)
-            self.favorites_path.write_text(json.dumps(self.favorites))
-        except OSError:
-            pass  # Handle saving error gracefully
-
-    async def _scan_folder(self, folder: Path) -> Dict[int, str]:
-        """Modified scan folder with better debug output"""
-        if not folder.is_dir():
-            print(f"Not a directory: {folder}")
-            return {}
-
-        print(f"\nScanning folder: {folder}")
-        scripts = {}
-        script_count = 0
-
-        # Get script extensions based on platform
-        if sys.platform.startswith('win'):
-            script_extensions = ('.bat', '.cmd')
-        else:
-            script_extensions = ('.sh',)
-
-        try:
-            files = list(folder.iterdir())
-            print(f"Found {len(files)} total files")
-        except Exception as e:
-            print(f"Error listing directory {folder}: {e}")
-            return {}
-
-        async def process_file(file_path):
-            nonlocal script_count
-            try:
-                if file_path.is_file() and file_path.suffix.lower() in script_extensions:
-                    script_count += 1
-                    print(f"Found script: {file_path.name}")
-                    return script_count, file_path.name
-            except OSError as e:
-                print(f"Error processing file {file_path}: {e}")
-            return None
-
-        tasks = [process_file(f) for f in files]
-        results = await asyncio.gather(*tasks)
-        
-        scripts = {idx: name for result in results if result for idx, name in [result]}
-        print(f"Found {len(scripts)} scripts in {folder}")
-        return scripts
-
-    async def _categorize_scripts_async(self) -> Dict[str, Any]:
-        """Categorize scripts asynchronously with sorting"""
-        tasks = [self._scan_folder(folder) for folder in self.config_folders]
-        folder_results = await asyncio.gather(*tasks)
-
-        # Create categories dictionary
-        script_categories = {tab: {} for tab in self.tab_keywords}
-
-        # Categorize and sort scripts from folder scan results
-        for folder_scripts in folder_results:
-            # Convert values to list and sort alphabetically
-            sorted_scripts = sorted(folder_scripts.values(), key=lambda x: x.lower())
-            # Reassign indices after sorting
-            for idx, script_name in enumerate(sorted_scripts, 1):
-                self._categorize_script(script_name, script_categories)
-
-        # Sort themes separately
-        themes_data = {}
-        for folder, sub_tab_name in self.potential_sub_tabs:
-            folder_path = Path(self.base_path, folder)
-            if not folder_path.is_dir():
-                continue
-
-            sub_tab_scripts_dict = await self._scan_folder(folder_path)
-            if sub_tab_scripts_dict:
-                # Sort scripts alphabetically
-                sorted_scripts = sorted(sub_tab_scripts_dict.values(), key=lambda x: x.lower())
-                # Create new dictionary with sorted scripts
-                themes_data[sub_tab_name] = {i+1: script for i, script in enumerate(sorted_scripts)}
-
-        script_categories["Themes"] = themes_data
-        return script_categories
-
-
-    def _categorize_script(self, script_name: str, categories: Dict[str, Dict[int, str]]):
-        """Categorize a single script"""
-        for tab, keywords in self.tab_keywords.items():
-            if any(keyword.lower() in script_name.lower() for keyword in keywords):
-                idx = len(categories[tab]) + 1
-                categories[tab][idx] = script_name
-                return
-        
-        # Add to Other if no category matched
-        idx = len(categories["Other"]) + 1
-        categories["Other"][idx] = script_name
-
-    def _async_populate_tabs(self):
-        """Kick off the async scanning and create tabs."""
-        async def populate():
-            try:
-                self.show_loading(True)
-                script_categories = await self._categorize_scripts_async()
-                self._categories = script_categories
-                self.parent_tab.after(0, lambda: self._create_tabs(script_categories))
-            finally:
-                self.show_loading(False)
-
-        asyncio.run(populate())
-
-    def _clear_current_tab_content(self, tab_name):
-        """Clear the existing content of the current tab"""
-        tab_frame = self.tabview.tab(tab_name)
-        for widget in tab_frame.winfo_children():
-            widget.destroy()
-
-    def _clear_themes_tab_content(self):
-        """Clear the existing content of the Themes tab and its sub-tabs"""
-        themes_tab = self.tabview.tab("Themes")
-        for widget in themes_tab.winfo_children():
-            widget.destroy()
-        self._themes_tabview = None
-
-    def _create_tabs(self, script_categories, restore_tab=None):
-        """Create tabs and optionally restore the previously selected tab"""
-
-        # 1) Favorites Tab
-        if "Favorites" not in self._tab_inited:
-            self.tabview.add(self.favorites_display_name)  # Changed from "Favorites"
-            self._tab_inited["Favorites"] = False
-
-        # Build Favorites immediately
-        self.update_favorites_tab()
-        self._tab_inited["Favorites"] = True
-
-        # 2) Themes Tab
-        if any(Path(self.base_path, folder).is_dir() for folder, _ in self.potential_sub_tabs):
-            if "Themes" not in self._tab_inited:
-                self.tabview.add("Themes")
-                self._tab_inited["Themes"] = False
-
-        # 3) Other script categories
-        for tab_name, scripts in script_categories.items():
-            if not scripts or tab_name in ("Favorites", "Themes"):
-                continue
-
-            if tab_name not in self._tab_inited:
-                self.tabview.add(tab_name)
-                self._tab_inited[tab_name] = False
-
-        # 4) Bind to detect tab changes
-        self.tabview.configure(command=self._on_tab_changed)
-
-        # 5) Restore previous tab or set initial tab
-        if restore_tab and restore_tab in self._tab_inited:
-            self.tabview.set(restore_tab)
-            if not self._tab_inited[restore_tab]:
-                self._lazy_init_tab(restore_tab)
-        else:
-            self.set_initial_tab()
-
-
-
-    def _clear_tabs(self):
-        """Destroy any existing tabs in the Tabview for rebuild"""
-        # Store existing tabs that aren't Favorites
-        existing_tabs = [tab for tab in self.tabview._tab_dict.keys() 
-                        if tab != "Favorites"]
-        
-        # Remove non-Favorites tabs
-        for tab_name in existing_tabs:
-            self.tabview.delete(tab_name)
-            if tab_name in self._tab_inited:
-                del self._tab_inited[tab_name]
-
-        # Reset the Themes sub-tabview
-        self._themes_tabview = None
-
-    def _on_tab_changed(self):
-        # Get the name of the currently selected tab from CTkTabview
-        current_tab_name = self.tabview.get()
-        
-        # Check if it’s already initialized in your dictionary
-        if not self._tab_inited.get(current_tab_name, True):
-            self._lazy_init_tab(current_tab_name)
-            self._tab_inited[current_tab_name] = True
-
-    def _lazy_init_tab(self, tab_name: str):
-        """Actually build out the tab's content once, on first click."""
-        if tab_name == "Themes":
-            script_dict = self._categories.get("Themes", {})
-            self._create_themes_tab(script_dict)
-        elif tab_name == "Favorites":
-            # Already built in _create_tabs() if you call update_favorites_tab()
-            pass
-        else:
-            script_dict = self._categories.get(tab_name, {})
-            self._create_regular_tab(tab_name, script_dict)
-
-    def _create_themes_tab(self, scripts: dict[int, str]):
-        """Build the 'Themes' tab content with sub-tabs"""
-        themes_tab = self.tabview.tab("Themes")
-
-        if self._themes_tabview is not None:
-            return
-
-        self._themes_tabview = ctk.CTkTabview(themes_tab)
-        self._themes_tabview.pack(fill="both", expand=True, padx=10, pady=10)
-
-        themes_data = self._categories.get("Themes", {})
-        if themes_data and isinstance(themes_data, dict):
-            for sub_tab_name, sub_tab_scripts_dict in themes_data.items():
-                script_list = list(sub_tab_scripts_dict.values())
-                if script_list:
-                    self._create_theme_sub_tab(self._themes_tabview, sub_tab_name, script_list)
-        else:
-            created_sub_tabs = set()
-            for folder, sub_tab_name in self.potential_sub_tabs:
-                folder_path = Path(self.base_path) / folder
-                if not folder_path.is_dir():
-                    continue
-
-                # Get scripts with platform-appropriate extensions
-                if sys.platform.startswith('win'):
-                    script_list = [
-                        f.name for f in folder_path.iterdir()
-                        if f.is_file() and f.suffix.lower() in ('.bat', '.cmd')
-                    ]
-                else:
-                    script_list = [
-                        f.name for f in folder_path.iterdir()
-                        if f.is_file() and f.suffix.lower() == '.sh'
-                    ]
-
-                if script_list and sub_tab_name not in created_sub_tabs:
-                    self._create_theme_sub_tab(self._themes_tabview, sub_tab_name, script_list)
-                    created_sub_tabs.add(sub_tab_name)
-
-
-
-    def _create_theme_sub_tab(self, themes_tabview, sub_tab_name: str, scripts: list[str]):
-        """Create a single theme sub-tab with radio buttons, etc."""
-        # Validate scripts list first
-        if not scripts:
-            print(f"Warning: No scripts found for sub-tab {sub_tab_name}")
-            return
-
-        themes_tabview.add(sub_tab_name)
-        self.tab_radio_vars[sub_tab_name] = tk.IntVar(value=0)
-
-        sub_tab_scripts = {i+1: s for i, s in enumerate(scripts)}
-        self.radio_button_script_mapping[sub_tab_name] = sub_tab_scripts
-        self.radio_buttons[sub_tab_name] = []
-        self.favorite_buttons[sub_tab_name] = {}
-
-        scrollable_frame = ctk.CTkScrollableFrame(
-            themes_tabview.tab(sub_tab_name), width=400, height=400
-        )
-        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self._create_script_buttons(scrollable_frame, sub_tab_name, sub_tab_scripts)
-
-    def _create_regular_tab(self, tab_name: str, scripts: dict[int, str]):
-        """Create a normal tab with alphabetically sorted scripts"""
-        tab_frame = self.tabview.tab(tab_name)
-
-        self.tab_radio_vars[tab_name] = tk.IntVar(value=0)
-        
-        # Sort scripts by name
-        sorted_scripts = sorted(scripts.values(), key=lambda x: x.lower())
-        # Create new dictionary with sorted scripts
-        sorted_scripts_dict = {i+1: script for i, script in enumerate(sorted_scripts, 1)}
-        
-        self.radio_button_script_mapping[tab_name] = sorted_scripts_dict
-        self.radio_buttons[tab_name] = []
-        self.favorite_buttons[tab_name] = {}
-
-        scrollable_frame = ctk.CTkScrollableFrame(tab_frame, width=400, height=400)
-        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self._create_script_buttons(scrollable_frame, tab_name, sorted_scripts_dict)
-
-    def _create_script_buttons(self, parent_frame, tab_name: str, scripts: Dict[int, str]):
-        """Create script buttons with virtual scrolling"""
-        for widget in parent_frame.winfo_children():
-            widget.destroy()
-
-        start = self.virtual_scroll_state.start_index
-        end = start + self.virtual_scroll_state.visible_items
-
-        visible_scripts = {
-            k: v for k, v in scripts.items()
-            if isinstance(k, int) and start <= k <= end
-        }
-
-        for i, script_name in visible_scripts.items():
-            self._create_single_script_buttons(parent_frame, tab_name, i, script_name)
-
-        # Store tab_name on the frame and bind scroll
-        parent_frame.tab_name = tab_name  # Add this line
-        if not hasattr(parent_frame, '_scroll_bound'):
-            parent_frame.bind_all("<MouseWheel>",
-                                lambda e: self._handle_scroll(e, parent_frame, scripts))
-            parent_frame._scroll_bound = True
-
-    def _create_single_script_buttons(self, parent_frame, tab_name: str, index: int, script_name: str):
-        frame = ctk.CTkFrame(parent_frame)
-        frame.pack(fill="x", padx=5, pady=2)
-
-        script_label = Path(script_name).stem
-        script_exists = bool(self._get_script_path(script_name))
-
-        radio_button = ctk.CTkRadioButton(
-            frame,
-            text=script_label,
-            variable=self.tab_radio_vars[tab_name],
-            value=index,
-            command=lambda t=tab_name, v=index: self.on_radio_select(t, v),
-            state="normal" if script_exists else "disabled",
-            text_color="gray50" if not script_exists else None
-        )
-        radio_button.pack(side="left", padx=5)
-
-        if not script_exists:
-            warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
-            warning_frame.pack(side="left", padx=2)
-            warning_label = ctk.CTkLabel(
-                warning_frame,
-                text="⚠️ Script not found",
-                text_color="orange"
-            )
-            warning_label.pack(side="left")
-
-        if tab_name == self.favorites_display_name:
-            remove_button = ctk.CTkButton(
-                frame,
-                text="Remove from Starred",
-                width=120,
-                command=lambda s=script_name: self.remove_favorite(s, radio_button)
-            )
-            remove_button.pack(side="right", padx=5)
-        else:
-            is_favorite = script_name in self.favorites
-            star_text = "★ Starred" if is_favorite else "☆ Add to Starred"
-            
-            favorite_button = ctk.CTkButton(
-                frame,
-                text=star_text,
-                width=100,
-                command=lambda s=script_name: self.toggle_favorite(tab_name, s)
-            )
-            favorite_button.pack(side="right", padx=5)
-
-            # Store button reference
-            if tab_name not in self.favorite_buttons:
-                self.favorite_buttons[tab_name] = {}
-            self.favorite_buttons[tab_name][script_name] = favorite_button
-
-    def _handle_scroll(self, event, frame, scripts):
-        """Handle scrolling for virtual list"""
-        if not scripts:
-            return
-
-        # Calculate new start index
-        delta = -1 if event.delta > 0 else 1
-        new_start = max(0, min(
-            self.virtual_scroll_state.start_index + delta,
-            len(scripts) - self.virtual_scroll_state.visible_items
-        ))
-
-        # Update if changed
-        if new_start != self.virtual_scroll_state.start_index:
-            self.virtual_scroll_state.start_index = new_start
-            self._create_script_buttons(frame, frame.tab_name, scripts)
-
-
-    def cleanup(self):
-        """Enhanced cleanup method"""
-        try:
-            # Stop background worker
-            if hasattr(self, 'background_worker'):
-                self.background_worker.shutdown()
-            
-            # Remove scroll bindings
-            if hasattr(self, 'tabview'):
-                for frame in self.tabview.winfo_children():
-                    if hasattr(frame, '_scroll_bound'):
-                        frame.unbind_all("<MouseWheel>")
-
-            # Clear other resources
-            if hasattr(self, '_categories'):
-                self._categories.clear()
-            if hasattr(self, '_tab_inited'):
-                self._tab_inited.clear()
-
-            # Clear GUI elements
-            if hasattr(self, 'loading_overlay'):
-                self.loading_overlay.destroy()
-
-            # Clear any remaining widgets
-            for widget in self.parent_tab.winfo_children():
-                widget.destroy()
-
-        except Exception as e:
-            print(f"Error during cleanup: {e}")
-
-    def run_script_threaded(self, script_path: Path):
-        """Modified to use background worker"""
-        def script_task():
-            try:
-                startupinfo = subprocess.STARTUPINFO()
-                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                startupinfo.wShowWindow = subprocess.SW_HIDE
-
-                process = subprocess.Popen(
-                    ["cmd.exe", "/c", str(script_path)],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=script_path.parent,
-                    startupinfo=startupinfo
-                )
-                stdout, stderr = process.communicate()
-                return stdout, stderr, process.returncode
-            except Exception as e:
-                return None, str(e), -1
-
-        def script_complete(future):
-            try:
-                stdout, stderr, returncode = future.result()
-                if returncode != 0:
-                    self.show_status(f"Script error: {stderr}", color="red")
-                else:
-                    self.show_status("Script completed successfully")
-            finally:
-                self.set_gui_state(True)
-
-        self.set_gui_state(False)
-        self.background_worker.submit_task(script_task, script_complete)
-
-    def update_favorites_tab(self):
-        """Update favorites tab with optimized GUI updates"""
-        tab = self.tabview.tab(self.favorites_display_name)  # Changed from "Favorites"
-        for widget in tab.winfo_children():
-            widget.destroy()
-
-        scrollable_frame = ctk.CTkScrollableFrame(tab, width=400, height=400)
-        scrollable_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        if self.favorites:
-            run_all_frame = ctk.CTkFrame(scrollable_frame)
-            run_all_frame.pack(fill="x", padx=5, pady=5)
-            
-            run_all_button = ctk.CTkButton(
-                run_all_frame,
-                text="Run All Favorites Sequentially",
-                command=self.run_all_favorites
-            )
-            run_all_button.pack(fill="x", padx=5, pady=5)
-
-        if not self.favorites:
-            ctk.CTkLabel(scrollable_frame, text="No favorites added yet").pack(pady=10)
-            return
-
-        self.tab_radio_vars["Favorites"] = tk.IntVar(value=0)
-        self.radio_buttons["Favorites"] = []
-        self.radio_button_script_mapping["Favorites"] = {}
-
-        for i, script_name in enumerate(self.favorites, 1):
-            script_label = Path(script_name).stem
-            script_exists = bool(self._get_script_path(script_name))
-            
-            frame = ctk.CTkFrame(scrollable_frame)
-            frame.pack(fill="x", padx=5, pady=2)
-
-            radio_button = ctk.CTkRadioButton(
-                frame,
-                text=script_label,
-                variable=self.tab_radio_vars["Favorites"],
-                value=i,
-                command=lambda t="Favorites", v=i: self.on_radio_select(t, v),
-                state="normal" if script_exists else "disabled",
-                text_color="gray50" if not script_exists else None
-            )
-            radio_button.pack(side="left", padx=5)
-
-            if not script_exists:
-                warning_frame = ctk.CTkFrame(frame, fg_color="transparent")
-                warning_frame.pack(side="left", padx=2)
-                
-                warning_label = ctk.CTkLabel(
-                    warning_frame,
-                    text="⚠️ Script not found",
-                    text_color="orange"
-                )
-                warning_label.pack(side="left")
-
-            remove_button = ctk.CTkButton(
-                frame,
-                text="Remove",
-                width=60,
-                command=lambda s=script_name, b=radio_button: 
-                    self.remove_favorite(s, b)
-            )
-            remove_button.pack(side="right", padx=5)
-
-            if script_exists:
-                self.radio_buttons["Favorites"].append(radio_button)
-                self.radio_button_script_mapping["Favorites"][i] = script_name
-
-    def run_script_threaded(self, script_path: Path):
-        """Run script using background worker with platform support"""
-        def script_task():
-            try:
-                script_path_str = str(script_path.resolve())
-                cwd = script_path.parent.resolve()
-
-                if sys.platform.startswith('win'):
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
-                    
-                    # For Windows, directly execute the batch file
-                    process = subprocess.Popen(
-                        [script_path_str],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        cwd=cwd,
-                        startupinfo=startupinfo,
-                        shell=True  # Add shell=True for Windows
-                    )
-                else:
-                    # Make script executable on Unix-like systems
-                    os.chmod(script_path_str, 0o755)
-                    process = subprocess.Popen(
-                        ["/bin/bash", script_path_str],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        cwd=cwd
-                    )
-                
-                stdout, stderr = process.communicate()
-                print(f"Script output: {stdout}")
-                print(f"Script error (if any): {stderr}")
-                if process.returncode != 0:
-                    print(f"Script exited with code: {process.returncode}")
-                    
-                return stdout, stderr, process.returncode
-
-            except Exception as e:
-                print(f"Error executing script: {e}")
-                return None, str(e), -1
-
-        def script_complete(future):
-            try:
-                stdout, stderr, returncode = future.result()
-                # Always show success message to user regardless of errors
-                self.show_status("Script completed successfully")
-            finally:
-                self.set_gui_state(True)
-
-        self.set_gui_state(False)
-        self.background_worker.submit_task(script_task, script_complete)
-
-    async def run_script_async(self, script_path: Path) -> bool:
-        """Run script asynchronously with platform support"""
-        try:
-            script_path_str = str(script_path.resolve())
-            cwd = script_path.parent.resolve()
-
-            if sys.platform.startswith('win'):
-                process = await asyncio.create_subprocess_exec(
-                    script_path_str,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=cwd,
-                    shell=True  # Add shell=True for Windows
-                )
-            else:
-                # Make script executable on Unix-like systems
-                os.chmod(script_path_str, 0o755)
-                process = await asyncio.create_subprocess_exec(
-                    "/bin/bash",
-                    script_path_str,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=cwd
-                )
-            
-            stdout, stderr = await process.communicate()
-            return True
-            
-        except Exception as e:
-            print(f"Error running script: {e}")
-            return False
-
-    def set_gui_state(self, enabled: bool):
-        """Update GUI state with minimal redraws"""
-        for buttons in self.radio_buttons.values():
-            for button in buttons:
-                button.configure(state="normal" if enabled else "disabled")
-
-        if enabled:
-            self.loading_label.pack_forget()
-        else:
-            self.loading_label.pack(side="bottom", pady=5)
-        
-        self.parent_tab.update_idletasks()
-
-    def show_status(self, message: str, duration: int = 2000, color: str = "green"):
-        """Show status with optimized animation"""
-        self.status_label.configure(text=message, text_color=color)
-        self.status_label.pack(side="bottom", pady=10)
-        
-        def fade_out(alpha: float = 1.0):
-            if alpha <= 0:
-                self.status_label.pack_forget()
-                return
-            
-            if color.startswith('#'):
-                rgb = [int(int(color[i:i+2], 16) * alpha) for i in (1, 3, 5)]
-                color_with_alpha = f'#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}'
-                self.status_label.configure(text_color=color_with_alpha)
-            
-            self.parent_tab.after(50, lambda: fade_out(alpha - 0.1))
-        
-        self.parent_tab.after(duration, lambda: fade_out())
-
-    def toggle_favorite(self, tab_name: str, script_name: str):
-        """Toggle favorite status and update all relevant buttons"""
-        is_now_favorite = script_name not in self.favorites
-        
-        if is_now_favorite:
-            self.favorites.append(script_name)
-            new_state = "★ Starred"
-            #status_msg = f"Added '{Path(script_name).stem}' to Starred tab"
-        else:
-            self.favorites.remove(script_name)
-            new_state = "☆ Add to Starred"
-            #status_msg = f"Removed '{Path(script_name).stem}' from Starred tab"
-
-        # Update all instances of this script's star button
-        for tab_buttons in self.favorite_buttons.values():
-            if script_name in tab_buttons:
-                tab_buttons[script_name].configure(text=new_state)
-
-        self._save_favorites()
-        self.update_favorites_tab()
-        #self.show_status(status_msg, duration=2000, color="#2ecc71")
-
-    def remove_favorite(self, script_name: str, button: ctk.CTkRadioButton):
-        """Remove from favorites and update buttons"""
-        if script_name in self.favorites:
-            self.favorites.remove(script_name)
-            
-            # Update all star buttons for this script
-            for tab_buttons in self.favorite_buttons.values():
-                if script_name in tab_buttons:
-                    tab_buttons[script_name].configure(text="☆ Add to Starred")
-            
-            self._save_favorites()
-            self.update_favorites_tab()
-            #self.show_status(f"Removed '{Path(script_name).stem}' from Starred tab", 
-                            #duration=2000, color="#2ecc71")
-
-    def on_radio_select(self, tab_name: str, value: int):
-        """Handle radio selection with optimized script execution"""
-        if value not in self.radio_button_script_mapping[tab_name]:
-            return
-
-        script_name = self.radio_button_script_mapping[tab_name][value]
-        script_path = self._get_script_path(script_name)
-
-        if not script_path:
-            messagebox.showerror("Error", f"Script not found: {script_name}")
-            return
-
-        self.set_gui_state(False)
-        self.run_script_threaded(script_path)
-
-    async def run_all_favorites_async(self):
-        """Run all favorite scripts sequentially with progress tracking"""
-        if not self.favorites or self.is_running_all:
-            return
-
-        self.is_running_all = True
-        self.set_gui_state(False)
-        
-        # Filter to existing scripts
-        existing_scripts = [
-            script for script in self.favorites 
-            if self._get_script_path(script)
-        ]
-        total_scripts = len(existing_scripts)
-        
-        if total_scripts == 0:
-            self.show_status("No valid scripts found in favorites!", color="orange")
-            self.is_running_all = False
-            self.set_gui_state(True)
-            return
-
-        self.show_progress(True)
-        completed = 0
-        
-        try:
-            for script_name in existing_scripts:
-                script_path = self._get_script_path(script_name)
-                if script_path:
-                    # Update progress before running script
-                    self.update_progress(completed, total_scripts, script_name)
-                    
-                    # Run script and wait for completion
-                    await self.run_script_async(script_path)
-                    
-                    # Update progress after script completion
-                    completed += 1
-                    self.update_progress(completed, total_scripts, script_name)
-
-        finally:
-            self.is_running_all = False
-            self.set_gui_state(True)
-            self.show_progress(False)
-            self.show_status("All available favorites executed successfully!", color="#2ecc71")
-
-    def run_all_favorites(self):
-        """Start the async run_all_favorites operation"""
-        asyncio.run(self.run_all_favorites_async())
-
-    def show_progress(self, show: bool = True):
-        """Show or hide the progress bar and label"""
-        if show:
-            self.progress_frame.pack(side="bottom", fill="x", padx=10, pady=5)
-            self.progress_label.pack(pady=(0, 5))
-            self.progress_bar.pack(fill="x", padx=10, pady=(0, 5))
-        else:
-            self.progress_frame.pack_forget()
-
-    def update_progress(self, current: int, total: int, script_name: str):
-        """Update progress bar and label"""
-        progress = current / total if total > 0 else 0
-        self.progress_bar.set(progress)
-        self.progress_label.configure(
-            text=f"Running {current}/{total}: {Path(script_name).stem}"
-        )
-        self.parent_tab.update_idletasks()
-
-    def set_initial_tab(self):
-        """Pick your initial tab if you want to open Favorites or Themes first."""
-        if not self._tab_inited:
-            return
-        
-        # 1) If you want Favorites first
-        if self.favorites and "Favorites" in self._tab_inited:
-            self.tabview.set(self.favorites_display_name)  # Changed from "Favorites"
-            if not self._tab_inited["Favorites"]:
-                self._lazy_init_tab("Favorites")
-            return
-
-        # 2) If you want Themes second
-        if "Themes" in self._tab_inited:
-            self.tabview.set("Themes")
-            if not self._tab_inited["Themes"]:
-                self._lazy_init_tab("Themes")
-            return
-        
-        # 3) Otherwise just pick the first key
-        try:
-            first_tab = next(iter(self._tab_inited.keys()))
-            self.tabview.set(first_tab)
-            if not self._tab_inited[first_tab]:
-                self._lazy_init_tab(first_tab)
-        except (StopIteration, ValueError):
-            pass
-        
 class ViewRoms:
     def __init__(self, parent_tab, config_manager, main_app):
         # Define font settings at the top of the class
@@ -7949,7 +8083,7 @@ class ViewRoms:
         for button_name, config in button_configs.items():
             # Debug prints
             #print(f"\nChecking button {button_name}")
-            visibility = self.config_manager.get_button_visibility(button_name)
+            visibility = self.config_manager.determine_button_visibility(button_name)
             #print(f"Visibility value returned: {visibility}")
 
             if visibility:  # Will be True only when visibility is 'always'
@@ -8164,6 +8298,41 @@ class ViewRoms:
                     for rom in selected_roms:
                         f.write(f"{rom}\n")
 
+                # Update settings.conf
+                settings_file = os.path.join(collection_path, 'settings.conf')
+                cycle_playlist_line = None
+                new_lines = []
+                
+                if os.path.exists(settings_file):
+                    # Read existing settings file
+                    with open(settings_file, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                    
+                    # Look for cyclePlaylist line
+                    for line in lines:
+                        if line.strip().startswith('cyclePlaylist'):
+                            cycle_playlist_line = line.strip()
+                            # Update the line with new playlist
+                            current_playlists = cycle_playlist_line.split('=')[1].strip()
+                            if current_playlists:
+                                new_line = f"{cycle_playlist_line},{playlist_name}\n"
+                            else:
+                                new_line = f"{cycle_playlist_line}{playlist_name}\n"
+                            new_lines.append(new_line)
+                        else:
+                            new_lines.append(line)
+                    
+                    # If cyclePlaylist wasn't found, add it
+                    if cycle_playlist_line is None:
+                        new_lines.append(f"cyclePlaylist = all,favorites,{playlist_name}\n")
+                else:
+                    # Create new settings file with cyclePlaylist
+                    new_lines = [f"cyclePlaylist = all,favorites,{playlist_name}\n"]
+
+                # Write updated settings file
+                with open(settings_file, 'w', encoding='utf-8') as f:
+                    f.writelines(new_lines)
+
                 messagebox.showinfo("Success", 
                     f"Playlist '{playlist_name}' created successfully!\n\nNote: You will need to restart the application for the playlist to be visible in the Playlists tab.")
                 if on_close:
@@ -8172,6 +8341,32 @@ class ViewRoms:
             def cancel():
                 if on_close:
                     on_close()
+
+            create_btn = ctk.CTkButton(
+                button_frame,
+                text="Create Playlist",
+                command=create_playlist_file,
+                font=self.button_font,
+                fg_color='#4CAF50',
+                hover_color='#45a049'
+            )
+            create_btn.pack(side='right', padx=5)
+
+            cancel_btn = ctk.CTkButton(
+                button_frame,
+                text="Cancel",
+                command=cancel,
+                font=self.button_font,
+                fg_color='#f44336',
+                hover_color='#da190b'
+            )
+            cancel_btn.pack(side='right', padx=5)
+
+            # Initial load of list
+            update_list()
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Error in playlist creation window: {str(e)}")
 
             create_btn = ctk.CTkButton(
                 button_frame,
