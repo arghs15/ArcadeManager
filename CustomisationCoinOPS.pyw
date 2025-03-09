@@ -322,29 +322,64 @@ if not getattr(sys, 'frozen', False):
 
 class CreateToolTip:
     """
-    Create a tooltip for a given customtkinter widget
+    Create a tooltip for a given customtkinter widget with improved reliability
     """
     def __init__(self, widget, text):
         self.widget = widget
         self.text = text
         self.tooltip = None
+        self.hide_id = None
+        
         # Bind to the CTk button's internal label widget
-        self.widget._text_label.bind('<Enter>', self.enter)
-        self.widget._text_label.bind('<Leave>', self.leave)
+        if hasattr(self.widget, '_text_label'):
+            self.widget._text_label.bind('<Enter>', self.enter)
+            self.widget._text_label.bind('<Leave>', self.leave)
+            
         # Also bind to the button itself
         self.widget.bind('<Enter>', self.enter)
         self.widget.bind('<Leave>', self.leave)
+        self.widget.bind('<ButtonPress>', self.hide)  # Hide on click
+        
+        # Bind to the root window focus changes
+        try:
+            root = self.get_root()
+            if root:
+                root.bind('<FocusOut>', lambda e: self.hide())
+                root.bind('<Configure>', lambda e: self.check_position())
+        except:
+            pass
+            
         self.id = None
         self.tw = None
+        
+        # Automatic cleanup after 3 seconds as failsafe
+        self.auto_hide_id = None
+
+    def get_root(self):
+        """Get the root window of this widget"""
+        widget = self.widget
+        while widget.master:
+            widget = widget.master
+        return widget
 
     def enter(self, event=None):
         """Schedule showing the tooltip"""
+        # Cancel any pending hide operation
+        if self.hide_id:
+            try:
+                self.widget.after_cancel(self.hide_id)
+                self.hide_id = None
+            except:
+                pass
+        
         self.schedule()
 
     def leave(self, event=None):
-        """Hide the tooltip"""
+        """Schedule hiding the tooltip with a small delay"""
         self.unschedule()
-        self.hide()
+        # Use a short delay before hiding to prevent flickering
+        # when moving between button and text label
+        self.hide_id = self.widget.after(100, self.hide)
 
     def schedule(self):
         """Schedule showing of tooltip"""
@@ -356,51 +391,115 @@ class CreateToolTip:
         id_ = self.id
         self.id = None
         if id_:
-            self.widget.after_cancel(id_)
+            try:
+                self.widget.after_cancel(id_)
+            except:
+                pass
 
     def show(self):
         """Show the tooltip"""
-        # Get widget position
-        x = self.widget.winfo_rootx() + self.widget.winfo_width()//2
-        y = self.widget.winfo_rooty() + self.widget.winfo_height()
+        # Don't show if a tooltip is already visible
+        if self.tw:
+            return
+            
+        try:
+            # Get widget position
+            x = self.widget.winfo_rootx() + self.widget.winfo_width()//2
+            y = self.widget.winfo_rooty() + self.widget.winfo_height()
 
-        # Creates a toplevel window
-        self.tw = tk.Toplevel(self.widget)
-        # Remove the window decorations
-        self.tw.wm_overrideredirect(True)
-        
-        # Create tooltip content with dark theme
-        frame = tk.Frame(self.tw, background="#2B2B2B", borderwidth=1, relief="solid")
-        frame.pack(ipadx=5, ipady=2)
-        
-        label = tk.Label(frame, 
-                        text=self.text,
-                        justify='left',
-                        background="#2B2B2B",
-                        foreground="white",
-                        wraplength=250,
-                        font=("Arial", "10", "normal"))
-        label.pack(padx=3, pady=2)
+            # Creates a toplevel window
+            self.tw = tk.Toplevel(self.widget)
+            # Remove the window decorations
+            self.tw.wm_overrideredirect(True)
+            
+            # Create tooltip content with dark theme
+            frame = tk.Frame(self.tw, background="#2B2B2B", borderwidth=1, relief="solid")
+            frame.pack(ipadx=5, ipady=2)
+            
+            label = tk.Label(frame, 
+                            text=self.text,
+                            justify='left',
+                            background="#2B2B2B",
+                            foreground="white",
+                            wraplength=250,
+                            font=("Arial", "10", "normal"))
+            label.pack(padx=3, pady=2)
 
-        # Position tooltip centered below the button
-        tw_width = label.winfo_reqwidth() + 10  # Add padding
-        tw_height = label.winfo_reqheight() + 6  # Add padding
-        
-        x = x - tw_width//2  # Center horizontally
-        y = y + 5  # Add small gap below button
-        
-        self.tw.wm_geometry(f"+{x}+{y}")
-        
-        # Raise tooltip above other windows
-        self.tw.lift()
-        self.tw.attributes('-topmost', True)
+            # Position tooltip centered below the button
+            tw_width = label.winfo_reqwidth() + 10  # Add padding
+            tw_height = label.winfo_reqheight() + 6  # Add padding
+            
+            x = x - tw_width//2  # Center horizontally
+            y = y + 5  # Add small gap below button
+            
+            # Adjust if tooltip would go off screen
+            screen_width = self.widget.winfo_screenwidth()
+            screen_height = self.widget.winfo_screenheight()
+            
+            if x < 0:
+                x = 0
+            elif x + tw_width > screen_width:
+                x = screen_width - tw_width
+                
+            if y + tw_height > screen_height:
+                y = self.widget.winfo_rooty() - tw_height - 5  # Show above widget
+            
+            self.tw.wm_geometry(f"+{x}+{y}")
+            
+            # Raise tooltip above other windows
+            self.tw.lift()
+            self.tw.attributes('-topmost', True)
+            
+            # Set auto-hide as a failsafe
+            self.auto_hide_id = self.widget.after(3000, self.hide)
+            
+        except Exception as e:
+            print(f"Error showing tooltip: {e}")
+            self.hide()
 
-    def hide(self):
+    def check_position(self):
+        """Check if mouse is still over widget, hide if not"""
+        if not self.tw:
+            return
+            
+        try:
+            # Get current mouse position
+            root = self.get_root()
+            mouse_x = root.winfo_pointerx()
+            mouse_y = root.winfo_pointery()
+            
+            # Get widget position
+            widget_x1 = self.widget.winfo_rootx()
+            widget_y1 = self.widget.winfo_rooty()
+            widget_x2 = widget_x1 + self.widget.winfo_width()
+            widget_y2 = widget_y1 + self.widget.winfo_height()
+            
+            # Hide tooltip if mouse is outside widget (with a small margin)
+            if (mouse_x < widget_x1 - 5 or mouse_x > widget_x2 + 5 or
+                mouse_y < widget_y1 - 5 or mouse_y > widget_y2 + 5):
+                self.hide()
+        except:
+            # If any error occurs, hide the tooltip
+            self.hide()
+
+    def hide(self, event=None):
         """Hide the tooltip"""
+        # Cancel any auto-hide timer
+        if self.auto_hide_id:
+            try:
+                self.widget.after_cancel(self.auto_hide_id)
+                self.auto_hide_id = None
+            except:
+                pass
+                
+        # Destroy tooltip window
         tw = self.tw
         self.tw = None
         if tw:
-            tw.destroy()
+            try:
+                tw.destroy()
+            except:
+                pass
 
 class SplashScreen:
     def __init__(self, parent):
@@ -704,12 +803,12 @@ class FilterGamesApp:
         self.root.attributes('-alpha', 0.0)  # Start invisible but maintain geometry
         self.root.attributes('-topmost', False)  # Explicitly ensure window isn't topmost
         
-        # Window state setup
+        # Window state setup with more adaptive defaults
         self._window_state = {
-            'width_percentage': 0.8,
-            'height_percentage': 0.8,
-            'min_width': 1200,
-            'min_height': 800,
+            'width_percentage': 0.75,  # Slightly smaller default
+            'height_percentage': 0.75,  # Slightly smaller default
+            'min_width': 800,    # Reduced minimum width
+            'min_height': 600,   # Reduced minimum height
             'is_fullscreen': False
         }
 
@@ -801,6 +900,12 @@ class FilterGamesApp:
             self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
             self.root.grid_columnconfigure(0, weight=1)
 
+            self.splash.update_status("Detecting screen configuration...")
+            self.detect_screen_configuration()
+
+            self.splash.update_status("Setting up window configurations...")
+            self._calculate_and_set_window_size()
+            
             # Window Configuration
             self.splash.update_status("Setting up window configurations...")
             self._calculate_and_set_window_size()
@@ -818,20 +923,264 @@ class FilterGamesApp:
             traceback.print_exc()
             self.splash.update_status(f"Error: {str(e)}")
 
+    def check_for_extreme_screen_size(self):
+        """Check for extremely unusual screen configurations and adjust if needed"""
+        try:
+            # Get actual window size after rendering
+            actual_width = self.root.winfo_width()
+            actual_height = self.root.winfo_height()
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            
+            # Check if window is larger than screen
+            if actual_width > screen_width or actual_height > screen_height:
+                print(f"Warning: Window size ({actual_width}x{actual_height}) exceeds screen size ({screen_width}x{screen_height})")
+                
+                # Force a more conservative size
+                new_width = min(800, int(screen_width * 0.7))
+                new_height = min(600, int(screen_height * 0.7))
+                x = (screen_width - new_width) // 2
+                y = (screen_height - new_height) // 2
+                
+                geometry_string = f"{new_width}x{new_height}+{x}+{y}"
+                self.root.geometry(geometry_string)
+                self.original_geometry = geometry_string
+                
+                print(f"Adjusted window size to {new_width}x{new_height}")
+                
+                # Schedule another check after window stabilizes
+                self.root.after(1000, self.check_for_extreme_screen_size)
+                
+        except Exception as e:
+            print(f"Error in screen size safety check: {e}")
+    
+    def finish_loading(self):
+        """Close splash screen and show main window"""
+        self.splash.close()
+        
+        # Explicitly ensure window isn't topmost
+        self.root.attributes('-topmost', False)
+        
+        # Make window visible with a slight delay
+        self.root.after(50, lambda: self.root.attributes('-alpha', 1.0))
+        
+        # Get fullscreen preference
+        fullscreen_mode = self.config_manager.get_fullscreen_preference()
+        
+        # Add appearance frame after main UI is set up
+        self.add_appearance_mode_frame(fullscreen=fullscreen_mode)
+        
+        # Handle fullscreen if needed
+        if fullscreen_mode:
+            self._window_state['is_fullscreen'] = True
+            self.handle_fullscreen()
+        
+        # Check for extreme screen sizes after window is visible
+        self.root.after(500, self.check_for_extreme_screen_size)
+        
+        # Final ensure of non-topmost state
+        self.root.after(100, lambda: self.root.attributes('-topmost', False))
+    
+    def detect_screen_configuration(self):
+        """Detect screen configuration and adjust window parameters accordingly"""
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        
+        # Detect if we're on a vertical screen
+        is_vertical = screen_height > screen_width
+        
+        # Detect if we're on a small screen (below typical desktop resolution)
+        is_small_screen = screen_width < 1280 or screen_height < 768
+        
+        # Log screen configuration
+        print(f"Screen configuration: {screen_width}x{screen_height} " + 
+            f"({'Vertical' if is_vertical else 'Horizontal'}, " +
+            f"{'Small' if is_small_screen else 'Normal'} screen)")
+        
+        # Adjust window state based on screen configuration
+        if is_vertical:
+            # For vertical screens, use a higher percentage of height but less width
+            self._window_state['width_percentage'] = 0.85
+            self._window_state['height_percentage'] = 0.7
+            self._window_state['min_width'] = min(700, int(screen_width * 0.85))
+            self._window_state['min_height'] = min(600, int(screen_height * 0.7))
+            
+            # Schedule exe frame auto-handling after UI is fully loaded
+            self.root.after(1500, self._handle_exe_frame_for_vertical_screen)
+        
+        if is_small_screen:
+            # For small screens, use more conservative dimensions
+            self._window_state['width_percentage'] = 0.7
+            self._window_state['height_percentage'] = 0.7
+            self._window_state['min_width'] = min(600, int(screen_width * 0.7))
+            self._window_state['min_height'] = min(500, int(screen_height * 0.7))
+            
+        # Ensure aspect ratio isn't too extreme
+        max_aspect_ratio = 1.8  # Maximum width/height or height/width ratio
+        if is_vertical:
+            if screen_height / screen_width > max_aspect_ratio:
+                self._window_state['height_percentage'] = 0.6  # Reduce height percentage further
+        else:
+            if screen_width / screen_height > max_aspect_ratio:
+                self._window_state['width_percentage'] = 0.7  # Reduce width percentage
+                
+    def _show_vertical_screen_notification(self):
+        """Show a notification about vertical screen adaptations with option to not show again"""
+        # First check if notification is disabled in config
+        try:
+            if hasattr(self, 'config_manager'):
+                show_notification = self.config_manager.get_setting('Settings', 'show_vertical_screen_notification', default=True)
+                if not show_notification:
+                    return  # Don't show if user disabled it
+        except:
+            pass  # If there's any error, proceed with showing the notification
+            
+        try:
+            # Create popup window
+            popup = ctk.CTkToplevel(self.root)
+            popup.title("Vertical Screen Detected")
+            
+            # Make it appear on top but not system-wide topmost
+            popup.attributes('-topmost', True)
+            popup.after(100, lambda: popup.attributes('-topmost', False))
+            
+            # Get screen dimensions
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            
+            # Calculate appropriate size - smaller for vertical screens
+            # Make it narrower but still tall enough for content
+            popup_width = min(400, int(screen_width * 0.8))
+            popup_height = 330  # Increased to accommodate checkbox
+            
+            # Ensure it doesn't exceed screen bounds
+            popup_width = min(popup_width, screen_width - 40)
+            popup_height = min(popup_height, screen_height - 100)
+            
+            # Configure grid with appropriate weights
+            popup.grid_columnconfigure(0, weight=1)
+            popup.grid_rowconfigure(0, weight=0)  # Header
+            popup.grid_rowconfigure(1, weight=1)  # Content
+            popup.grid_rowconfigure(2, weight=0)  # Checkbox
+            popup.grid_rowconfigure(3, weight=0)  # Button
+            
+            # Add header with appropriately sized font
+            header_font_size = max(14, min(16, int(popup_width / 25)))
+            header = ctk.CTkLabel(
+                popup, 
+                text="Vertical Screen Mode", 
+                font=("Arial", header_font_size, "bold")
+            )
+            header.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="ew")
+            
+            # Add content with more condensed text and smaller font for vertical screens
+            content_font_size = max(10, min(12, int(popup_width / 35)))
+            content = ctk.CTkLabel(
+                popup,
+                text=(
+                    "Your screen is in vertical orientation.\n\n"
+                    "The Exe Selector panel has been\n"
+                    "automatically hidden.\n\n"
+                    "You can show it by clicking the '>'\n"
+                    "button on the right edge,\n"
+                    "or pop it out to a separate window\n"
+                    "with the '□' button."
+                ),
+                font=("Arial", content_font_size),
+                justify="center",
+                wraplength=popup_width - 50  # Ensure text wraps properly
+            )
+            content.grid(row=1, column=0, padx=15, pady=5, sticky="nsew")
+            
+            # Add "Do not show again" checkbox
+            do_not_show_var = ctk.BooleanVar()
+            do_not_show_checkbox = ctk.CTkCheckBox(
+                popup,
+                text="Do not show this message again",
+                variable=do_not_show_var,
+                font=("Arial", content_font_size - 1)
+            )
+            do_not_show_checkbox.grid(row=2, column=0, pady=(5, 5), padx=15, sticky="ew")
+            
+            # Handle close with checkbox value
+            def on_close():
+                if do_not_show_var.get() and hasattr(self, 'config_manager'):
+                    try:
+                        # Update config to not show notification again
+                        self.config_manager.config.set('Settings', 'show_vertical_screen_notification', 'False')
+                        self.config_manager.save_config()
+                    except Exception as e:
+                        print(f"Error saving notification preference: {e}")
+                popup.destroy()
+            
+            # Add close button
+            close_button = ctk.CTkButton(
+                popup,
+                text="Got it",
+                command=on_close,
+                width=80,
+                height=30,
+                font=("Arial", content_font_size)
+            )
+            close_button.grid(row=3, column=0, pady=(5, 15))
+            
+            # Set initial size
+            popup.geometry(f"{popup_width}x{popup_height}")
+            
+            # Center the popup after it's been created and sized
+            popup.update_idletasks()
+            actual_width = popup.winfo_width()
+            actual_height = popup.winfo_height()
+            x = (screen_width // 2) - (actual_width // 2)
+            y = (screen_height // 2) - (actual_height // 2)
+            popup.geometry(f"+{x}+{y}")
+            
+            # Ensure it gets focus
+            popup.focus_force()
+            
+            # Add auto-close after 15 seconds
+            auto_close_id = popup.after(15000, on_close)
+            
+            # Override window close button
+            popup.protocol("WM_DELETE_WINDOW", on_close)
+            
+        except Exception as e:
+            print(f"Error showing vertical screen notification: {e}")
+    
+    def _handle_exe_frame_for_vertical_screen(self):
+        """Auto-hide exe frame on vertical screens and show a notification"""
+        if hasattr(self, 'exe_frame_controller'):
+            # Auto-hide the exe frame
+            self.exe_frame_controller.hide_exe_frame()
+            
+            # Create a notification popup
+            self._show_vertical_screen_notification()
+    
     def _calculate_and_set_window_size(self):
-        """Calculate window size based on screen size and constraints"""
+        """Calculate window size based on screen size and constraints, with better vertical screen support"""
         try:
             # Get screen dimensions
             screen_width = self.root.winfo_screenwidth()
             screen_height = self.root.winfo_screenheight()
-
-            # Calculate size based on percentages with minimums
-            width = max(self._window_state['min_width'], int(screen_width * self._window_state['width_percentage']))
-            height = max(self._window_state['min_height'], int(screen_height * self._window_state['height_percentage']))
             
-            # Ensure window isn't larger than screen
-            width = min(width, screen_width)
-            height = min(height, screen_height)
+            # Determine if we're on a vertical screen
+            is_vertical = screen_height > screen_width
+            
+            # Adjust minimum dimensions based on screen orientation
+            if is_vertical:
+                min_width = min(self._window_state['min_width'], int(screen_width * 0.9))
+                min_height = min(self._window_state['min_height'], int(screen_height * 0.8))
+            else:
+                min_width = self._window_state['min_width']
+                min_height = self._window_state['min_height']
+            
+            # Calculate size based on percentages with orientation-aware minimums
+            width = max(min_width, int(screen_width * self._window_state['width_percentage']))
+            height = max(min_height, int(screen_height * self._window_state['height_percentage']))
+            
+            # Ensure window isn't larger than screen (with some margin)
+            width = min(width, screen_width - 20)  # 20px margin
+            height = min(height, screen_height - 50)  # 50px margin for taskbar
             
             # Calculate centered position
             x = (screen_width - width) // 2
@@ -848,7 +1197,8 @@ class FilterGamesApp:
                 
         except Exception as e:
             print(f"Error calculating window size: {e}")
-            self.root.geometry("1200x800+100+100")
+            # Use more conservative fallback dimensions
+            self.root.geometry("1000x700+100+100")
 
     def handle_fullscreen(self):
         """Enhanced fullscreen handling with scaling awareness"""
@@ -897,7 +1247,7 @@ class FilterGamesApp:
             self.root.update_idletasks()
 
     def setup_main_ui(self):
-        """Setup all UI components with proper vertical expansion"""
+        """Setup all UI components with proper vertical expansion and frame control"""
         overall_start = time.time()
         self.tab_load_times = []
         
@@ -928,15 +1278,16 @@ class FilterGamesApp:
         self.root.grid_rowconfigure(0, weight=1)  # Main content
         self.root.grid_rowconfigure(1, weight=0)  # Appearance frame
         self.root.grid_columnconfigure(0, weight=1)
-                
+                    
         # Create main container
         self.main_frame = ctk.CTkFrame(self.root, corner_radius=10)
         self.main_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 0))
         
-        # Configure main_frame grid
+        # Configure main_frame grid with extra column for toggle buttons
         self.main_frame.grid_rowconfigure(0, weight=1)
-        self.main_frame.grid_columnconfigure(0, weight=1)  # Changed from weight=4
-        self.main_frame.grid_columnconfigure(1, minsize=300, weight=0)  # Fixed width, no expansion
+        self.main_frame.grid_columnconfigure(0, weight=1)  # Main content area
+        self.main_frame.grid_columnconfigure(1, minsize=300, weight=0)  # Exe selector (fixed width)
+        self.main_frame.grid_columnconfigure(2, minsize=34, weight=0)  # Toggle buttons (fixed width, never changes)
         
         # Create tabview frame with proper scaling
         self.tabview_frame = ctk.CTkFrame(self.main_frame, corner_radius=10, fg_color="transparent")
@@ -953,6 +1304,12 @@ class FilterGamesApp:
         # Configure exe_selector_frame grid
         self.exe_selector_frame.grid_rowconfigure(0, weight=1)
         self.exe_selector_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create exe file selector
+        self.exe_selector = ExeFileSelector(self.exe_selector_frame, self.config_manager)
+        
+        # Create exe frame controller (after exe selector is created)
+        self.exe_frame_controller = ExeFrameController(self, self.main_frame, self.exe_selector_frame, self.exe_selector)
         
         # Create tabview that will adjust its size
         self.tabview = ctk.CTkTabview(self.tabview_frame, corner_radius=10, fg_color="transparent")
@@ -1033,103 +1390,6 @@ class FilterGamesApp:
         # Add resize observer
         self.add_resize_observer()
 
-    def show_performance_data(self):
-        """Show performance data in a popup window"""
-        # Prevent duplicate popups
-        if hasattr(self, 'performance_popup') and self.performance_popup:
-            self.performance_popup.lift()
-            return
-
-        # Create popup
-        popup = tk.Toplevel(self.root)
-        self.performance_popup = popup
-        popup.title("System Info")
-        popup.configure(bg='#2c2c2c')
-
-        # Calculate window size based on screen dimensions
-        screen_width = popup.winfo_screenwidth()
-        screen_height = popup.winfo_screenheight()
-        
-        # Use 40% of screen width and 60% of screen height
-        window_width = int(screen_width * 0.4)
-        window_height = int(screen_height * 0.6)
-        
-        # Center the window
-        x = (screen_width // 2) - (window_width // 2)
-        y = (screen_height // 2) - (window_height // 2)
-        popup.geometry(f"{window_width}x{window_height}+{x}+{y}")
-
-        # Create a scrollable frame with dark theme
-        main_frame = ctk.CTkScrollableFrame(
-            popup,
-            fg_color='#2c2c2c',
-            scrollbar_button_color='#4CAF50',
-            scrollbar_button_hover_color='#45a049',
-            width=window_width - 40  # Account for padding
-        )
-        main_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        system_info = {
-            "System": {
-                "OS": platform.system() + " " + platform.version(),
-                "Machine": platform.machine(),
-                "Processor": platform.processor(),
-                "Python Version": platform.python_version()
-            },
-            "Hardware": {
-                "CPU Cores": psutil.cpu_count(logical=False),
-                "CPU Threads": psutil.cpu_count(),
-                "CPU Usage": f"{psutil.cpu_percent()}%",
-                "Total RAM": f"{psutil.virtual_memory().total / (1024**3):.1f} GB",
-                "Available RAM": f"{psutil.virtual_memory().available / (1024**3):.1f} GB",
-                "RAM Usage": f"{psutil.virtual_memory().percent}%",
-                "Disk Usage": f"{psutil.disk_usage('/').percent}%"
-            },
-            "Display": {
-                "Screen Resolution": f"{screen_width}x{screen_height}"
-            }
-        }
-
-        # Add each section
-        for section_name, section_data in system_info.items():
-            section_label = ctk.CTkLabel(
-                main_frame,
-                text=section_name,
-                font=("Helvetica", 18, "bold"),
-                text_color="#4CAF50"
-            )
-            section_label.pack(pady=(20, 10), anchor="w")
-
-            section_frame = ctk.CTkFrame(main_frame, fg_color='#1e1e1e', corner_radius=10)
-            section_frame.pack(fill="x", padx=5, pady=(0, 10))
-
-            for key, value in section_data.items():
-                info_label = ctk.CTkLabel(
-                    section_frame,
-                    text=f"{key}: {value}",
-                    font=("Helvetica", 12),
-                    text_color="#ffffff"
-                )
-                info_label.pack(pady=2, padx=10, anchor="w")
-
-        # Get the centralized popup management
-        on_close = self.show_popup(popup)
-
-        # OK Button
-        def close_popup():
-            self.performance_popup = None
-            if on_close:
-                on_close()
-
-        ok_button = ctk.CTkButton(
-            main_frame,
-            text="OK",
-            command=close_popup,
-            fg_color='#4CAF50',
-            hover_color='#45a049'
-        )
-        ok_button.pack(pady=10)
-
     def _on_window_configure(self, event):
         """Track window size changes when not in fullscreen"""
         if not self._window_state['is_fullscreen'] and event.widget == self.root:
@@ -1154,23 +1414,11 @@ class FilterGamesApp:
         self.appearance_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=10)
 
         # Create a grid layout inside appearance frame
-        self.appearance_frame.grid_columnconfigure(0, weight=0)  # System info button
         self.appearance_frame.grid_columnconfigure(1, weight=0)  # Fullscreen toggle
         self.appearance_frame.grid_columnconfigure(2, weight=1)  # Flexible space
         self.appearance_frame.grid_columnconfigure(3, weight=0)  # Scale
         self.appearance_frame.grid_columnconfigure(4, weight=0)  # Appearance mode
         self.appearance_frame.grid_columnconfigure(5, weight=0)  # Close button
-
-        # Add system info button
-        system_info_button = ctk.CTkButton(
-            self.appearance_frame,
-            text="System Info",
-            command=self.show_performance_data,
-            font=("Arial", 14, "bold"),
-            fg_color="#1f538d",
-            hover_color="#14375e"
-        )
-        system_info_button.grid(row=0, column=0, padx=(10, 5), pady=10, sticky="ew")
 
         # Add fullscreen toggle
         fullscreen_switch = ctk.CTkSwitch(
@@ -1286,6 +1534,10 @@ class FilterGamesApp:
 
     def on_closing(self):
         try:
+            # Clean up exe frame controller if it exists
+            if hasattr(self, 'exe_frame_controller'):
+                self.exe_frame_controller.cleanup()
+                
             # Clean up controls if they exist
             if hasattr(self, 'controls'):
                 self.controls.cleanup()
@@ -1323,7 +1575,7 @@ class FilterGamesApp:
 
 class ConfigManager:
     # Document all possible settings as class attributes
-    CONFIG_FILE_VERSION = "3.0.0"  # Current configuration file version
+    CONFIG_FILE_VERSION = "3.1.0"  # Current configuration file version
     CONFIG_VERSION_KEY = "config_version"
 
     AVAILABLE_SETTINGS = {
@@ -1443,13 +1695,13 @@ class ConfigManager:
                 'hidden': False
             },
             'enable_logging': {
-                'default': 'True',
+                'default': 'False',
                 'description': 'Enable or disable logging',
                 'type': bool,
                 'hidden': False
             },
             'log_level': {
-                'default': 'ALL',
+                'default': 'NONE',
                 'description': 'Logging level (NONE, DEBUG, INFO, WARNING, ERROR, CRITICAL, ALL)',
                 'type': str,
                 'hidden': False
@@ -1488,6 +1740,18 @@ class ConfigManager:
                 'default': '',
                 'description': 'Default executable to select when opening the app',
                 'type': str,
+                'hidden': False
+            },
+            'show_console_single_collection': {
+                'default': False,
+                'description': 'Whether to show the Console Single Collection tab',
+                'type': bool,
+                'hidden': False
+            },
+            'show_vertical_screen_notification': {
+                'default': 'True',
+                'description': 'Show vertical screen mode notification',
+                'type': bool,
                 'hidden': False
             }
         },
@@ -1537,13 +1801,13 @@ class ConfigManager:
                 'hidden': True
             },
             'controls_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of Controls tab',
                 'type': str,
                 'hidden': True
             },
             'view_games_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of All Games tab',
                 'type': str,
                 'hidden': True
@@ -1563,7 +1827,7 @@ class ConfigManager:
                 'hidden': True  # Changed from True
             },
             'show_move_roms_button': { # Allows a user to select roms to remove from a text fileView Log
-                'default': 'never',  # 'always', 'never'
+                'default': 'always',  # 'always', 'never'
                 'description': 'Controls visibility of Move ROMs button',
                 'type': str,
                 'hidden': True  # Changed from True
@@ -2467,6 +2731,274 @@ class ConfigManager:
         except Exception as e:
             print(f"Error updating settings file: {str(e)}")
 
+class ExeFrameController:
+    """Controls the visibility and position of the exe selector frame"""
+    
+    def __init__(self, app, main_frame, exe_selector_frame, exe_selector):
+        self.app = app
+        self.main_frame = main_frame
+        self.exe_selector_frame = exe_selector_frame
+        self.exe_selector = exe_selector
+        
+        # State tracking
+        self.is_visible = True
+        self.is_popped_out = False
+        self.popup_window = None
+        
+        # Create the toggle button frame at the edge of main content
+        self.toggle_button_frame = ctk.CTkFrame(main_frame, width=34, corner_radius=10)
+        self.toggle_button_frame.grid(row=0, column=2, sticky="ns", pady=10)
+        
+        # Configure the toggle frame to expand vertically
+        self.toggle_button_frame.grid_rowconfigure(0, weight=1)  # Top padding
+        self.toggle_button_frame.grid_rowconfigure(1, weight=0)  # Toggle button
+        self.toggle_button_frame.grid_rowconfigure(2, weight=0)  # Popout button
+        self.toggle_button_frame.grid_rowconfigure(3, weight=1)  # Bottom padding
+        self.toggle_button_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create toggle button (using text initially, could be replaced with an icon)
+        self.toggle_button = ctk.CTkButton(
+            self.toggle_button_frame, 
+            text="<", 
+            width=30,
+            height=30,
+            corner_radius=5,
+            command=self.toggle_exe_frame
+        )
+        self.toggle_button.grid(row=1, column=0, padx=2, pady=2)
+        
+        # Create pop-out button
+        '''self.popout_button = ctk.CTkButton(
+            self.toggle_button_frame, 
+            text="□", 
+            width=30,
+            height=30,
+            corner_radius=5,
+            command=self.toggle_popout
+        )
+        self.popout_button.grid(row=2, column=0, padx=2, pady=2)'''
+        
+        # Add tooltips to buttons
+        try:
+            self.toggle_tooltip = CreateToolTip(self.toggle_button, "Show/Hide Exe Selector")
+            self.popout_tooltip = CreateToolTip(self.popout_button, "Pop Out to Separate Window")
+        except Exception as e:
+            print(f"Could not create tooltips: {e}")
+
+        # Also add periodic position check to detect when tooltips should be hidden
+        self._add_tooltip_check()       
+        
+        # Detect vertical screen on init
+        self._check_for_vertical_screen()
+    
+    def _add_tooltip_check(self):
+        """Set up periodic checking of tooltip positions"""
+        
+        def check_tooltips():
+            """Check if tooltips should be hidden based on mouse position"""
+            if hasattr(self, 'toggle_tooltip') and self.toggle_tooltip:
+                self.toggle_tooltip.check_position()
+                
+            if hasattr(self, 'popout_tooltip') and self.popout_tooltip:
+                self.popout_tooltip.check_position()
+                
+            # Re-schedule the check if controller still exists
+            if hasattr(self, 'app') and self.app:
+                self.app.root.after(500, check_tooltips)
+        
+        # Start the periodic check
+        self.app.root.after(1000, check_tooltips)
+    
+    def _check_for_vertical_screen(self):
+        """Check if we're on a vertical screen and auto-hide if needed"""
+        screen_width = self.app.root.winfo_screenwidth()
+        screen_height = self.app.root.winfo_screenheight()
+        
+        # If vertical screen (height > width), auto-hide exe frame
+        if screen_height > screen_width:
+            # Delay the hide operation to ensure UI is fully built
+            self.app.root.after(500, self.hide_exe_frame)
+    
+    def toggle_exe_frame(self):
+        """Toggle the visibility of the exe selector frame"""
+        if self.is_visible:
+            self.hide_exe_frame()
+        else:
+            self.show_exe_frame()
+    
+    def hide_exe_frame(self):
+        """Hide the exe selector frame"""
+        if self.is_popped_out:
+            # Just minimize the popup window
+            self.popup_window.iconify()
+        else:
+            # Update toggle button first
+            self.toggle_button.configure(text=">")
+            
+            # Hide the frame in the main window
+            self.exe_selector_frame.grid_remove()
+            
+            # Update state
+            self.is_visible = False
+            
+            # Use helper method to update layout
+            self._update_layout()
+    
+    def show_exe_frame(self):
+        """Show the exe selector frame"""
+        if self.is_popped_out:
+            # Restore the popup window
+            self.popup_window.deiconify()
+            self.popup_window.lift()
+        else:
+            # Update toggle button first
+            self.toggle_button.configure(text="<")
+            
+            # Update state
+            self.is_visible = True
+            
+            # Restore column configuration and show frame
+            self.main_frame.grid_columnconfigure(1, minsize=300, weight=0)
+            self.exe_selector_frame.grid()
+            
+            # Use helper method to update layout
+            self._update_layout()
+    
+    def _update_layout(self):
+        """Helper method to ensure proper layout when toggling exe frame visibility"""
+        try:
+            # Get references to key UI components
+            tabview_frame = self.app.tabview_frame
+            
+            # Update frame configuration based on visibility
+            if not self.is_visible and not self.is_popped_out:
+                # When exe frame is hidden, maximize tabview frame
+                self.main_frame.grid_columnconfigure(1, minsize=0, weight=0)
+                tabview_frame.grid(padx=(0, 0), pady=10)
+            else:
+                # When exe frame is visible, restore original layout
+                self.main_frame.grid_columnconfigure(1, minsize=300, weight=0)
+                tabview_frame.grid(padx=(0, 10), pady=10)
+            
+            # Force update
+            self.app.root.update_idletasks()
+        except Exception as e:
+            print(f"Error updating layout: {e}")
+    
+    def toggle_popout(self):
+        """Toggle between embedded and popped-out states"""
+        if self.is_popped_out:
+            self.pop_in()
+        else:
+            self.pop_out()
+    
+    def pop_out(self):
+        """Move the exe selector to a separate window"""
+        if self.is_popped_out:
+            return
+        
+        # Create a new toplevel window
+        self.popup_window = ctk.CTkToplevel(self.app.root)
+        self.popup_window.title("Exe Selector")
+        self.popup_window.geometry("300x600")
+        self.popup_window.minsize(250, 400)
+        
+        # Configure the popup window grid
+        self.popup_window.grid_rowconfigure(0, weight=1)
+        self.popup_window.grid_columnconfigure(0, weight=1)
+        
+        # Remove exe_selector from main window
+        self.exe_selector_frame.grid_remove()
+        
+        # Reparent the exe_selector to the popup window
+        # (We need to re-create it since direct reparenting isn't supported)
+        new_frame = ctk.CTkFrame(self.popup_window, corner_radius=10)
+        new_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        
+        # Configure new frame grid
+        new_frame.grid_rowconfigure(0, weight=1)
+        new_frame.grid_columnconfigure(0, weight=1)
+        
+        # Create a new ExeFileSelector in the popup window
+        new_exe_selector = ExeFileSelector(new_frame, self.app.config_manager)
+        
+        # Store references
+        self.popped_out_frame = new_frame
+        self.popped_out_selector = new_exe_selector
+        
+        # Update main window layout
+        self.main_frame.grid_columnconfigure(1, minsize=0, weight=0)
+        
+        # Update button text
+        self.popout_button.configure(text="⧉")
+        
+        # Handle popup window close
+        self.popup_window.protocol("WM_DELETE_WINDOW", self.pop_in)
+        
+        # Update state
+        self.is_popped_out = True
+        self.is_visible = True
+        
+        # Update layout
+        self._update_layout()
+    
+    def pop_in(self):
+        """Move the exe selector back to the main window"""
+        if not self.is_popped_out:
+            return
+        
+        # Destroy the popup window
+        self.popup_window.destroy()
+        self.popup_window = None
+        self.popped_out_frame = None
+        self.popped_out_selector = None
+        
+        # Show the original exe selector frame
+        self.exe_selector_frame.grid()
+        
+        # Restore original column configuration
+        self.main_frame.grid_columnconfigure(1, minsize=300, weight=0)
+        
+        # Update button text
+        self.popout_button.configure(text="□")
+        
+        # Update state
+        self.is_popped_out = False
+        self.is_visible = True
+        
+        # Update toggle button
+        self.toggle_button.configure(text="<")
+        
+        # Update layout
+        self._update_layout()
+    
+    def cleanup(self):
+        """Clean up resources when app is closing"""
+        # Clean up tooltips
+        if hasattr(self, 'toggle_tooltip') and self.toggle_tooltip:
+            try:
+                self.toggle_tooltip.hide()
+            except:
+                pass
+            
+        if hasattr(self, 'popout_tooltip') and self.popout_tooltip:
+            try:
+                self.popout_tooltip.hide()
+            except:
+                pass
+        
+        # Clean up popup window
+        if self.popup_window:
+            try:
+                self.popup_window.destroy()
+            except:
+                pass
+                
+        # Clear references to prevent memory leaks
+        self.toggle_tooltip = None
+        self.popout_tooltip = None
+        self.popup_window = None
+
 class ExeFileSelector:
     def __init__(self, parent_frame, config_manager):
         self.parent_frame = parent_frame
@@ -2486,7 +3018,7 @@ class ExeFileSelector:
         
         # Configure the exe_frame grid
         self.exe_frame.grid_rowconfigure(0, weight=0)  # Logo row
-        self.exe_frame.grid_rowconfigure(1, weight=1)  # Scrollable frame
+        self.exe_frame.grid_rowconfigure(0, weight=1)  # Scrollable frame
         self.exe_frame.grid_rowconfigure(2, weight=0)  # Switch row
         self.exe_frame.grid_columnconfigure(0, weight=1)
 
@@ -2593,7 +3125,8 @@ class ExeFileSelector:
                 cursor="hand2",
                 anchor="w",
                 padx=15,
-                pady=8
+                pady=8,
+                width=300  # Add a width that extends beyond most names
             )
             exe_label.grid(row=0, column=0, sticky="ew")
             
@@ -5165,13 +5698,24 @@ class AdvancedConfigs:
             if script_list:
                 self._create_theme_sub_tab(self._themes_tabview, tab_name, script_list)
 
-        # Add the new sub-tab: "Console Single Collection" after all original sub-tabs
-        self._themes_tabview.add("Console Single Collection")
-        console_single_collection_tab = self._themes_tabview.tab("Console Single Collection")
+        # Check if we should show Console Single Collection tab based on config setting
+        show_csc = self.config_manager.get_setting('Settings', 'show_console_single_collection', True)
+        
+        # Also check build type - get the current build type that was determined
+        build_type = ConfigManager._cached_build_type  # Using the cached value
+        
+        # Show if explicitly enabled in config OR if build type is "U"
+        if show_csc or build_type == "U":
+            print(f"Debug: Showing Console Single Collection tab (show_csc={show_csc}, build_type={build_type})")
+            # Add the new sub-tab: "Console Single Collection" after all original sub-tabs
+            self._themes_tabview.add("Console Single Collection")
+            console_single_collection_tab = self._themes_tabview.tab("Console Single Collection")
 
-        # Initialize and add the ThemeManager UI to the new sub-tab
-        self.theme_manager = ThemeManager(console_single_collection_tab, self.config_manager)
-        self.theme_manager.frame.pack(fill="both", expand=True, padx=10, pady=10)
+            # Initialize and add the ThemeManager UI to the new sub-tab
+            self.theme_manager = ThemeManager(console_single_collection_tab, self.config_manager)
+            self.theme_manager.frame.pack(fill="both", expand=True, padx=10, pady=10)
+        else:
+            print(f"Debug: Not showing Console Single Collection tab (show_csc={show_csc}, build_type={build_type})")
 
     def _get_scripts_from_folder(self, folder: Path) -> list[str]:
         """Get list of scripts from a folder with appropriate extensions"""
