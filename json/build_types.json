@@ -1,0 +1,19 @@
+{
+    "BUILD_TYPE_PATHS": {
+        "D": {
+            "roms": "- Themes",
+            "videos": "autochanger/themes/video",
+            "logos": "autochanger/themes/logo"
+        },
+        "U": {
+            "roms": "collections/zzzShutdown/roms",
+            "videos": "collections/zzzShutdown/medium_artwork/video",
+            "logos": "collections/zzzShutdown/medium_artwork/logo"
+        },
+        "S": {
+            "roms": "collections/zzzSettings/roms",
+            "videos": "collections/zzzSettings/medium_artwork/video",
+            "logos": "collections/zzzSettings/medium_artwork/logo"
+        }
+    }
+}

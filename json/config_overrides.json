@@ -1,0 +1,274 @@
+{
+    "Settings": {
+        "settings_file": {
+            "default": "5_7",
+            "description": "Settings file version to use",
+            "type": "str",
+            "hidden": true
+        },
+        "multi_roms_path": {
+            "default": "",
+            "description": "Comma-separated paths for multi ROMs",
+            "type": "List[str]",
+            "hidden": true
+        },
+        "multi_videos_path": {
+            "default": "",
+            "description": "Comma-separated paths for multi videos",
+            "type": "List[str]",
+            "hidden": true
+        },
+        "multi_logos_path": {
+            "default": "",
+            "description": "Comma-separated paths for multi logos",
+            "type": "List[str]",
+            "hidden": true
+        },
+        "whats_new_clicked": {
+            "default": "True",
+            "description": "Tracks whether the 'What's New' button has been clicked.",
+            "type": "bool",
+            "hidden": false
+        },
+        "theme_location": {
+            "default": "autochanger",
+            "description": "Location of theme files",
+            "type": "str",
+            "hidden": true
+        },
+        "custom_roms_path": {
+            "default": "",
+            "description": "Custom path for ROM files",
+            "type": "str",
+            "hidden": true
+        },
+        "custom_videos_path": {
+            "default": "",
+            "description": "Custom path for video files",
+            "type": "str",
+            "hidden": true
+        },
+        "custom_logos_path": {
+            "default": "",
+            "description": "Custom path for logo files",
+            "type": "str",
+            "hidden": true
+        },
+        "show_location_controls": {
+            "default": "False",
+            "description": "Show location control options",
+            "type": "bool",
+            "hidden": true
+        },
+        "cycle_playlist": {
+            "default": "",
+            "description": "Comma-separated list of playlists to cycle through",
+            "type": "List[str]",
+            "hidden": true
+        },
+        "excluded": {
+            "default": "",
+            "description": "Comma-separated list of items to exclude",
+            "type": "List[str]",
+            "hidden": true
+        },
+        "show_move_artwork_instructions": {
+            "default": "True",
+            "description": "Show Move Artwork instructions",
+            "type": "bool",
+            "hidden": true
+        },
+        "show_move_roms_instructions": {
+            "default": "True",
+            "description": "Show Move ROMs instructions",
+            "type": "bool",
+            "hidden": true
+        },
+        "close_gui_after_running": {
+            "default": "True",
+            "description": "Close GUI after running executable",
+            "type": "bool",
+            "hidden": false
+        },
+        "additional_theme_folders": {
+            "default": [],
+            "description": "Comma-separated list of additional theme folder paths",
+            "type": "List[str]",
+            "hidden": false
+        },
+        "additional_sub_tabs": {
+            "default": [],
+            "description": "Comma-separated list of additional sub-tabs in format \"FolderName|TabName\"",
+            "type": "List[str]",
+            "hidden": false
+        },
+        "additional_collection_excludes": {
+            "default": [],
+            "description": "Additional collection patterns to exclude from ROM scanning",
+            "type": "List[str]",
+            "hidden": false
+        },
+        "additional_rom_excludes": {
+            "default": [],
+            "description": "Additional ROM patterns to exclude from ROM scanning",
+            "type": "List[str]",
+            "hidden": false
+        },
+        "fullscreen": {
+            "default": "False",
+            "description": "Start application in fullscreen mode.",
+            "type": "bool",
+            "hidden": false
+        },
+        "enable_logging": {
+            "default": "True",
+            "description": "Enable or disable logging",
+            "type": "bool",
+            "hidden": false
+        },
+        "log_level": {
+            "default": "NONE",
+            "description": "Logging level (NONE, DEBUG, INFO, WARNING, ERROR, CRITICAL, ALL)",
+            "type": "str",
+            "hidden": false
+        },
+        "appearance_mode": {
+			"default": "Dark",
+			"description": "Appearance mode of the application (Dark, Light, System)",
+			"type": "str",
+			"hidden": false
+		},
+		"ignored_executables": {
+			"default": ["customisation", "unins"],
+			"description": "Comma-separated list of executables to ignore",
+			"type": "List[str]",
+			"hidden": false
+		},
+		"ignore_collections": {
+			"default": [""],
+			"description": "Comma-separated list of collections to ignore",
+			"type": "List[str]",
+			"hidden": false
+		},
+		"layout_paths": {
+			"default": ["layouts/Arcades/collections"],
+			"description": "Comma-separated list of layout collection paths",
+			"type": "List[str]",
+			"hidden": false
+		},
+		"default_executable": {
+			"default": "",
+			"description": "Default executable to select when opening the app",
+			"type": "str",
+			"hidden": false
+		}
+    },
+    "Controls": {
+        "controls_file": {
+            "default": "controls5.conf",
+            "description": "Controls configuration file",
+            "type": "str",
+            "hidden": true
+        },
+        "excludeAppend": {
+            "default": "",
+            "description": "Additional exclusions for controls",
+            "type": "str",
+            "hidden": true
+        },
+        "controlsAdd": {
+            "default": "",
+            "description": "Additional control configurations",
+            "type": "str",
+            "hidden": true
+        }
+    },
+    "Tabs": {
+        "multi_path_themes_tab": {
+            "default": "always",
+            "description": "Visibility of Themes Games tab",
+            "type": "str",
+            "hidden": true
+        },
+        "advanced_configs_tab": {
+            "default": "always",
+            "description": "Visibility of Advanced Configs tab",
+            "type": "str",
+            "hidden": true
+        },
+        "playlists_tab": {
+            "default": "always",
+            "description": "Visibility of Playlists tab",
+            "type": "str",
+            "hidden": true
+        },
+        "filter_games_tab": {
+            "default": "always",
+            "description": "Visibility of Filter Games tab",
+            "type": "str",
+            "hidden": true
+        },
+        "controls_tab": {
+            "default": "never",
+            "description": "Visibility of Controls tab",
+            "type": "str",
+            "hidden": true
+        },
+        "view_games_tab": {
+            "default": "never",
+            "description": "Visibility of All Games tab",
+            "type": "str",
+            "hidden": true
+        }
+    },
+    "ButtonVisibility": {
+        "show_move_artwork_button": {
+            "default": "always",
+            "description": "Controls visibility of Move Artwork button",
+            "type": "str",
+            "hidden": true
+        },
+        "show_move_roms_button": {
+            "default": "never",
+            "description": "Controls visibility of Move ROMs button",
+            "type": "str",
+            "hidden": true
+        },
+        "show_remove_random_roms_button": {
+            "default": "never",
+            "description": "Controls visibility of Move ROMs button",
+            "type": "str",
+            "hidden": true
+        },
+        "remove_games_button": {
+            "default": "always",
+            "description": "Controls visibility of Remove Games button",
+            "type": "str",
+            "hidden": true
+        },
+		"show_log_viewer_button": {
+            "default": "never",
+            "description": "Controls visibility of Log Viewer button",
+            "type": "str",
+            "hidden": false
+        },
+		"create_playlist_button": {
+            "default": "always",
+            "description": "Controls visibility of Create Playlist button",
+            "type": "str",
+            "hidden": false
+        },
+		"export_collections_button": {
+            "default": "never",
+            "description": "Controls visibility of Exoprt Collection button",
+            "type": "str",
+            "hidden": false
+        },
+		"whats_new_button": {
+            "default": "never",
+            "description": "Controls visibility of Whats New Button",
+            "type": "str",
+            "hidden": true
+        }
+    }
+}
