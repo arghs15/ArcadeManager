@@ -22,6 +22,156 @@ def get_application_path():
         # Running as script
         return os.path.dirname(os.path.abspath(__file__))
         
+# ======================================================
+# POSITION MANAGEMENT SYSTEM
+# ======================================================
+
+class PositionManager:
+    """Handles storage, normalization, and application of text positions"""
+    
+    def __init__(self, parent):
+        """Initialize the position manager"""
+        self.parent = parent  # Reference to the main app
+        self.positions = {}   # Store for in-memory positions
+    
+    def normalize(self, x, y, y_offset=None):
+        """Convert a display position to a normalized position (without y-offset)"""
+        if y_offset is None:
+            # Get from settings if not provided
+            settings = self.parent.load_text_appearance_settings()  # Use direct method call
+            y_offset = settings.get("y_offset", -40)
+        
+        # Remove y-offset
+        normalized_y = y - y_offset
+        return x, normalized_y
+    
+    def apply_offset(self, x, normalized_y, y_offset=None):
+        """Apply y-offset to a normalized position for display"""
+        if y_offset is None:
+            # Get from settings if not provided
+            settings = self.parent.load_text_appearance_settings()  # Use direct method call
+            y_offset = settings.get("y_offset", -40)
+        
+        # Add y-offset
+        display_y = normalized_y + y_offset
+        return x, display_y
+    
+    def store(self, control_name, x, y, is_normalized=False):
+        """Store a position for a control (normalizing if needed)"""
+        if not is_normalized:
+            # Normalize if the position includes y-offset
+            x, normalized_y = self.normalize(x, y)
+        else:
+            # Already normalized
+            normalized_y = y
+        
+        # Store the normalized position
+        self.positions[control_name] = (x, normalized_y)
+        return x, normalized_y
+    
+    def get_display(self, control_name, default_x=0, default_y=0):
+        """Get the display position (with y-offset applied) for a control"""
+        # Get normalized position (or use defaults)
+        x, normalized_y = self.get_normalized(control_name, default_x, default_y)
+        
+        # Apply offset for display
+        return self.apply_offset(x, normalized_y)
+    
+    def get_normalized(self, control_name, default_x=0, default_y=0):
+        """Get the normalized position (without y-offset) for a control"""
+        if control_name in self.positions:
+            return self.positions[control_name]
+        else:
+            # Return defaults if not found
+            return default_x, default_y
+    
+    def update_from_dragging(self, control_name, new_x, new_y):
+        """Update a position from dragging (storing normalized values)"""
+        x, normalized_y = self.normalize(new_x, new_y)
+        self.positions[control_name] = (x, normalized_y)
+        return x, normalized_y
+    
+    def load_from_file(self, game_name):
+        """Load positions from file for a specific game"""
+        # Reset the positions
+        self.positions = {}
+        
+        try:
+            # Use the parent's file loading method
+            loaded_positions = self.parent.load_text_positions(game_name)
+            
+            # Store the loaded positions (they should already be normalized)
+            for name, pos in loaded_positions.items():
+                if isinstance(pos, list) and len(pos) == 2:
+                    x, normalized_y = pos
+                    self.positions[name] = (x, normalized_y)
+                    
+            return len(self.positions) > 0
+        except Exception as e:
+            print(f"Error loading positions: {e}")
+            return False
+    
+    def save_to_file(self, game_name=None, is_global=False):
+        """Save positions to file (globally or for a specific game)"""
+        if not self.positions:
+            print("No positions to save")
+            return False
+            
+        try:
+            # Convert to format expected by file saving function
+            positions_to_save = {}
+            for name, (x, normalized_y) in self.positions.items():
+                positions_to_save[name] = [x, normalized_y]
+            
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.parent.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Determine the file path
+            if is_global:
+                filepath = os.path.join(preview_dir, "global_positions.json")
+            else:
+                filepath = os.path.join(preview_dir, f"{game_name}_positions.json")
+            
+            # Save to file
+            with open(filepath, 'w') as f:
+                json.dump(positions_to_save, f)
+                
+            print(f"Saved {len(positions_to_save)} positions to: {filepath}")
+            return True
+                
+        except Exception as e:
+            print(f"Error saving positions: {e}")
+            return False
+    
+    def update_from_text_items(self, text_items):
+        """Update positions from text items dictionary"""
+        for name, data in text_items.items():
+            if 'x' in data and 'y' in data:
+                x, y = data['x'], data['y']
+                # If base_y is available, use it directly (already normalized)
+                if 'base_y' in data:
+                    normalized_y = data['base_y']
+                    self.positions[name] = (x, normalized_y)
+                else:
+                    # Otherwise normalize the position
+                    x, normalized_y = self.normalize(x, y)
+                    self.positions[name] = (x, normalized_y)
+    
+    def update_text_items(self, text_items):
+        """Update text_items dictionary with current positions (with offset applied)"""
+        for name, (x, normalized_y) in self.positions.items():
+            if name in text_items:
+                # Apply offset to get display coordinates
+                display_x, display_y = self.apply_offset(x, normalized_y)
+                
+                # Update the data
+                text_items[name]['x'] = display_x
+                text_items[name]['y'] = display_y
+                text_items[name]['base_y'] = normalized_y  # Also store the normalized base_y
+                
+        return text_items
+
 class MAMEControlConfig(ctk.CTk):
     def __init__(self, preview_only=False):
         super().__init__()
@@ -35,9 +185,12 @@ class MAMEControlConfig(ctk.CTk):
         self.current_game = None
         self.use_xinput = True
         
-         # Logo size settings (as percentages)
+        # Logo size settings (as percentages)
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
+        
+        # Initialize the position manager
+        self.position_manager = PositionManager(self)
 
         # Skip main window setup if in preview-only mode
         if not preview_only:
@@ -98,6 +251,20 @@ class MAMEControlConfig(ctk.CTk):
             # Hide the main window completely
             self.withdraw()
 
+    def get_text_settings(self, refresh=False):
+        """Get text appearance settings with caching for better performance"""
+        # If we already have settings cached and no refresh requested, return them
+        if hasattr(self, '_cached_text_settings') and not refresh:
+            return self._cached_text_settings
+            
+        # Otherwise load from file
+        settings = self.load_text_appearance_settings()
+        
+        # Cache the settings
+        self._cached_text_settings = settings
+        
+        return settings
+    
     def add_appearance_settings_button(self):
         """Add a button to configure text appearance settings"""
         # Add to stats frame next to the generate images button
@@ -626,6 +793,9 @@ class MAMEControlConfig(ctk.CTk):
 
     def show_preview(self):
         """Show a preview of the control layout for the current game on the second screen"""
+        # First close any existing preview windows to prevent accumulation
+        self.close_all_previews()
+        
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
@@ -665,7 +835,6 @@ class MAMEControlConfig(ctk.CTk):
         if not game_data:
             messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
             return
-
         
         # Check for screen preference in settings
         preferred_screen = getattr(self, 'preferred_preview_screen', 2)  # Default to second screen
@@ -682,12 +851,7 @@ class MAMEControlConfig(ctk.CTk):
         self.preview_window.withdraw()
         
         # Configure the window to properly exit when closed
-        self.preview_window.protocol("WM_DELETE_WINDOW", self.quit_application)
-        
-        # Define a proper ESC key handler that will fully terminate the application
-        def force_quit(event):
-            print("ESC pressed, forcing exit")
-            self.quit_application()
+        self.preview_window.protocol("WM_DELETE_WINDOW", self.close_preview)
         
         # Bind ESC to the force_quit function
         self.preview_window.bind("<Escape>", lambda event: self.close_preview())
@@ -851,41 +1015,35 @@ class MAMEControlConfig(ctk.CTk):
             self.image_x = x
             self.image_y = y
             
-            # Add control text overlays - track them for movement
+            # Reset text items dictionary
             self.text_items = {}
             
-            # Try to load saved positions, checking ROM-specific first then global
-            positions = self.load_text_positions(self.current_game)
-            print(f"Loaded {len(positions)} positions from file")
+            # Load the position manager with saved positions
+            self.position_manager.load_from_file(self.current_game)
+            print(f"Loaded {len(self.position_manager.positions)} positions from position manager")
             
-            # Load text appearance settings BEFORE creating text items
-            text_settings = self.load_text_appearance_settings()
-            use_uppercase = text_settings.get("use_uppercase", False)
-            font_family = text_settings.get("font_family", "Arial")
-            font_size = text_settings.get("font_size", 28)
-            bold_strength = text_settings.get("bold_strength", 2)
-            y_offset = text_settings.get("y_offset", -40)
+            # Load text appearance settings
+            settings = self.get_text_settings()
+            use_uppercase = settings.get("use_uppercase", False)
+            font_family = settings.get("font_family", "Arial")
+            font_size = settings.get("font_size", 28)
+            bold_strength = settings.get("bold_strength", 2)
+            y_offset = settings.get('y_offset', -40)
             
             print(f"Loaded text settings: uppercase={use_uppercase}, font={font_family}, size={font_size}, y_offset={y_offset}")
             
-            # Apply scaling factor for certain fonts
-            scaling_factors = {
-                "Times New Roman": 1.5,
-                "Times": 1.5,
-                "Georgia": 1.4,
-                "Garamond": 1.7,
-                "Baskerville": 1.6,
-                "Palatino": 1.5,
-                "Courier New": 1.3,
-                "Courier": 1.3,
-                "Consolas": 1.2,
-                "Cambria": 1.4
-            }
-            scale = scaling_factors.get(font_family, 1.0)
-            adjusted_font_size = int(font_size * scale)
+            # Apply scaling factor for fonts
+            adjusted_font_size = self.apply_font_scaling(font_family, font_size)
+            
+            # Create font with correct size and family
+            try:
+                import tkinter.font as tkfont
+                text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+            except Exception as e:
+                print(f"Error creating font: {e}")
+                text_font = (font_family, adjusted_font_size, "bold")
             
             # Add player controls as text overlays
-            text_y = y + 50  # Start 50px from top of image
             control_count = 0
             
             # Process only Player 1 controls
@@ -902,76 +1060,67 @@ class MAMEControlConfig(ctk.CTk):
                         continue
                     
                     # Apply uppercase if enabled
-                    if use_uppercase:
-                        display_text = action.upper()
-                    else:
-                        display_text = action
+                    display_text = self.get_display_text(action, settings)
                     
                     print(f"Adding control: {control_name} = {display_text}")
                     
-                    # Position text (use saved positions if available, otherwise spread across the top)
-                    if control_name in positions:
-                        # Get the saved position (which should already include any past y-offset)
-                        text_x, base_text_y = positions[control_name]
+                    # Get position from position manager or use default
+                    if control_name in self.position_manager.positions:
+                        # Get normalized position
+                        normalized_x, normalized_y = self.position_manager.get_normalized(control_name)
                         
-                        # Now apply the current y-offset setting correctly
-                        # We're assuming saved positions are "normalized" (without y-offset)
-                        text_y = base_text_y + y_offset
+                        # Apply current offset for display
+                        text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y, y_offset)
                         
-                        print(f"Using saved position for {control_name}: base=({text_x}, {base_text_y}), with offset=({text_x}, {text_y})")
+                        print(f"Using saved position for {control_name}: normalized=({normalized_x}, {normalized_y}), display=({text_x}, {text_y})")
                     else:
-                        text_x = x + 100 + (control_count * 150) % (new_width - 200)
-                        if text_x + 100 > x + new_width:
-                            text_x = x + 100
-                            base_text_y = y + 50 + (control_count // 5) * 40
-                            text_y = base_text_y + y_offset
+                        # Default position calculation (arranged in a grid)
+                        grid_x = x + 100 + (control_count % 5) * 150
+                        grid_y = y + 50 + (control_count // 5) * 40
+                        
+                        # Apply offset to default position
+                        text_x, text_y = grid_x, grid_y + y_offset
+                        
+                        # Store normalized position
+                        normalized_x, normalized_y = grid_x, grid_y
+                        
                         print(f"Using default position for {control_name}: ({text_x}, {text_y})")
                     
                     # Check visibility based on control type
-                    is_visible = False
-                    for control_type in self.visible_control_types:
-                        if control_type in control_name:
-                            is_visible = True
-                            break
+                    is_visible = self.is_control_visible(control_name)
                     
-                    # Create font with correct size and family
-                    try:
-                        import tkinter.font as tkfont
-                        text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-                    except Exception as e:
-                        print(f"Error creating font: {e}")
-                        text_font = (font_family, adjusted_font_size, "bold")
+                    # Create text with appropriate shadow effect
+                    text_item, shadow_item = self.create_text_with_shadow(
+                        canvas, 
+                        text_x, 
+                        text_y, 
+                        display_text, 
+                        text_font
+                    )
                     
-                    # Apply bold effect based on strength setting
-                    if bold_strength == 0:
-                        # No shadow/bold effect
-                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
-                                            font=text_font, fill="white",
-                                            anchor="sw", state="" if is_visible else "hidden")
-                        shadow = None
-                    else:
-                        # Create text with shadow for better visibility based on bold strength
-                        shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
-                        shadow = canvas.create_text(text_x+shadow_offset, text_y+shadow_offset, text=display_text, 
-                                            font=text_font, fill="black",
-                                            anchor="sw", state="" if is_visible else "hidden")
-                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
-                                            font=text_font, fill="white",
-                                            anchor="sw", state="" if is_visible else "hidden")
+                    # Set visibility state
+                    if not is_visible:
+                        canvas.itemconfigure(text_item, state="hidden")
+                        if shadow_item is not None:
+                            canvas.itemconfigure(shadow_item, state="hidden")
                     
                     # Store the text items
                     self.text_items[control_name] = {
                         'text': text_item,
-                        'shadow': shadow,
-                        'action': action,  # Store original action for reuse
-                        'display_text': display_text,  # Store display text that may be uppercase
+                        'shadow': shadow_item,
+                        'action': action,           # Store original action for reuse
+                        'display_text': display_text, # Store display text that may be uppercase
                         'x': text_x, 
                         'y': text_y,
-                        'base_y': text_y - y_offset  # Store the base y position without offset
+                        'base_y': normalized_y      # Store the normalized base_y
                     }
                     
+                    # Store in position manager (if not already there)
+                    if control_name not in self.position_manager.positions:
+                        self.position_manager.store(control_name, normalized_x, normalized_y, is_normalized=True)
+                    
                     # Make the text draggable
-                    self.make_draggable(canvas, text_item, shadow, control_name)
+                    self.make_draggable(canvas, text_item, shadow_item, control_name)
                     control_count += 1
             
             # Add right-click menu for text removal
@@ -1245,118 +1394,70 @@ class MAMEControlConfig(ctk.CTk):
     
     
     def save_global_positions(self):
-        """Save all positions to global file (with position normalization)"""
+        """Save all positions to global file using the position manager"""
         if hasattr(self, 'showing_all_controls') and self.showing_all_controls:
             return self.save_all_controls_positions()
         
         try:
-            # Get the current y-offset setting (for normalization)
-            settings = self.load_text_appearance_settings()
-            y_offset = settings.get("y_offset", -40)
-            print(f"Current y_offset for normalization: {y_offset}")
+            # Make sure we have a position manager
+            if not hasattr(self, 'position_manager'):
+                self.position_manager = PositionManager(self)
             
-            # Get all current positions and normalize them (remove the y-offset)
-            positions = {}
-            for name, data in self.text_items.items():
-                if 'x' not in data or 'y' not in data:
-                    print(f"  Warning: Missing x/y for {name}")
-                    continue
-                    
-                x, y = data['x'], data['y']
-                
-                # Use base_y if available, otherwise calculate it
-                if 'base_y' in data:
-                    normalized_y = data['base_y']
-                    print(f"Using stored base_y for {name}: {normalized_y}")
-                else:
-                    # Remove the y-offset to store normalized positions
-                    normalized_y = y - y_offset  # Remove the offset before saving
-                    print(f"Calculating base_y for {name}: {y} - {y_offset} = {normalized_y}")
-                
-                positions[name] = [x, normalized_y]  # Use lists instead of tuples
-                print(f"Saving normalized position for {name}: ({x}, {normalized_y})")
-                
-            if not positions:
-                print("  Warning: No positions to save!")
-                messagebox.showinfo("Error", "No valid positions found to save")
+            # Update the position manager with current text item positions
+            if hasattr(self, 'text_items'):
+                self.position_manager.update_from_text_items(self.text_items)
+            
+            # Save positions globally
+            result = self.position_manager.save_to_file(is_global=True)
+            
+            if result:
+                count = len(self.position_manager.positions)
+                print(f"Saved {count} global positions")
+                messagebox.showinfo("Success", f"Global positions saved ({count} items)")
+                return True
+            else:
+                messagebox.showerror("Error", "Could not save positions")
                 return False
                 
-            # Create preview directory if it doesn't exist
-            preview_dir = os.path.join(self.mame_dir, "preview")
-            os.makedirs(preview_dir, exist_ok=True)
-            
-            # Save to file with explicit path
-            filepath = os.path.join(preview_dir, "global_positions.json")
-            
-            with open(filepath, 'w') as f:
-                json.dump(positions, f)
-                
-            print(f"Saved {len(positions)} global positions to: {filepath}")
-            messagebox.showinfo("Success", f"Global positions saved ({len(positions)} items)")
-            return True
         except Exception as e:
             print(f"Error saving global positions: {e}")
             messagebox.showerror("Error", f"Could not save positions: {e}")
             return False
 
     def save_rom_positions(self):
-        """Save positions for current ROM (with position normalization)"""
+        """Save positions for current ROM using the position manager"""
         if not self.current_game:
             messagebox.showinfo("Error", "No game selected")
             return False
             
         try:
-            # Get the current y-offset setting (for normalization)
-            settings = self.load_text_appearance_settings()
-            y_offset = settings.get("y_offset", -40)
-            print(f"Current y_offset for normalization: {y_offset}")
+            # Make sure we have a position manager
+            if not hasattr(self, 'position_manager'):
+                self.position_manager = PositionManager(self)
             
-            # Get all current positions and normalize them
-            positions = {}
-            for name, data in self.text_items.items():
-                if 'x' not in data or 'y' not in data:
-                    print(f"  Warning: Missing x/y for {name}")
-                    continue
-                    
-                x, y = data['x'], data['y']
-                
-                # Use base_y if available, otherwise calculate it
-                if 'base_y' in data:
-                    normalized_y = data['base_y']
-                    print(f"Using stored base_y for {name}: {normalized_y}")
-                else:
-                    # Remove the y-offset to store normalized positions
-                    normalized_y = y - y_offset  # Remove the offset before saving
-                    print(f"Calculating base_y for {name}: {y} - {y_offset} = {normalized_y}")
-                
-                positions[name] = [x, normalized_y]  # Use lists instead of tuples
-                print(f"Saving normalized position for {name}: ({x}, {normalized_y})")
-                
-            if not positions:
-                print("  Warning: No positions to save!")
-                messagebox.showinfo("Error", "No valid positions found to save")
+            # Update the position manager with current text item positions
+            if hasattr(self, 'text_items'):
+                self.position_manager.update_from_text_items(self.text_items)
+            
+            # Save positions for the current game
+            result = self.position_manager.save_to_file(game_name=self.current_game, is_global=False)
+            
+            if result:
+                count = len(self.position_manager.positions)
+                print(f"Saved {count} positions for {self.current_game}")
+                messagebox.showinfo("Success", f"Positions saved for {self.current_game}")
+                return True
+            else:
+                messagebox.showerror("Error", "Could not save positions")
                 return False
                 
-            # Create preview directory if it doesn't exist  
-            preview_dir = os.path.join(self.mame_dir, "preview")
-            os.makedirs(preview_dir, exist_ok=True)
-            
-            # Save to file with explicit path
-            filepath = os.path.join(preview_dir, f"{self.current_game}_positions.json")
-            
-            with open(filepath, 'w') as f:
-                json.dump(positions, f)
-                
-            print(f"Saved {len(positions)} positions for {self.current_game} to: {filepath}")
-            messagebox.showinfo("Success", f"Positions saved for {self.current_game}")
-            return True
         except Exception as e:
             print(f"Error saving ROM positions: {e}")
             messagebox.showerror("Error", f"Could not save positions: {e}")
             return False
     
     def make_draggable(self, canvas, text_item, shadow_item, control_name):
-        """Make text draggable on the canvas with proper coordinate tracking"""
+        """Make text draggable on the canvas with position manager integration"""
         def on_drag_start(event):
             # Save initial position
             canvas.drag_data = {
@@ -1391,19 +1492,18 @@ class MAMEControlConfig(ctk.CTk):
                     new_x = old_x + dx
                     new_y = old_y + dy
                     
-                    # Calculate the normalized base_y (without y-offset)
-                    settings = self.load_text_appearance_settings()
-                    y_offset = settings.get("y_offset", -40)
-                    new_base_y = new_y - y_offset
+                    # Update with position manager
+                    x, normalized_y = self.position_manager.update_from_dragging(control_name, new_x, new_y)
                     
-                    # Print debugging for buttons
-                    if "BUTTON" in control_name:
-                        print(f"Dragging {control_name}: ({old_x},{old_y}) -> ({new_x},{new_y}), base_y={new_base_y}")
-                        
-                    # Update the dictionary
+                    # Update the text item dictionary
                     self.text_items[control_name]['x'] = new_x
                     self.text_items[control_name]['y'] = new_y
-                    self.text_items[control_name]['base_y'] = new_base_y  # Update base_y as well
+                    self.text_items[control_name]['base_y'] = normalized_y  # Store the normalized base_y
+                    
+                    # Print debugging info
+                    if "BUTTON" in control_name:
+                        print(f"Dragging {control_name}: ({old_x},{old_y}) -> ({new_x},{new_y}), base_y={normalized_y}")
+                        
                 except Exception as e:
                     print(f"Error in drag motion: {e}")
                     import traceback
@@ -1414,6 +1514,7 @@ class MAMEControlConfig(ctk.CTk):
             if hasattr(canvas, 'drag_data'):
                 try:
                     # Print final position for debugging
+                    control_name = canvas.drag_data['control']
                     x, y = self.text_items[control_name]['x'], self.text_items[control_name]['y']
                     base_y = self.text_items[control_name].get('base_y', y)
                     print(f"Final position for {control_name}: x={x}, y={y}, base_y={base_y}")
@@ -3666,19 +3767,15 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error saving text appearance settings: {e}")
 
-    # 1. Fix the apply_text_settings function to ensure uppercase is consistently applied
     def apply_text_settings(self, draw, text, text_x, text_y, font, settings=None):
         """Apply text appearance settings to draw text with appropriate styling"""
         if settings is None:
-            settings = self.load_text_appearance_settings()
+            settings = self.get_text_settings()
         
-        # Convert text to uppercase only if the setting is enabled
+        # Apply uppercase if enabled
         use_uppercase = settings.get("use_uppercase", False)
         if use_uppercase:
             text = text.upper()
-        else:
-            # Ensure we use the original case if uppercase is disabled
-            text = text
         
         # Apply Y offset adjustment
         text_y = text_y + settings.get("y_offset", -40)
@@ -3721,50 +3818,24 @@ class MAMEControlConfig(ctk.CTk):
             return
         
         # Load current text appearance settings
-        settings = self.load_text_appearance_settings()
+        settings = self.get_text_settings(refresh=True)  # Force refresh
         
         # Check if uppercase is enabled
         use_uppercase = settings.get("use_uppercase", False)
         print(f"Uppercase setting: {use_uppercase}")
         
-        # Get font family and size
+        # Get font settings
         font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
+        y_offset = settings.get('y_offset', -40)
         
-        # Apply scaling if needed (similar to image generation)
-        scaling_factors = {
-            "Times New Roman": 1.5,
-            "Times": 1.5,
-            "Georgia": 1.4,
-            "Garamond": 1.7,
-            "Baskerville": 1.6,
-            "Palatino": 1.5,
-            "Courier New": 1.3,
-            "Courier": 1.3,
-            "Consolas": 1.2,
-            "Cambria": 1.4
-        }
-        
-        scale = scaling_factors.get(font_family, 1.0)
-        adjusted_font_size = int(font_size * scale)
+        # Apply scaling factor
+        adjusted_font_size = self.apply_font_scaling(font_family, font_size)
         
         print(f"Updating preview text: Font={font_family}, Size={adjusted_font_size}, Uppercase={use_uppercase}")
         
-        # Create canvas font (TkFont)
-        try:
-            import tkinter.font as tkfont
-            preview_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-        except:
-            # Fallback to default font specification
-            preview_font = (font_family, adjusted_font_size, "bold")
-        
-        # Apply corrections for preview canvas
-        y_offset = settings.get('y_offset', -40)
-        preview_correction = -5  # Default correction
-        
-        # Scale correction based on font size
-        size_factor = adjusted_font_size / 28.0  # Relative to default size
-        preview_correction = int(preview_correction * size_factor)
+        # Create canvas font
+        preview_font = self.get_tkfont(settings)
         
         # Store original positions if not already stored
         if not hasattr(self, 'original_positions'):
@@ -3773,6 +3844,10 @@ class MAMEControlConfig(ctk.CTk):
                 if 'x' in data and 'y' in data:
                     self.original_positions[control_name] = (data['x'], data['y'])
         
+        # Update positions using the position manager
+        # First, update the manager with the current positions
+        self.position_manager.update_from_text_items(self.text_items)
+        
         # Update each text item in the preview
         for control_name, data in self.text_items.items():
             try:
@@ -3780,12 +3855,8 @@ class MAMEControlConfig(ctk.CTk):
                 if 'action' in data:
                     action = data['action']
                     
-                    # Convert to uppercase if enabled
-                    if use_uppercase:
-                        display_text = action.upper()
-                        print(f"Converting {action} to {display_text}")
-                    else:
-                        display_text = action
+                    # Get display text (apply uppercase if needed)
+                    display_text = self.get_display_text(action, settings)
                     
                     # Store the updated display text
                     data['display_text'] = display_text
@@ -3798,29 +3869,25 @@ class MAMEControlConfig(ctk.CTk):
                     if 'shadow' in data and data['shadow'] is not None:
                         self.preview_canvas.itemconfigure(data['shadow'], text=display_text, font=preview_font)
                 
-                # Apply position updates if needed
-                if control_name in self.original_positions:
-                    # Get original position
-                    orig_x, orig_y = self.original_positions[control_name]
+                # Get the normalized position
+                normalized_x, normalized_y = self.position_manager.get_normalized(control_name, data['x'], data.get('base_y', data['y']))
+                
+                # Apply the current offset
+                display_x, display_y = self.position_manager.apply_offset(normalized_x, normalized_y)
+                
+                # Update position on canvas
+                if 'text' in data:
+                    self.preview_canvas.coords(data['text'], display_x, display_y)
+                if 'shadow' in data and data['shadow'] is not None:
+                    # Shadow should have a small offset
+                    shadow_offset = settings.get('bold_strength', 2)
+                    shadow_offset = max(1, min(shadow_offset, 3))  # Clamp between 1-3 pixels
+                    self.preview_canvas.coords(data['shadow'], display_x+shadow_offset, display_y+shadow_offset)
                     
-                    # Apply total offset
-                    total_offset = y_offset + preview_correction
-                    
-                    # Calculate new position
-                    new_x, new_y = orig_x, orig_y + total_offset
-                    
-                    # Update position
-                    if 'text' in data:
-                        self.preview_canvas.coords(data['text'], new_x, new_y)
-                    if 'shadow' in data and data['shadow'] is not None:
-                        # Shadow should have a small offset
-                        shadow_offset = settings.get('bold_strength', 2)
-                        shadow_offset = max(1, min(shadow_offset, 3))  # Clamp between 1-3 pixels
-                        self.preview_canvas.coords(data['shadow'], new_x+shadow_offset, new_y+shadow_offset)
-                    
-                    # Update stored position
-                    data['x'] = new_x
-                    data['y'] = new_y
+                # Update stored position
+                data['x'] = display_x
+                data['y'] = display_y
+                data['base_y'] = normalized_y
                     
             except Exception as e:
                 print(f"Error updating text for {control_name}: {e}")
