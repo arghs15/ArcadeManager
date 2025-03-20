@@ -97,7 +97,7 @@ class PositionManager:
         self.positions = {}
         
         try:
-            # Use the parent's file loading method
+            # Use the parent's file loading method to get positions with proper priority
             loaded_positions = self.parent.load_text_positions(game_name)
             
             # Store the loaded positions (they should already be normalized)
@@ -3163,11 +3163,8 @@ class MAMEControlConfig(ctk.CTk):
             image_width = self.preview_canvas.winfo_width()
             image_height = self.preview_canvas.winfo_height()
         
-        # Load any saved positions
-        positions = self.load_text_positions("all_controls")
-        if not positions and os.path.exists(os.path.join(self.mame_dir, "preview", "global_positions.json")):
-            # Fall back to global positions if all_controls doesn't exist
-            positions = self.load_text_positions("global")
+        # Load positions from the regular global file first
+        positions = self.load_text_positions("global")
         
         # Add all controls as text
         control_count = 0
@@ -3216,7 +3213,7 @@ class MAMEControlConfig(ctk.CTk):
         # Re-apply the alignment drag handlers
         self.update_draggable_for_alignment()
         
-        print(f"Showing all {len(self.text_items)} standard controls")
+        print(f"Showing all {len(self.text_items)} standard controls with positions from global file")
 
     def restore_game_controls(self):
         """Restore the game-specific controls"""
@@ -3232,10 +3229,22 @@ class MAMEControlConfig(ctk.CTk):
         # Restore original controls dictionary
         self.text_items = self.original_text_items
         
+        # Load the global positions to apply to current controls
+        global_positions = self.load_text_positions("global")
+        
         # Important: We need to recreate the text items on the canvas since they were deleted
         for control_name, data in self.text_items.items():
-            # Extract coordinates and text
-            text_x, text_y = data['x'], data['y']
+            # Get position - prioritize global positions if available
+            if control_name in global_positions:
+                text_x, text_y = global_positions[control_name]
+                # Update the stored positions
+                data['x'] = text_x
+                data['y'] = text_y
+            else:
+                # Extract coordinates from original data
+                text_x, text_y = data['x'], data['y']
+            
+            # Get text to display
             action = data['action']
             
             # Check visibility based on control type
@@ -3273,10 +3282,10 @@ class MAMEControlConfig(ctk.CTk):
         if hasattr(self, 'update_draggable_for_alignment'):
             self.update_draggable_for_alignment()
         
-        print(f"Restored {len(self.text_items)} game-specific controls")
+        print(f"Restored {len(self.text_items)} game-specific controls using global positions")
 
     def save_all_controls_positions(self):
-        """Save positions for all standard controls"""
+        """Save positions for all standard controls to the global positions file"""
         try:
             # Get all current positions
             positions = {}
@@ -3297,14 +3306,14 @@ class MAMEControlConfig(ctk.CTk):
             preview_dir = os.path.join(self.mame_dir, "preview")
             os.makedirs(preview_dir, exist_ok=True)
             
-            # Save to special file
-            filepath = os.path.join(preview_dir, "all_controls_positions.json")
+            # Save to global_positions.json (not all_controls_positions.json)
+            filepath = os.path.join(preview_dir, "global_positions.json")
             
             with open(filepath, 'w') as f:
                 json.dump(positions, f)
                 
-            print(f"Saved {len(positions)} positions for all controls to: {filepath}")
-            messagebox.showinfo("Success", f"All controls positions saved ({len(positions)} items)")
+            print(f"Saved {len(positions)} positions for all controls to global file: {filepath}")
+            messagebox.showinfo("Success", f"All controls positions saved to global file ({len(positions)} items)")
             return True
         except Exception as e:
             print(f"Error saving all controls positions: {e}")
