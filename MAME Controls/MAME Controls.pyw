@@ -1303,6 +1303,30 @@ class MAMEControlConfig(ctk.CTk):
             import traceback
             traceback.print_exc()
 
+    def apply_font_scaling(self, font_family, font_size):
+        """Apply scaling factor for certain fonts that appear smaller than expected"""
+        # Define scaling factors for fonts that tend to appear small
+        scaling_factors = {
+            "Times New Roman": 1.5,
+            "Times": 1.5,
+            "Georgia": 1.4,
+            "Garamond": 1.7,
+            "Baskerville": 1.6,
+            "Palatino": 1.5,
+            "Courier New": 1.3,
+            "Courier": 1.3,
+            "Consolas": 1.2,
+            "Cambria": 1.4,
+            # Add more here if you find other fonts need adjustment
+        }
+        
+        # Apply scaling if the font needs it, otherwise return original size
+        scale = scaling_factors.get(font_family, 1.0)
+        adjusted_size = int(font_size * scale)
+        
+        print(f"Font scaling: {font_family} size {font_size} → {adjusted_size} (scale factor: {scale})")
+        return adjusted_size
+    
     # 2. Add the toggle handler method
     def toggle_hide_preview_buttons(self):
         """Toggle whether preview buttons should be hidden"""
@@ -1396,6 +1420,7 @@ class MAMEControlConfig(ctk.CTk):
     def save_global_positions(self):
         """Save all positions to global file using the position manager"""
         if hasattr(self, 'showing_all_controls') and self.showing_all_controls:
+            print("In 'Show All' mode, using save_all_controls_positions")
             return self.save_all_controls_positions()
         
         try:
@@ -1404,8 +1429,25 @@ class MAMEControlConfig(ctk.CTk):
                 self.position_manager = PositionManager(self)
             
             # Update the position manager with current text item positions
-            if hasattr(self, 'text_items'):
-                self.position_manager.update_from_text_items(self.text_items)
+            # This is critical - we need to update the position manager first
+            for name, data in self.text_items.items():
+                if 'x' not in data or 'y' not in data:
+                    print(f"  Warning: Missing x/y for {name}")
+                    continue
+                    
+                x = data['x']
+                # Use base_y (normalized y) if available, otherwise calculate it
+                if 'base_y' in data:
+                    normalized_y = data['base_y']
+                else:
+                    # Need to subtract y_offset to get normalized position
+                    settings = self.get_text_settings()
+                    y_offset = settings.get('y_offset', -40)
+                    normalized_y = data['y'] - y_offset
+                    
+                # Store in position manager with normalized coordinates
+                self.position_manager.store(name, x, normalized_y, is_normalized=True)
+                print(f"Stored position for {name}: ({x}, {normalized_y})")
             
             # Save positions globally
             result = self.position_manager.save_to_file(is_global=True)
@@ -3110,7 +3152,8 @@ class MAMEControlConfig(ctk.CTk):
             self.restore_game_controls()
             self.show_all_button.configure(text="Show All")
             self.showing_all_controls = False
-
+    
+    # 1. Fix for show_all_possible_controls()
     def show_all_possible_controls(self):
         """Show all possible controls for positioning"""
         # Store current controls to restore later
@@ -3163,42 +3206,116 @@ class MAMEControlConfig(ctk.CTk):
             image_width = self.preview_canvas.winfo_width()
             image_height = self.preview_canvas.winfo_height()
         
-        # Load positions from the regular global file first
-        positions = self.load_text_positions("global")
+        # IMPORTANT CHANGE: Create a new position manager and explicitly load global positions
+        self.position_manager = PositionManager(self)
+        global_loaded = self.position_manager.load_from_file("global")
+        print(f"Loaded {len(self.position_manager.positions)} positions from global file")
+        
+        # Load text appearance settings
+        settings = self.get_text_settings(refresh=True)
+        use_uppercase = settings.get("use_uppercase", False)
+        font_family = settings.get("font_family", "Arial")
+        font_size = settings.get("font_size", 28)
+        bold_strength = settings.get("bold_strength", 2)
+        y_offset = settings.get('y_offset', -40)
+        
+        print(f"Using text settings for 'Show All': font={font_family}, size={font_size}, bold={bold_strength}, uppercase={use_uppercase}, y_offset={y_offset}")
+        
+        # Apply scaling factor for fonts
+        scaling_factors = {
+            "Times New Roman": 1.5,
+            "Times": 1.5,
+            "Georgia": 1.4,
+            "Garamond": 1.7,
+            "Baskerville": 1.6,
+            "Palatino": 1.5,
+            "Courier New": 1.3,
+            "Courier": 1.3,
+            "Consolas": 1.2,
+            "Cambria": 1.4
+        }
+        scale = scaling_factors.get(font_family, 1.0)
+        adjusted_font_size = int(font_size * scale)
+        
+        # Create font with correct size and family
+        try:
+            import tkinter.font as tkfont
+            text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+        except Exception as e:
+            print(f"Error creating font: {e}")
+            text_font = (font_family, adjusted_font_size, "bold")
         
         # Add all controls as text
         control_count = 0
         for control_name, action in standard_controls.items():
-            # Position text (use saved positions if available, otherwise use a grid layout)
-            if control_name in positions:
-                text_x, text_y = positions[control_name]
-            else:
-                # Arrange in a grid: 4 columns
+            # Get display text (apply uppercase if needed)
+            display_text = self.get_display_text(action, settings)
+            
+            # Position text (use position manager if available, otherwise use a grid layout)
+            normalized_x, normalized_y = self.position_manager.get_normalized(control_name)
+            
+            if normalized_x == 0 and normalized_y == 0:
+                # No saved position found, use default grid layout
                 column = control_count % 4
                 row = control_count // 4
                 
                 # Calculate position
-                text_x = image_x + 100 + (column * 150)
-                text_y = image_y + 50 + (row * 50)
+                normalized_x = image_x + 100 + (column * 150)
+                normalized_y = image_y + 50 + (row * 50)
                 
+                # Store in position manager
+                self.position_manager.store(control_name, normalized_x, normalized_y, is_normalized=True)
+                print(f"Using default position for {control_name}: ({normalized_x}, {normalized_y})")
+            else:
+                print(f"Using saved position for {control_name}: ({normalized_x}, {normalized_y})")
+            
+            # Apply the y-offset from settings - for display only
+            text_y = normalized_y + y_offset
+            
             # Always visible in "show all" mode
             is_visible = True
             
-            # Create text with shadow for better visibility
-            shadow = self.preview_canvas.create_text(text_x+2, text_y+2, text=action, 
-                                        font=("Arial", 20, "bold"), fill="black",
-                                        anchor="sw", state="" if is_visible else "hidden")
-            text_item = self.preview_canvas.create_text(text_x, text_y, text=action, 
-                                        font=("Arial", 20, "bold"), fill="white",
-                                        anchor="sw", state="" if is_visible else "hidden")
+            # Create text based on bold strength setting
+            shadow = None
+            if bold_strength == 0:
+                # No shadow/bold effect
+                text_item = self.preview_canvas.create_text(
+                    normalized_x, text_y, 
+                    text=display_text, 
+                    font=text_font, 
+                    fill="white",
+                    anchor="sw", 
+                    state="" if is_visible else "hidden"
+                )
+            else:
+                # Apply bold effect based on strength setting
+                shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
+                shadow = self.preview_canvas.create_text(
+                    normalized_x+shadow_offset, text_y+shadow_offset, 
+                    text=display_text, 
+                    font=text_font, 
+                    fill="black",
+                    anchor="sw", 
+                    state="" if is_visible else "hidden"
+                )
+                text_item = self.preview_canvas.create_text(
+                    normalized_x, text_y, 
+                    text=display_text, 
+                    font=text_font, 
+                    fill="white",
+                    anchor="sw", 
+                    state="" if is_visible else "hidden"
+                )
             
             # Store the text items
             self.text_items[control_name] = {
                 'text': text_item,
                 'shadow': shadow,
-                'action': action,
-                'x': text_x, 
-                'y': text_y
+                'action': action,         # Store original action for reuse
+                'display_text': display_text,  # Store display text that may be uppercase
+                'x': normalized_x, 
+                'y': text_y,           # Store the display y (with offset)
+                'base_y': normalized_y  # Store the normalized base_y
             }
             
             # Make the text draggable
@@ -3213,8 +3330,12 @@ class MAMEControlConfig(ctk.CTk):
         # Re-apply the alignment drag handlers
         self.update_draggable_for_alignment()
         
-        print(f"Showing all {len(self.text_items)} standard controls with positions from global file")
+        # Set showing_all_controls flag
+        self.showing_all_controls = True
+        
+        print(f"Showing all {len(self.text_items)} standard controls with current text settings")
 
+    # 2. Fix for restore_game_controls()
     def restore_game_controls(self):
         """Restore the game-specific controls"""
         if not self.original_text_items:
@@ -3226,26 +3347,77 @@ class MAMEControlConfig(ctk.CTk):
             self.preview_canvas.delete(data['text'])
             self.preview_canvas.delete(data['shadow'])
         
+        # Important: Load global positions FIRST to ensure we're using latest saved positions
+        self.position_manager = PositionManager(self)
+        self.position_manager.load_from_file("global")
+        print(f"Loaded {len(self.position_manager.positions)} positions from global file")
+        
         # Restore original controls dictionary
         self.text_items = self.original_text_items
         
-        # Load the global positions to apply to current controls
-        global_positions = self.load_text_positions("global")
+        # Load text appearance settings
+        settings = self.get_text_settings(refresh=True)
+        use_uppercase = settings.get("use_uppercase", False)
+        font_family = settings.get("font_family", "Arial")
+        font_size = settings.get("font_size", 28)
+        bold_strength = settings.get("bold_strength", 2)
+        y_offset = settings.get('y_offset', -40)
+        
+        print(f"Restoring game controls with text settings: font={font_family}, size={font_size}, bold={bold_strength}, uppercase={use_uppercase}, y_offset={y_offset}")
+        
+        # Apply scaling factor for fonts
+        scaling_factors = {
+            "Times New Roman": 1.5,
+            "Times": 1.5,
+            "Georgia": 1.4,
+            "Garamond": 1.7,
+            "Baskerville": 1.6,
+            "Palatino": 1.5,
+            "Courier New": 1.3,
+            "Courier": 1.3,
+            "Consolas": 1.2,
+            "Cambria": 1.4
+        }
+        scale = scaling_factors.get(font_family, 1.0)
+        adjusted_font_size = int(font_size * scale)
+        
+        # Create font with correct size and family
+        try:
+            import tkinter.font as tkfont
+            text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+        except Exception as e:
+            print(f"Error creating font: {e}")
+            text_font = (font_family, adjusted_font_size, "bold")
         
         # Important: We need to recreate the text items on the canvas since they were deleted
         for control_name, data in self.text_items.items():
-            # Get position - prioritize global positions if available
-            if control_name in global_positions:
-                text_x, text_y = global_positions[control_name]
-                # Update the stored positions
-                data['x'] = text_x
-                data['y'] = text_y
-            else:
-                # Extract coordinates from original data
-                text_x, text_y = data['x'], data['y']
-            
-            # Get text to display
+            # Get the original action text
             action = data['action']
+            
+            # Apply uppercase if enabled
+            display_text = self.get_display_text(action, settings)
+            data['display_text'] = display_text
+            
+            # Get position from position manager FIRST (this is the key change)
+            normalized_x, normalized_y = self.position_manager.get_normalized(control_name)
+            
+            # Only if not found in position manager, use the data or original positions
+            if normalized_x == 0 and normalized_y == 0:
+                if 'base_y' in data:
+                    # Original data already has normalized coordinates
+                    normalized_x, normalized_y = data['x'], data['base_y']
+                else:
+                    # Extract coordinates from original data
+                    normalized_x, normalized_y = data['x'], data['y'] - y_offset
+                    data['base_y'] = normalized_y
+            
+            # Apply the y-offset to get display coordinates
+            text_x, text_y = normalized_x, normalized_y + y_offset
+            
+            # Update the stored positions
+            data['x'] = text_x
+            data['y'] = text_y
+            data['base_y'] = normalized_y
             
             # Check visibility based on control type
             is_visible = False
@@ -3254,13 +3426,37 @@ class MAMEControlConfig(ctk.CTk):
                     is_visible = True
                     break
             
-            # Create text with shadow for better visibility
-            shadow = self.preview_canvas.create_text(text_x+2, text_y+2, text=action, 
-                                    font=("Arial", 20, "bold"), fill="black",
-                                    anchor="sw", state="" if is_visible else "hidden")
-            text_item = self.preview_canvas.create_text(text_x, text_y, text=action, 
-                                    font=("Arial", 20, "bold"), fill="white",
-                                    anchor="sw", state="" if is_visible else "hidden")
+            # Create text based on bold strength setting
+            shadow = None
+            if bold_strength == 0:
+                # No shadow/bold effect
+                text_item = self.preview_canvas.create_text(
+                    text_x, text_y, 
+                    text=display_text, 
+                    font=text_font, 
+                    fill="white",
+                    anchor="sw", 
+                    state="" if is_visible else "hidden"
+                )
+            else:
+                # Apply bold effect based on strength setting
+                shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
+                shadow = self.preview_canvas.create_text(
+                    text_x+shadow_offset, text_y+shadow_offset, 
+                    text=display_text, 
+                    font=text_font, 
+                    fill="black",
+                    anchor="sw", 
+                    state="" if is_visible else "hidden"
+                )
+                text_item = self.preview_canvas.create_text(
+                    text_x, text_y, 
+                    text=display_text, 
+                    font=text_font, 
+                    fill="white",
+                    anchor="sw", 
+                    state="" if is_visible else "hidden"
+                )
             
             # Update the data with new canvas items
             data['text'] = text_item
@@ -3282,43 +3478,65 @@ class MAMEControlConfig(ctk.CTk):
         if hasattr(self, 'update_draggable_for_alignment'):
             self.update_draggable_for_alignment()
         
-        print(f"Restored {len(self.text_items)} game-specific controls using global positions")
+        print(f"Restored {len(self.text_items)} game-specific controls using current text settings")
+    # 3. Add a helper method for consistent text formatting
 
+    def get_display_text(self, action, settings=None):
+        """Get the display text with proper formatting based on settings"""
+        if settings is None:
+            settings = self.get_text_settings()
+            
+        # Apply uppercase if enabled
+        use_uppercase = settings.get("use_uppercase", False)
+        if use_uppercase:
+            return action.upper()
+        else:
+            return action
+    
     def save_all_controls_positions(self):
         """Save positions for all standard controls to the global positions file"""
         try:
-            # Get all current positions
-            positions = {}
+            # Use the position manager to store all current positions properly
+            if not hasattr(self, 'position_manager'):
+                self.position_manager = PositionManager(self)
+            
+            # Update position manager from current text items
             for name, data in self.text_items.items():
                 if 'x' not in data or 'y' not in data:
                     print(f"  Warning: Missing x/y for {name}")
                     continue
                     
-                x, y = data['x'], data['y']
-                positions[name] = [x, y]  # Use lists instead of tuples
+                x = data['x']
+                # Use base_y (normalized y) if available, otherwise calculate it
+                if 'base_y' in data:
+                    normalized_y = data['base_y']
+                else:
+                    # Need to subtract y_offset to get normalized position
+                    settings = self.get_text_settings()
+                    y_offset = settings.get('y_offset', -40)
+                    normalized_y = data['y'] - y_offset
+                    
+                # Store in position manager with normalized coordinates
+                self.position_manager.store(name, x, normalized_y, is_normalized=True)
+                print(f"Stored position for {name}: ({x}, {normalized_y})")
                 
-            if not positions:
-                print("  Warning: No positions to save!")
-                messagebox.showinfo("Error", "No valid positions found to save")
+            # Now save all positions to global file
+            result = self.position_manager.save_to_file(is_global=True)
+            
+            if result:
+                count = len(self.position_manager.positions)
+                print(f"Saved {count} positions to global positions file")
+                messagebox.showinfo("Success", f"All controls positions saved to global file ({count} items)")
+                return True
+            else:
+                print("Failed to save positions")
+                messagebox.showerror("Error", "Could not save positions")
                 return False
                 
-            # Create preview directory if it doesn't exist
-            preview_dir = os.path.join(self.mame_dir, "preview")
-            os.makedirs(preview_dir, exist_ok=True)
-            
-            # Save to global_positions.json (not all_controls_positions.json)
-            filepath = os.path.join(preview_dir, "global_positions.json")
-            
-            with open(filepath, 'w') as f:
-                json.dump(positions, f)
-                
-            print(f"Saved {len(positions)} positions for all controls to global file: {filepath}")
-            messagebox.showinfo("Success", f"All controls positions saved to global file ({len(positions)} items)")
-            return True
         except Exception as e:
             print(f"Error saving all controls positions: {e}")
             messagebox.showerror("Error", f"Could not save positions: {e}")
-            return False
+
     
     def show_preview_standalone(self, rom_name, auto_close=False):
         """Show the preview for a specific ROM without running the main app"""
