@@ -4,14 +4,16 @@ import customtkinter as ctk
 import json
 import os
 import re
-from tkinter import Image, messagebox
+from tkinter import Image, messagebox, ttk
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
 import subprocess
 import threading
 import time
 from PIL import Image, ImageTk
-
+# Make sure to add this import at the top of your file
+import tkinter as tk
+from tkinter import ttk, messagebox
 
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
@@ -543,6 +545,204 @@ class MAMEControlConfig(ctk.CTk):
         
         return generic_control_games, missing_control_games
 
+    def show_control_editor(self, rom_name, game_name=None):
+        """Show editor for a game's controls"""
+        game_data = self.get_game_data(rom_name) or {}
+        game_name = game_name or game_data.get('gamename', rom_name)
+        
+        # Create dialog
+        editor = ctk.CTkToplevel(self)
+        editor.title(f"Edit Controls - {game_name}")
+        editor.geometry("900x600")
+        editor.transient(self)
+        editor.grab_set()
+        
+        # Header
+        header_frame = ctk.CTkFrame(editor)
+        header_frame.pack(fill="x", padx=10, pady=10)
+        
+        ctk.CTkLabel(
+            header_frame,
+            text=f"Edit Controls for {game_name}",
+            font=("Arial", 16, "bold")
+        ).pack(side=tk.LEFT, padx=10)
+        
+        # Main content frame
+        content_frame = ctk.CTkFrame(editor)
+        content_frame.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        # Controls
+        players_data = game_data.get('players', [])
+        if not players_data:
+            # Create default structure if none exists
+            players_data = [{'name': 'Player 1', 'labels': []}]
+        
+        # Dictionary to track all control entries for later saving
+        control_entries = {}
+        
+        # Create tabview for players
+        player_tabs = ctk.CTkTabview(content_frame)
+        player_tabs.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        for player_idx, player in enumerate(players_data):
+            player_name = player.get('name', f'Player {player_idx+1}')
+            
+            # Create a tab for this player
+            player_tab = player_tabs.add(player_name)
+            
+            # Frame for player controls
+            controls_frame = ctk.CTkScrollableFrame(player_tab)
+            controls_frame.pack(expand=True, fill="both", padx=10, pady=10)
+            
+            # Header row - use pack instead of grid
+            header_frame = ctk.CTkFrame(controls_frame)
+            header_frame.pack(fill="x", pady=5)
+            
+            button_label = ctk.CTkLabel(header_frame, text="Button/Input", width=150, font=("Arial", 12, "bold"))
+            button_label.pack(side=tk.LEFT, padx=5)
+            
+            action_label = ctk.CTkLabel(header_frame, text="Action/Function", width=300, font=("Arial", 12, "bold"))
+            action_label.pack(side=tk.LEFT, padx=5)
+            
+            # Get labels (controls) for this player
+            player_controls = player.get('labels', [])
+            
+            # Add existing controls - using pack instead of grid
+            for control_idx, control in enumerate(player_controls):
+                button = control.get('name', '')
+                action = control.get('value', '')
+                
+                # Create a frame for each control row
+                control_frame = ctk.CTkFrame(controls_frame)
+                control_frame.pack(fill="x", pady=2)
+                
+                ctk.CTkLabel(control_frame, text=button, width=150).pack(side=tk.LEFT, padx=5)
+                
+                # Entry for action
+                action_entry = ctk.CTkEntry(control_frame, width=300)
+                action_entry.insert(0, action)
+                action_entry.pack(side=tk.LEFT, padx=5)
+                
+                # Track this entry for saving later
+                control_entries[(player_idx, control_idx)] = {
+                    'button': button,
+                    'entry': action_entry
+                }
+            
+            # Allow adding new controls for this player
+            add_frame = ctk.CTkFrame(player_tab)
+            add_frame.pack(fill="x", padx=10, pady=10)
+            
+            ctk.CTkLabel(add_frame, text="Add new control:").pack(side=tk.LEFT, padx=5)
+            
+            new_button_entry = ctk.CTkEntry(add_frame, width=150, placeholder_text="Button/Input")
+            new_button_entry.pack(side=tk.LEFT, padx=5)
+            
+            new_action_entry = ctk.CTkEntry(add_frame, width=300, placeholder_text="Action/Function")
+            new_action_entry.pack(side=tk.LEFT, padx=5)
+            
+            def add_new_control(p_idx=player_idx, controls_f=controls_frame, btn_entry=new_button_entry, act_entry=new_action_entry, p_controls=player_controls):
+                if not btn_entry.get() or not act_entry.get():
+                    return
+                    
+                # Create a frame for the new control row
+                control_frame = ctk.CTkFrame(controls_f)
+                control_frame.pack(fill="x", pady=2)
+                
+                ctk.CTkLabel(control_frame, text=btn_entry.get(), width=150).pack(side=tk.LEFT, padx=5)
+                
+                # Entry for action
+                action_entry = ctk.CTkEntry(control_frame, width=300)
+                action_entry.insert(0, act_entry.get())
+                action_entry.pack(side=tk.LEFT, padx=5)
+                
+                # Track this entry
+                control_idx = len(p_controls)
+                control_entries[(p_idx, control_idx)] = {
+                    'button': btn_entry.get(),
+                    'entry': action_entry
+                }
+                
+                # Clear entries
+                btn_entry.delete(0, 'end')
+                act_entry.delete(0, 'end')
+                
+                # Add to player_controls for proper indexing on next add
+                p_controls.append({'name': btn_entry.get(), 'value': act_entry.get()})
+                
+            add_button = ctk.CTkButton(add_frame, text="Add", command=add_new_control)
+            add_button.pack(side=tk.LEFT, padx=5)
+        
+        # Bottom buttons frame
+        buttons_frame = ctk.CTkFrame(editor)
+        buttons_frame.pack(fill="x", padx=10, pady=10)
+        
+        def save_controls():
+            """Save the updated control data for the game"""
+            # Update game data with edited controls
+            updated_game_data = dict(game_data) if game_data else {}
+            
+            if 'players' not in updated_game_data:
+                updated_game_data['players'] = []
+                
+            # Make sure we have enough player entries
+            while len(updated_game_data['players']) < len(players_data):
+                updated_game_data['players'].append({'name': f'Player {len(updated_game_data["players"])+1}', 'labels': []})
+            
+            # Update each player's controls
+            for (player_idx, control_idx), control_info in control_entries.items():
+                button = control_info['button']
+                action = control_info['entry'].get()
+                
+                # Ensure this player has a labels list
+                if 'labels' not in updated_game_data['players'][player_idx]:
+                    updated_game_data['players'][player_idx]['labels'] = []
+                    
+                # Extend labels list if needed
+                while len(updated_game_data['players'][player_idx]['labels']) <= control_idx:
+                    updated_game_data['players'][player_idx]['labels'].append({})
+                
+                # Update the control
+                updated_game_data['players'][player_idx]['labels'][control_idx] = {
+                    'name': button,
+                    'value': action
+                }
+            
+            # Create custom controls directory if it doesn't exist
+            custom_dir = os.path.join(self.mame_dir, "custom_controls")
+            os.makedirs(custom_dir, exist_ok=True)
+            
+            # Save the updated data to a custom JSON file
+            game_json_path = os.path.join(custom_dir, f"{rom_name}.json")
+            try:
+                with open(game_json_path, 'w', encoding='utf-8') as f:
+                    json.dump(updated_game_data, f, indent=2)
+                    
+                messagebox.showinfo("Success", f"Controls for {game_name} saved successfully!")
+                
+                # Set a flag to force refresh on next access (optional)
+                self.controls_refresh_needed = True
+                
+                # Close the editor
+                editor.destroy()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to save controls: {str(e)}")
+        
+        save_button = ctk.CTkButton(
+            buttons_frame,
+            text="Save Controls",
+            command=save_controls
+        )
+        save_button.pack(side=tk.LEFT, padx=10)
+        
+        close_button = ctk.CTkButton(
+            buttons_frame,
+            text="Cancel",
+            command=editor.destroy
+        )
+        close_button.pack(side=tk.RIGHT, padx=10)
+
     def show_generic_controls_dialog(self):
         """Show dialog with games that have only generic controls"""
         generic_games, missing_games = self.identify_generic_controls()
@@ -574,16 +774,52 @@ class MAMEControlConfig(ctk.CTk):
         )
         stats_label.pack(padx=20, pady=20, anchor="w")
         
-        # Generic Controls tab
+        # Generic Controls tab - Use a listbox instead of individual buttons
         generic_tab = tabview.add("Generic Controls")
+        
         if generic_games:
-            generic_text = ctk.CTkTextbox(generic_tab)
-            generic_text.pack(expand=True, fill="both", padx=10, pady=10)
+            # Frame for list and buttons
+            list_frame = ctk.CTkFrame(generic_tab)
+            list_frame.pack(expand=True, fill="both", padx=10, pady=10)
             
+            # Create listbox
+            generic_listbox = tk.Listbox(list_frame, font=("Arial", 12))
+            generic_listbox.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+            
+            # Add scrollbar
+            scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=generic_listbox.yview)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            generic_listbox.config(yscrollcommand=scrollbar.set)
+            
+            # Populate listbox
             for rom, game_name in generic_games:
-                generic_text.insert("end", f"{rom} - {game_name}\n")
+                generic_listbox.insert(tk.END, f"{rom} - {game_name}")
+            
+            # Store the rom names for lookup when editing
+            generic_rom_map = [rom for rom, _ in generic_games]
+            
+            # Button frame
+            button_frame = ctk.CTkFrame(generic_tab)
+            button_frame.pack(fill="x", padx=10, pady=10)
+            
+            def edit_selected_generic():
+                selection = generic_listbox.curselection()
+                if not selection:
+                    messagebox.showinfo("Selection Required", "Please select a game to edit")
+                    return
                     
-            generic_text.configure(state="disabled")
+                idx = selection[0]
+                if idx < len(generic_rom_map):
+                    rom = generic_rom_map[idx]
+                    game_name = generic_games[idx][1]
+                    self.show_control_editor(rom, game_name)
+            
+            edit_button = ctk.CTkButton(
+                button_frame,
+                text="Edit Selected Game",
+                command=edit_selected_generic
+            )
+            edit_button.pack(side=tk.LEFT, padx=5)
         else:
             ctk.CTkLabel(
                 generic_tab,
@@ -592,21 +828,147 @@ class MAMEControlConfig(ctk.CTk):
             ).pack(expand=True)
         
         # Missing Controls tab
-        missing_tab = tabview.add("Missing Controls")
+        missing_tab = tabview.add("Missing")  # Changed from "Missing Controls" to "Missing"
+        
         if missing_games:
-            missing_text = ctk.CTkTextbox(missing_tab)
-            missing_text.pack(expand=True, fill="both", padx=10, pady=10)
+            # Frame for list and buttons
+            missing_list_frame = ctk.CTkFrame(missing_tab)  # Renamed to avoid variable shadowing
+            missing_list_frame.pack(expand=True, fill="both", padx=10, pady=10)
             
-            for rom in sorted(missing_games):
-                missing_text.insert("end", f"{rom}\n")
+            # Create listbox
+            missing_listbox = tk.Listbox(missing_list_frame, font=("Arial", 12))
+            missing_listbox.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+            
+            # Add scrollbar
+            missing_scrollbar = ttk.Scrollbar(missing_list_frame, orient="vertical", command=missing_listbox.yview)
+            missing_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            missing_listbox.config(yscrollcommand=missing_scrollbar.set)
+            
+            # Populate listbox
+            missing_rom_list = sorted(missing_games)
+            for rom in missing_rom_list:
+                missing_listbox.insert(tk.END, rom)
+            
+            # Button frame
+            missing_button_frame = ctk.CTkFrame(missing_tab)  # Renamed to avoid variable shadowing
+            missing_button_frame.pack(fill="x", padx=10, pady=10)
+            
+            def edit_selected_missing():
+                selection = missing_listbox.curselection()
+                if not selection:
+                    messagebox.showinfo("Selection Required", "Please select a game to edit")
+                    return
                     
-            missing_text.configure(state="disabled")
+                idx = selection[0]
+                if idx < len(missing_rom_list):
+                    rom = missing_rom_list[idx]
+                    self.show_control_editor(rom)
+            
+            edit_missing_button = ctk.CTkButton(
+                missing_button_frame,
+                text="Edit Selected Game",
+                command=edit_selected_missing
+            )
+            edit_missing_button.pack(side=tk.LEFT, padx=5)
         else:
             ctk.CTkLabel(
                 missing_tab,
                 text="No games with missing controls found!",
                 font=("Arial", 14)
             ).pack(expand=True)
+    
+    # Export button and close button as before...
+        
+        # Missing Controls tab
+        missing_tab = tabview.add("Missing ROMs")  # Using a completely different name
+        
+        if missing_games:
+            # Frame for list and buttons
+            list_frame = ctk.CTkFrame(missing_tab)
+            list_frame.pack(expand=True, fill="both", padx=10, pady=10)
+            
+            # Create listbox
+            missing_listbox = tk.Listbox(list_frame, font=("Arial", 12))
+            missing_listbox.pack(side="left", expand=True, fill="both")
+            
+            # Add scrollbar
+            scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=missing_listbox.yview)
+            scrollbar.pack(side="right", fill="y")
+            missing_listbox.config(yscrollcommand=scrollbar.set)
+            
+            # Populate listbox
+            missing_rom_list = sorted(missing_games)
+            for rom in missing_rom_list:
+                missing_listbox.insert(tk.END, rom)
+            
+            # Button frame
+            button_frame = ctk.CTkFrame(missing_tab)
+            button_frame.pack(fill="x", padx=10, pady=10)
+            
+            def edit_selected_missing():
+                selection = missing_listbox.curselection()
+                if not selection:
+                    messagebox.showinfo("Selection Required", "Please select a game to edit")
+                    return
+                    
+                idx = selection[0]
+                if idx < len(missing_rom_list):
+                    rom = missing_rom_list[idx]
+                    self.show_control_editor(rom)
+            
+            edit_button = ctk.CTkButton(
+                button_frame,
+                text="Edit Selected Game",
+                command=edit_selected_missing
+            )
+            edit_button.pack(side="left", padx=5)
+        else:
+            ctk.CTkLabel(
+                missing_tab,
+                text="No games with missing controls found!",
+                font=("Arial", 14)
+            ).pack(expand=True)
+        
+        # Missing Controls tab - similar update to add edit buttons
+        missing_tab = tabview.add("Missing Controls")
+        
+        if missing_games:
+            # Create a scrollable frame for games with edit buttons
+            missing_frame = ctk.CTkScrollableFrame(missing_tab)
+            missing_frame.pack(expand=True, fill="both", padx=10, pady=10)
+            
+            # Header row
+            header_frame = ctk.CTkFrame(missing_frame)
+            header_frame.pack(fill="x", pady=5)
+            
+            ctk.CTkLabel(header_frame, text="ROM", width=200, font=("Arial", 12, "bold")).grid(row=0, column=0, padx=5)
+            ctk.CTkLabel(header_frame, text="Actions", width=100, font=("Arial", 12, "bold")).grid(row=0, column=1, padx=5)
+            
+            # Game rows
+            for idx, rom in enumerate(sorted(missing_games)):
+                row_frame = ctk.CTkFrame(missing_frame)
+                row_frame.pack(fill="x", pady=2)
+                
+                ctk.CTkLabel(row_frame, text=rom, width=200).grid(row=0, column=0, padx=5, pady=2, sticky="w")
+                
+                def create_edit_command(r=rom):
+                    return lambda: self.show_control_editor(r)
+                
+                edit_button = ctk.CTkButton(
+                    row_frame,
+                    text="Edit",
+                    width=80,
+                    command=create_edit_command()
+                )
+                edit_button.grid(row=0, column=1, padx=5, pady=2)
+        else:
+            ctk.CTkLabel(
+                missing_tab,
+                text="No games with missing controls found!",
+                font=("Arial", 14)
+            ).pack(expand=True)
+        
+    # Add export button and close button as before...
         
         # Add export button
         def export_analysis():
@@ -2096,11 +2458,27 @@ class MAMEControlConfig(ctk.CTk):
             return {}
     
     def get_game_data(self, romname):
-        """Get control data for a ROM from gamedata.json"""
+        """Get control data for a ROM from gamedata.json with custom controls support"""
+        # First check for custom edits
+        custom_path = os.path.join(self.mame_dir, "custom_controls", f"{romname}.json")
+        if os.path.exists(custom_path):
+            try:
+                with open(custom_path, 'r', encoding='utf-8') as f:
+                    custom_data = json.load(f)
+                    # Make sure essential fields are set
+                    custom_data['romname'] = romname
+                    custom_data['source'] = 'custom'
+                    print(f"Using custom controls for {romname}")
+                    return custom_data
+            except Exception as e:
+                print(f"Error loading custom controls for {romname}: {e}")
+        
+        # If no custom controls or there was an error, continue with original method
         if not hasattr(self, 'gamedata_json'):
             self.load_gamedata_json()
             
         if romname in self.gamedata_json:
+            # Your existing code remains unchanged from here...
             game_data = self.gamedata_json[romname]
             
             # Simple name defaults
@@ -5628,7 +6006,7 @@ class MAMEControlConfig(ctk.CTk):
         """Central place for all text appearance settings"""
         return {
             "font_name": "ScoutCond-Bold",  # Base filename without extension
-            "font_size": 28,                # Regular text size
+            "font_size": 42,                # Regular text size
             "title_size": 36,               # Title text size
             "uppercase": True,              # Whether to use uppercase
             "bold_strength": 2,             # Shadow effect (0-3)
