@@ -546,7 +546,7 @@ class MAMEControlConfig(ctk.CTk):
         return generic_control_games, missing_control_games
 
     def show_control_editor(self, rom_name, game_name=None):
-        """Show editor for a game's controls"""
+        """Show editor for a game's controls with direct gamedata.json editing"""
         game_data = self.get_game_data(rom_name) or {}
         game_name = game_name or game_data.get('gamename', rom_name)
         
@@ -678,56 +678,100 @@ class MAMEControlConfig(ctk.CTk):
         buttons_frame.pack(fill="x", padx=10, pady=10)
         
         def save_controls():
-            """Save the updated control data for the game"""
-            # Update game data with edited controls
-            updated_game_data = dict(game_data) if game_data else {}
-            
-            if 'players' not in updated_game_data:
-                updated_game_data['players'] = []
-                
-            # Make sure we have enough player entries
-            while len(updated_game_data['players']) < len(players_data):
-                updated_game_data['players'].append({'name': f'Player {len(updated_game_data["players"])+1}', 'labels': []})
-            
-            # Update each player's controls
-            for (player_idx, control_idx), control_info in control_entries.items():
-                button = control_info['button']
-                action = control_info['entry'].get()
-                
-                # Ensure this player has a labels list
-                if 'labels' not in updated_game_data['players'][player_idx]:
-                    updated_game_data['players'][player_idx]['labels'] = []
-                    
-                # Extend labels list if needed
-                while len(updated_game_data['players'][player_idx]['labels']) <= control_idx:
-                    updated_game_data['players'][player_idx]['labels'].append({})
-                
-                # Update the control
-                updated_game_data['players'][player_idx]['labels'][control_idx] = {
-                    'name': button,
-                    'value': action
-                }
-            
-            # Create custom controls directory if it doesn't exist
-            custom_dir = os.path.join(self.mame_dir, "custom_controls")
-            os.makedirs(custom_dir, exist_ok=True)
-            
-            # Save the updated data to a custom JSON file
-            game_json_path = os.path.join(custom_dir, f"{rom_name}.json")
+            """Save controls directly to gamedata.json"""
             try:
-                with open(game_json_path, 'w', encoding='utf-8') as f:
-                    json.dump(updated_game_data, f, indent=2)
-                    
-                messagebox.showinfo("Success", f"Controls for {game_name} saved successfully!")
+                # Load the gamedata.json file
+                gamedata_path = os.path.join(self.mame_dir, "gamedata.json")
+                with open(gamedata_path, 'r', encoding='utf-8') as f:
+                    gamedata = json.load(f)
                 
-                # Set a flag to force refresh on next access (optional)
-                self.controls_refresh_needed = True
+                # Find where to save the controls (main entry or clone)
+                target_found = False
+                
+                # Process control entries
+                control_updates = {}
+                for (player_idx, control_idx), control_info in control_entries.items():
+                    control_name = control_info['button']
+                    action_value = control_info['entry'].get()
+                    
+                    # Only process buttons with values
+                    if control_name and action_value:
+                        # Store the name attribute to add to the control
+                        control_updates[control_name] = action_value
+                
+                # Helper function to update controls in a gamedata structure
+                def update_controls_in_data(data):
+                    if 'controls' not in data:
+                        data['controls'] = {}
+                    
+                    # Update or add name attributes to controls
+                    for control_name, action in control_updates.items():
+                        if control_name in data['controls']:
+                            # Update existing control
+                            data['controls'][control_name]['name'] = action
+                        else:
+                            # Create new control with placeholder values
+                            data['controls'][control_name] = {
+                                'name': action,
+                                'tag': '',
+                                'mask': '0'
+                            }
+                            
+                    return True
+                
+                # First check if the ROM has its own controls section
+                if rom_name in gamedata and 'controls' in gamedata[rom_name]:
+                    update_controls_in_data(gamedata[rom_name])
+                    target_found = True
+                    
+                # If not, check clones
+                elif rom_name in gamedata and 'clones' in gamedata[rom_name]:
+                    # If ROM has no controls but has clones with controls, update the last clone
+                    clone_with_controls = None
+                    
+                    for clone_name, clone_data in gamedata[rom_name]['clones'].items():
+                        if 'controls' in clone_data:
+                            clone_with_controls = clone_name
+                            
+                    if clone_with_controls:
+                        update_controls_in_data(gamedata[rom_name]['clones'][clone_with_controls])
+                        target_found = True
+                    else:
+                        # No clone has controls either, add controls to the main ROM
+                        update_controls_in_data(gamedata[rom_name])
+                        target_found = True
+                
+                # If ROM is a clone, try to find it in its parent's clone list
+                else:
+                    for parent_name, parent_data in gamedata.items():
+                        if 'clones' in parent_data and rom_name in parent_data['clones']:
+                            update_controls_in_data(parent_data['clones'][rom_name])
+                            target_found = True
+                            break
+                
+                # If no existing control structure was found anywhere
+                if not target_found:
+                    messagebox.showerror("Error", f"Could not locate control data for {rom_name} in gamedata.json")
+                    return
+                
+                # Save the updated gamedata back to the file
+                with open(gamedata_path, 'w', encoding='utf-8') as f:
+                    json.dump(gamedata, f, indent=2)
+                    
+                messagebox.showinfo("Success", f"Controls for {game_name} saved to gamedata.json!")
+                
+                # Force a reload of gamedata.json
+                if hasattr(self, 'gamedata_json'):
+                    del self.gamedata_json
+                    self.load_gamedata_json()
                 
                 # Close the editor
                 editor.destroy()
                 
             except Exception as e:
                 messagebox.showerror("Error", f"Failed to save controls: {str(e)}")
+                import traceback
+                traceback.print_exc()
         
         save_button = ctk.CTkButton(
             buttons_frame,
@@ -743,13 +787,84 @@ class MAMEControlConfig(ctk.CTk):
         )
         close_button.pack(side=tk.RIGHT, padx=10)
 
+    def create_game_list_with_edit(self, parent_frame, game_list, title_text):
+        """Helper function to create a consistent list with edit button for games"""
+        # Frame for the list
+        list_frame = ctk.CTkFrame(parent_frame)
+        list_frame.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        # Title
+        ctk.CTkLabel(
+            list_frame,
+            text=title_text,
+            font=("Arial", 14, "bold")
+        ).pack(pady=(5, 10))
+        
+        # Create frame for list and scrollbar
+        list_container = ctk.CTkFrame(list_frame)
+        list_container.pack(expand=True, fill="both", padx=5, pady=5)
+        
+        # Create listbox
+        game_listbox = tk.Listbox(list_container, font=("Arial", 12))
+        game_listbox.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
+        
+        # Add scrollbar
+        scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=game_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        game_listbox.config(yscrollcommand=scrollbar.set)
+        
+        # Populate listbox
+        for rom, game_name in game_list:
+            if rom == game_name:
+                game_listbox.insert(tk.END, rom)
+            else:
+                game_listbox.insert(tk.END, f"{rom} - {game_name}")
+        
+        # Store the rom names for lookup when editing
+        rom_map = [rom for rom, _ in game_list]
+        
+        # Button frame
+        button_frame = ctk.CTkFrame(list_frame)
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        def edit_selected_game():
+            selection = game_listbox.curselection()
+            if not selection:
+                messagebox.showinfo("Selection Required", "Please select a game to edit")
+                return
+                
+            idx = selection[0]
+            if idx < len(rom_map):
+                rom = rom_map[idx]
+                game_name = game_list[idx][1] if game_list[idx][0] != game_list[idx][1] else None
+                self.show_control_editor(rom, game_name)
+        
+        edit_button = ctk.CTkButton(
+            button_frame,
+            text="Edit Selected Game",
+            command=edit_selected_game
+        )
+        edit_button.pack(side=tk.LEFT, padx=5)
+        
+        return list_frame
+    
     def show_generic_controls_dialog(self):
-        """Show dialog with games that have only generic controls"""
+        """Show dialog with games that have only generic controls or missing controls"""
         generic_games, missing_games = self.identify_generic_controls()
+        
+        # Also identify games with default controls 
+        default_games = []
+        already_categorized = set([g[0] for g in generic_games]) | set(missing_games)
+        
+        for rom_name in sorted(self.available_roms):
+            if rom_name not in already_categorized:
+                game_data = self.get_game_data(rom_name)
+                if game_data and 'gamename' in game_data:
+                    default_games.append((rom_name, game_data.get('gamename', rom_name)))
         
         # Create dialog
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Games Lacking Real Controls")
+        dialog.title("Game Controls Editor")
         dialog.geometry("800x600")
         dialog.transient(self)
         dialog.grab_set()
@@ -763,7 +878,8 @@ class MAMEControlConfig(ctk.CTk):
         stats_text = (
             f"Total ROMs: {len(self.available_roms)}\n"
             f"ROMs with generic controls: {len(generic_games)}\n"
-            f"ROMs with missing controls: {len(missing_games)}\n\n"
+            f"ROMs with missing controls: {len(missing_games)}\n"
+            f"ROMs with default controls: {len(default_games)}\n\n"
             f"Games needing real control data: {len(generic_games) + len(missing_games)}"
         )
         stats_label = ctk.CTkLabel(
@@ -774,7 +890,7 @@ class MAMEControlConfig(ctk.CTk):
         )
         stats_label.pack(padx=20, pady=20, anchor="w")
         
-        # Generic Controls tab - Use a listbox instead of individual buttons
+        # Generic Controls tab
         generic_tab = tabview.add("Generic Controls")
         
         if generic_games:
@@ -828,11 +944,11 @@ class MAMEControlConfig(ctk.CTk):
             ).pack(expand=True)
         
         # Missing Controls tab
-        missing_tab = tabview.add("Missing")  # Changed from "Missing Controls" to "Missing"
+        missing_tab = tabview.add("Missing Controls")
         
         if missing_games:
             # Frame for list and buttons
-            missing_list_frame = ctk.CTkFrame(missing_tab)  # Renamed to avoid variable shadowing
+            missing_list_frame = ctk.CTkFrame(missing_tab)
             missing_list_frame.pack(expand=True, fill="both", padx=10, pady=10)
             
             # Create listbox
@@ -850,7 +966,7 @@ class MAMEControlConfig(ctk.CTk):
                 missing_listbox.insert(tk.END, rom)
             
             # Button frame
-            missing_button_frame = ctk.CTkFrame(missing_tab)  # Renamed to avoid variable shadowing
+            missing_button_frame = ctk.CTkFrame(missing_tab)
             missing_button_frame.pack(fill="x", padx=10, pady=10)
             
             def edit_selected_missing():
@@ -876,122 +992,86 @@ class MAMEControlConfig(ctk.CTk):
                 text="No games with missing controls found!",
                 font=("Arial", 14)
             ).pack(expand=True)
-    
-    # Export button and close button as before...
         
-        # Missing Controls tab
-        missing_tab = tabview.add("Missing ROMs")  # Using a completely different name
+        # Default Controls tab (new)
+        default_tab = tabview.add("Default Controls")
         
-        if missing_games:
+        if default_games:
             # Frame for list and buttons
-            list_frame = ctk.CTkFrame(missing_tab)
-            list_frame.pack(expand=True, fill="both", padx=10, pady=10)
+            default_list_frame = ctk.CTkFrame(default_tab)
+            default_list_frame.pack(expand=True, fill="both", padx=10, pady=10)
             
             # Create listbox
-            missing_listbox = tk.Listbox(list_frame, font=("Arial", 12))
-            missing_listbox.pack(side="left", expand=True, fill="both")
+            default_listbox = tk.Listbox(default_list_frame, font=("Arial", 12))
+            default_listbox.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
             
             # Add scrollbar
-            scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=missing_listbox.yview)
-            scrollbar.pack(side="right", fill="y")
-            missing_listbox.config(yscrollcommand=scrollbar.set)
+            default_scrollbar = ttk.Scrollbar(default_list_frame, orient="vertical", command=default_listbox.yview)
+            default_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            default_listbox.config(yscrollcommand=default_scrollbar.set)
             
             # Populate listbox
-            missing_rom_list = sorted(missing_games)
-            for rom in missing_rom_list:
-                missing_listbox.insert(tk.END, rom)
+            default_rom_list = [rom for rom, _ in default_games]
+            for rom, game_name in default_games:
+                default_listbox.insert(tk.END, f"{rom} - {game_name}")
             
             # Button frame
-            button_frame = ctk.CTkFrame(missing_tab)
-            button_frame.pack(fill="x", padx=10, pady=10)
+            default_button_frame = ctk.CTkFrame(default_tab)
+            default_button_frame.pack(fill="x", padx=10, pady=10)
             
-            def edit_selected_missing():
-                selection = missing_listbox.curselection()
+            def edit_selected_default():
+                selection = default_listbox.curselection()
                 if not selection:
                     messagebox.showinfo("Selection Required", "Please select a game to edit")
                     return
                     
                 idx = selection[0]
-                if idx < len(missing_rom_list):
-                    rom = missing_rom_list[idx]
-                    self.show_control_editor(rom)
+                if idx < len(default_rom_list):
+                    rom = default_rom_list[idx]
+                    game_name = default_games[idx][1]
+                    self.show_control_editor(rom, game_name)
             
-            edit_button = ctk.CTkButton(
-                button_frame,
+            edit_default_button = ctk.CTkButton(
+                default_button_frame,
                 text="Edit Selected Game",
-                command=edit_selected_missing
+                command=edit_selected_default
             )
-            edit_button.pack(side="left", padx=5)
+            edit_default_button.pack(side=tk.LEFT, padx=5)
         else:
             ctk.CTkLabel(
-                missing_tab,
-                text="No games with missing controls found!",
+                default_tab,
+                text="No games with default controls found!",
                 font=("Arial", 14)
             ).pack(expand=True)
-        
-        # Missing Controls tab - similar update to add edit buttons
-        missing_tab = tabview.add("Missing Controls")
-        
-        if missing_games:
-            # Create a scrollable frame for games with edit buttons
-            missing_frame = ctk.CTkScrollableFrame(missing_tab)
-            missing_frame.pack(expand=True, fill="both", padx=10, pady=10)
-            
-            # Header row
-            header_frame = ctk.CTkFrame(missing_frame)
-            header_frame.pack(fill="x", pady=5)
-            
-            ctk.CTkLabel(header_frame, text="ROM", width=200, font=("Arial", 12, "bold")).grid(row=0, column=0, padx=5)
-            ctk.CTkLabel(header_frame, text="Actions", width=100, font=("Arial", 12, "bold")).grid(row=0, column=1, padx=5)
-            
-            # Game rows
-            for idx, rom in enumerate(sorted(missing_games)):
-                row_frame = ctk.CTkFrame(missing_frame)
-                row_frame.pack(fill="x", pady=2)
-                
-                ctk.CTkLabel(row_frame, text=rom, width=200).grid(row=0, column=0, padx=5, pady=2, sticky="w")
-                
-                def create_edit_command(r=rom):
-                    return lambda: self.show_control_editor(r)
-                
-                edit_button = ctk.CTkButton(
-                    row_frame,
-                    text="Edit",
-                    width=80,
-                    command=create_edit_command()
-                )
-                edit_button.grid(row=0, column=1, padx=5, pady=2)
-        else:
-            ctk.CTkLabel(
-                missing_tab,
-                text="No games with missing controls found!",
-                font=("Arial", 14)
-            ).pack(expand=True)
-        
-    # Add export button and close button as before...
         
         # Add export button
         def export_analysis():
             try:
-                file_path = os.path.join(self.mame_dir, "missing_controls_analysis.txt")
+                file_path = os.path.join(self.mame_dir, "controls_analysis.txt")
                 with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write("MAME Missing Controls Analysis\n")
-                    f.write("============================\n\n")
+                    f.write("MAME Controls Analysis\n")
+                    f.write("====================\n\n")
                     f.write(stats_text + "\n\n")
                     
                     f.write("Games with Generic Controls:\n")
-                    f.write("===========================\n")
+                    f.write("==========================\n")
                     for rom, game_name in generic_games:
                         f.write(f"{rom} - {game_name}\n")
                     f.write("\n")
                     
                     f.write("Games with Missing Controls:\n")
-                    f.write("===========================\n")
+                    f.write("==========================\n")
                     for rom in sorted(missing_games):
                         f.write(f"{rom}\n")
+                    f.write("\n")
+                    
+                    f.write("Games with Default Controls:\n")
+                    f.write("==========================\n")
+                    for rom, game_name in default_games:
+                        f.write(f"{rom} - {game_name}\n")
                         
                 messagebox.showinfo("Export Complete", 
-                                f"Analysis exported to:\n{file_path}")
+                            f"Analysis exported to:\n{file_path}")
             except Exception as e:
                 messagebox.showerror("Export Error", str(e))
         
