@@ -5061,7 +5061,7 @@ class MAMEControlConfig(ctk.CTk):
             log_file.write(f"\n\n--- LOGO DEBUG for ROM: {rom_name} ---\n")
             
             # Use the correct path for the logo directory
-            logo_dir = os.path.join("F:", "Deluxe Universe", "collections", "Arcades", "medium_artwork", "logo")
+            logo_dir = os.path.join("D:", "Deluxe Universe", "collections", "Arcades", "medium_artwork", "logo")
             
             log_file.write(f"Looking for logo in: {logo_dir}\n")
             print(f"Looking for logo in: {logo_dir}")
@@ -5325,30 +5325,35 @@ class MAMEControlConfig(ctk.CTk):
         """Load logo settings from config file"""
         settings_path = os.path.join(self.mame_dir, "logo_settings.json")
         
-        # Default settings - set logo_visible to True by default
-        settings = {
-            'logo_visible': True,
-            'logo_position': 'top-left',  # Or whatever default position you prefer
-        }
+        # Default settings - explicitly set logo_visible to True by default
+        self.logo_visible = True  # Set it directly first
+        self.logo_position = 'top-left'  # Default position
         
         try:
             if os.path.exists(settings_path):
                 with open(settings_path, 'r') as f:
                     saved_settings = json.load(f)
-                    settings.update(saved_settings)
+                    # Only update if the setting exists and is explicitly False
+                    if 'logo_visible' in saved_settings:
+                        self.logo_visible = bool(saved_settings['logo_visible'])
+                    if 'logo_position' in saved_settings:
+                        self.logo_position = saved_settings['logo_position']
             else:
                 # If no settings file exists, create one with defaults
+                settings = {
+                    'logo_visible': True,
+                    'logo_position': 'top-left'
+                }
                 with open(settings_path, 'w') as f:
                     json.dump(settings, f)
         except Exception as e:
             print(f"Error loading logo settings: {e}")
+            # Ensure defaults are set even on error
+            self.logo_visible = True
+            self.logo_position = 'top-left'
         
-        # Store settings as attributes
-        self.logo_visible = settings['logo_visible']
-        self.logo_position = settings['logo_position']
-        
-        print(f"Loaded logo settings: {settings}")
-        return settings
+        print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
+        return {'logo_visible': self.logo_visible, 'logo_position': self.logo_position}
 
     def add_logo_to_image(self, image, rom_name, max_width=None, max_height=None):
         """Add logo to the image if available and visible according to settings"""
