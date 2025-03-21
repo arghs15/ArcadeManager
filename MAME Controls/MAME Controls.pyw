@@ -12,6 +12,7 @@ import threading
 import time
 from PIL import Image, ImageTk
 
+
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
     import sys
@@ -218,6 +219,8 @@ class MAMEControlConfig(ctk.CTk):
                 self.quit()
                 return
 
+            self.ensure_font_available()
+
             # Create the interface
             self.create_layout()
             
@@ -250,20 +253,6 @@ class MAMEControlConfig(ctk.CTk):
             
             # Hide the main window completely
             self.withdraw()
-
-    def get_text_settings(self, refresh=False):
-        """Get text appearance settings with caching for better performance"""
-        # If we already have settings cached and no refresh requested, return them
-        if hasattr(self, '_cached_text_settings') and not refresh:
-            return self._cached_text_settings
-            
-        # Otherwise load from file
-        settings = self.load_text_appearance_settings()
-        
-        # Cache the settings
-        self._cached_text_settings = settings
-        
-        return settings
     
     def add_appearance_settings_button(self):
         """Add a button to configure text appearance settings"""
@@ -3738,7 +3727,7 @@ class MAMEControlConfig(ctk.CTk):
             os._exit(0)
     
     def save_current_preview(self):
-        """Save the current preview state as an image by generating it directly"""
+        """Save the current preview state as an image using settings"""
         import os
         from tkinter import messagebox
         from PIL import Image, ImageDraw, ImageFont
@@ -3747,7 +3736,7 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'current_game') or not self.current_game:
             messagebox.showerror("Error", "No game is currently selected")
             return
-        
+            
         # Ensure preview directory exists
         preview_dir = self.ensure_preview_folder()
         output_path = os.path.join(preview_dir, f"{self.current_game}.png")
@@ -3759,11 +3748,32 @@ class MAMEControlConfig(ctk.CTk):
                 return
         
         try:
-            # Load text appearance settings explicitly
-            settings = self.load_text_appearance_settings()
-            use_uppercase = settings.get("use_uppercase", False)
-            print(f"Save preview - Uppercase setting: {use_uppercase}")
+            # Get all settings in one place
+            settings = self.get_text_settings()
+            font_size = settings["font_size"]
+            title_size = settings["title_size"]
+            bold_strength = settings["bold_strength"]
+            y_offset = settings["y_offset"]
             
+            print(f"Using text settings: size={font_size}, title={title_size}, "
+                f"bold={bold_strength}, y_offset={y_offset}, uppercase={settings['uppercase']}")
+            
+            # Get direct path to font file
+            font_path = self.get_font_path()
+            if not font_path:
+                messagebox.showerror("Error", f"Font file not found! Please add {settings['font_name']} to the fonts folder.")
+                return
+                
+            # Load font directly from file 
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                title_font = ImageFont.truetype(font_path, title_size)
+                print(f"Loaded font for image saving: {font_path}")
+            except Exception as e:
+                print(f"Error loading font: {e}")
+                messagebox.showerror("Font Error", f"Could not load font: {str(e)}")
+                return
+                
             # Find the background image
             background_path = None
             for ext in ['.png', '.jpg', '.jpeg']:
@@ -3771,14 +3781,12 @@ class MAMEControlConfig(ctk.CTk):
                 test_path = os.path.join(preview_dir, f"{self.current_game}{ext}")
                 if os.path.exists(test_path):
                     background_path = test_path
-                    print(f"Using ROM-specific background: {background_path}")
                     break
                     
                 # Then check for default background
                 test_path = os.path.join(preview_dir, f"default{ext}")
                 if os.path.exists(test_path):
                     background_path = test_path
-                    print(f"Using default background: {background_path}")
                     break
             
             # Create the image (with size matching the preview)
@@ -3799,9 +3807,6 @@ class MAMEControlConfig(ctk.CTk):
             
             # Create draw object
             draw = ImageDraw.Draw(bg_img)
-            
-            # Get fonts based on settings
-            font, title_font = self.get_fonts_from_settings(settings)
             
             # Get game data
             game_data = self.get_game_data(self.current_game)
@@ -3835,17 +3840,42 @@ class MAMEControlConfig(ctk.CTk):
                     try:
                         text_x = data['x']
                         text_y = data['y']
-                        action = data['action']
-                        print(f"Drawing {control_name} at ({text_x}, {text_y}): {action}")
                         
-                        # Use the apply_text_settings helper to draw text with current settings
-                        # Pass settings explicitly to ensure uppercase setting is used
-                        self.apply_text_settings(draw, action, text_x, text_y, font, settings)
+                        # Adjust y-position for consistent placement with preview
+                        adjusted_y = text_y + y_offset
+                        
+                        # Get the original action text
+                        action = data['action']
+                        
+                        # Apply consistent formatting
+                        display_text = self.get_formatted_text(action)
+                        
+                        print(f"Drawing {control_name} at ({text_x}, {adjusted_y}): {display_text}")
+                        
+                        # Apply bold effect based on settings
+                        if bold_strength == 0:
+                            # No bold effect
+                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                        else:
+                            # Draw shadows for bold effect
+                            offsets = []
+                            if bold_strength >= 1:
+                                offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
+                            if bold_strength >= 2:
+                                offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
+                            if bold_strength >= 3:
+                                offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
+                                
+                            # Draw shadows
+                            for dx, dy in offsets:
+                                draw.text((text_x+dx, adjusted_y+dy), display_text, fill="black", font=font)
+                            
+                            # Draw main text
+                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                            
                     except Exception as e:
                         print(f"Error drawing text for {control_name}: {e}")
                         continue
-            else:
-                print("No text_items attribute found!")
             
             # Add logo to the image
             bg_img = self.add_logo_to_image(bg_img, self.current_game)
@@ -3984,26 +4014,17 @@ class MAMEControlConfig(ctk.CTk):
         )
         cancel_button.grid(row=0, column=1, padx=5, pady=5)
     
+    # 2. Replace the load_text_appearance_settings method
     def load_text_appearance_settings(self):
-        """Load text appearance settings from file"""
-        settings = {
-            "font_family": "Arial",
+        """Load fixed text appearance settings"""
+        return {
+            "font_family": "ScoutCond Bold",
             "font_size": 28,
             "title_font_size": 36,
             "bold_strength": 2,
-            "y_offset": -40
+            "y_offset": -40,
+            "use_uppercase": False
         }
-        
-        try:
-            settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
-            if os.path.exists(settings_file):
-                with open(settings_file, 'r') as f:
-                    loaded_settings = json.load(f)
-                    settings.update(loaded_settings)
-        except Exception as e:
-            print(f"Error loading text appearance settings: {e}")
-        
-        return settings
 
     def save_text_appearance_settings(self, settings):
         """Save text appearance settings to file"""
@@ -4419,125 +4440,82 @@ class MAMEControlConfig(ctk.CTk):
                 "total": len(sorted_roms)
             }
 
-    def get_fonts_from_settings(self, settings=None):
-        """Get font objects based on settings with enhanced font finding capability"""
+    def get_font_path(self):
+        """Get the absolute path to the font file based on settings"""
         import os
+        
+        # Get font name from settings
+        settings = self.get_text_settings()
+        font_name = settings["font_name"]
+        
+        # Define all possible font paths
+        font_paths = [
+            os.path.join(self.mame_dir, "fonts", f"{font_name}.otf"),
+            os.path.join(self.mame_dir, "fonts", f"{font_name}.ttf"),
+            os.path.join(self.mame_dir, "preview", f"{font_name}.otf"),
+            os.path.join(self.mame_dir, "preview", f"{font_name}.ttf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_name}.otf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_name}.ttf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_name}.otf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_name}.ttf")
+        ]
+        
+        # Check which font file exists
+        for path in font_paths:
+            if os.path.exists(path):
+                print(f"Using font file: {path}")
+                return path
+        
+        # If we get here, we couldn't find the font - print more detailed diagnostic info
+        print(f"\n=== FONT FILE '{font_name}' NOT FOUND ===")
+        print("Searched in these locations:")
+        for path in font_paths:
+            print(f"  - {path} {'(EXISTS)' if os.path.exists(path) else '(NOT FOUND)'}")
+        
+        # Fallback to Arial if font not found
         import sys
+        if sys.platform == 'win32':
+            windows_font_dir = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')
+            arial_bold_path = os.path.join(windows_font_dir, 'arialbd.ttf')
+            if os.path.exists(arial_bold_path):
+                print(f"Falling back to Arial Bold: {arial_bold_path}")
+                return arial_bold_path
+        
+        print("No suitable font found!")
+        return None
+    
+    def get_fonts_from_settings(self, settings=None):
+        """Get font objects based on settings with direct file access"""
+        import os
         from PIL import ImageFont
         
+        # Default to our fixed settings if none provided
         if settings is None:
             settings = self.load_text_appearance_settings()
         
-        font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
         title_font_size = settings.get("title_font_size", 36)
         
-        # Apply scaling factor for certain fonts that appear small
-        scaling_factors = {
-            "Times New Roman": 1.5,
-            "Times": 1.5,
-            "Georgia": 1.4,
-            "Garamond": 1.7,
-            "Baskerville": 1.6,
-            "Palatino": 1.5,
-            "Courier New": 1.3,
-            "Courier": 1.3,
-            "Consolas": 1.2,
-            "Cambria": 1.4
-        }
+        # Get the direct path to the font file
+        font_path = self.get_font_path()
         
-        # Apply scaling if font needs it
-        scale = scaling_factors.get(font_family, 1.0)
-        adjusted_font_size = int(font_size * scale)
-        adjusted_title_size = int(title_font_size * scale)
-        
-        print(f"Font size adjustment: {font_family} - original: {font_size}, adjusted: {adjusted_font_size} (scale: {scale})")
-        
-        # Try to load the specified font
-        font = None
-        title_font = None
-        
-        # Handle "System" as a special case
-        if font_family == "System":
-            font = ImageFont.load_default()
-            title_font = ImageFont.load_default()
-            print("Using system default font")
-            return font, title_font
-        
-        # Attempt direct loading first (works on many systems)
-        try:
-            font = ImageFont.truetype(font_family, adjusted_font_size)
-            title_font = ImageFont.truetype(font_family, adjusted_title_size)
-            print(f"Successfully loaded font directly: {font_family}")
-            return font, title_font
-        except Exception as e:
-            print(f"Direct font loading failed: {e}")
-        
-        # Windows-specific font handling
-        if sys.platform == 'win32':
+        if font_path and os.path.exists(font_path):
             try:
-                # More extensive Windows font mapping
-                windows_font_dir = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')
-                
-                # Common font file mappings for Windows
-                font_file_map = {
-                    'Arial': ['arial.ttf', 'ARIAL.TTF'],
-                    'Arial Black': ['ariblk.ttf', 'ARIBLK.TTF'],
-                    'Calibri': ['calibri.ttf', 'CALIBRI.TTF'],
-                    'Cambria': ['cambria.ttf', 'CAMBRIA.TTF'],
-                    'Comic Sans MS': ['comic.ttf', 'COMIC.TTF'],
-                    'Courier New': ['cour.ttf', 'COUR.TTF'],
-                    'Georgia': ['georgia.ttf', 'GEORGIA.TTF'],
-                    'Impact': ['impact.ttf', 'IMPACT.TTF'],
-                    'Segoe UI': ['segoeui.ttf', 'SEGOEUI.TTF'],
-                    'Tahoma': ['tahoma.ttf', 'TAHOMA.TTF'],
-                    'Times New Roman': ['times.ttf', 'TIMES.TTF'],
-                    'Trebuchet MS': ['trebuc.ttf', 'TREBUC.TTF'],
-                    'Verdana': ['verdana.ttf', 'VERDANA.TTF']
-                }
-                
-                # Try the mapped files for this font
-                if font_family in font_file_map:
-                    for filename in font_file_map[font_family]:
-                        try:
-                            path = os.path.join(windows_font_dir, filename)
-                            if os.path.exists(path):
-                                font = ImageFont.truetype(path, adjusted_font_size)
-                                title_font = ImageFont.truetype(path, adjusted_title_size)
-                                print(f"Loaded {font_family} from mapped file: {path}")
-                                return font, title_font
-                        except Exception as e:
-                            print(f"Error loading mapped font file {filename}: {e}")
-                
-                # Try directory search as fallback
-                font_files = [f for f in os.listdir(windows_font_dir) if f.lower().endswith('.ttf') or f.lower().endswith('.ttc')]
-                possible_matches = [f for f in font_files if font_family.lower() in f.lower()]
-                
-                for match in possible_matches:
-                    try:
-                        path = os.path.join(windows_font_dir, match)
-                        font = ImageFont.truetype(path, adjusted_font_size)
-                        title_font = ImageFont.truetype(path, adjusted_title_size)
-                        print(f"Loaded {font_family} from search: {path}")
-                        return font, title_font
-                    except Exception as e:
-                        print(f"Error loading potential match {match}: {e}")
-                        
+                # Load using direct file path
+                font = ImageFont.truetype(font_path, font_size)
+                title_font = ImageFont.truetype(font_path, title_font_size)
+                print(f"Loaded font from path: {font_path}")
+                return font, title_font
             except Exception as e:
-                print(f"Windows font search error: {e}")
+                print(f"Error loading font from {font_path}: {e}")
         
-        # For other platforms (macOS, Linux)
-        else:
-            # Add platform-specific font searching here
-            pass
-        
-        # Fallback to default if all attempts failed
-        print(f"Could not load font '{font_family}', using default")
+        # Last resort - use default PIL font
+        print("Using default font as last resort")
         font = ImageFont.load_default()
         title_font = ImageFont.load_default()
         
         return font, title_font
-    
+
     def show_preview_original(self):
         """Store the original show_preview method to be called from the modified version"""
         pass  # This will be replaced with the original show_preview method
@@ -4573,6 +4551,15 @@ class MAMEControlConfig(ctk.CTk):
         
         return result
 
+    def get_formatted_text(self, text):
+        """Apply consistent text formatting to all text (uppercase, etc.)"""
+        settings = self.get_text_settings()
+        
+        if settings["uppercase"]:
+            return text.upper()
+        else:
+            return text  # Keep original case
+    
     def show_image_preview(self):
         """Show a window with an exact preview of how the image will be generated"""
         if not hasattr(self, 'current_game') or not self.current_game:
@@ -4581,7 +4568,7 @@ class MAMEControlConfig(ctk.CTk):
 
         import os
         from tkinter import messagebox
-        from PIL import Image, ImageDraw, ImageTk
+        from PIL import Image, ImageDraw, ImageTk, ImageFont
         import traceback
 
         # Check for and close any existing exact preview windows
@@ -4592,13 +4579,31 @@ class MAMEControlConfig(ctk.CTk):
         try:
             print("\n--- STARTING EXACT PREVIEW ---")
             
-            # Load text appearance settings - Explicitly load settings here
-            settings = self.load_text_appearance_settings()
-            use_uppercase = settings.get("use_uppercase", False)
-            print(f"Exact preview - Uppercase setting: {use_uppercase}")
+            # Get all settings in one place
+            settings = self.get_text_settings()
+            font_size = settings["font_size"]
+            title_size = settings["title_size"]
+            bold_strength = settings["bold_strength"]
+            y_offset = settings["y_offset"]
             
-            # Create a temporary preview image using the exact same code as save_current_preview
-            # but display it in a window instead of saving to file
+            print(f"Using text settings: size={font_size}, title={title_size}, "
+                f"bold={bold_strength}, y_offset={y_offset}, uppercase={settings['uppercase']}")
+            
+            # Get direct path to font file
+            font_path = self.get_font_path()
+            if not font_path:
+                messagebox.showerror("Error", f"Font file not found! Please add {settings['font_name']} to the fonts folder.")
+                return
+                
+            # Load font directly from file
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                title_font = ImageFont.truetype(font_path, title_size)
+                print(f"Loaded font for exact preview: {font_path}")
+            except Exception as e:
+                print(f"Error loading font: {e}")
+                messagebox.showerror("Font Error", f"Could not load font: {str(e)}")
+                return
             
             # Find the background image
             background_path = None
@@ -4618,8 +4623,6 @@ class MAMEControlConfig(ctk.CTk):
                     background_path = test_path
                     print(f"Using default background: {background_path}")
                     break
-            
-            print(f"Background path: {background_path}")
             
             # Create the image (with size matching the preview)
             target_width, target_height = 1920, 1080  # Standard full HD size
@@ -4643,10 +4646,6 @@ class MAMEControlConfig(ctk.CTk):
             
             # Create draw object
             draw = ImageDraw.Draw(bg_img)
-            
-            # Get fonts based on settings
-            font, title_font = self.get_fonts_from_settings(settings)
-            print(f"Got fonts: {font}, {title_font}")
             
             # Get game data
             game_data = self.get_game_data(self.current_game)
@@ -4682,22 +4681,50 @@ class MAMEControlConfig(ctk.CTk):
                     try:
                         text_x = data['x']
                         text_y = data['y']
-                        action = data['action']
-                        print(f"Drawing {control_name} at ({text_x}, {text_y}): {action}")
                         
-                        # Use the apply_text_settings helper to draw text with current settings
-                        # Pass the explicit settings object to ensure uppercase setting is used
-                        self.apply_text_settings(draw, action, text_x, text_y, font, settings)
+                        # Adjust y-position for consistent placement with preview
+                        adjusted_y = text_y + y_offset
+                        
+                        # Get the original action text
+                        action = data['action']
+                        
+                        # Apply consistent formatting
+                        display_text = self.get_formatted_text(action)
+                        
+                        print(f"Drawing {control_name} at ({text_x}, {adjusted_y}): {display_text}")
+                        
+                        # Apply bold effect based on settings
+                        if bold_strength == 0:
+                            # No bold effect
+                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                        else:
+                            # Draw shadows for bold effect
+                            offsets = []
+                            if bold_strength >= 1:
+                                offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
+                            if bold_strength >= 2:
+                                offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
+                            if bold_strength >= 3:
+                                offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
+                                
+                            # Draw shadows
+                            for dx, dy in offsets:
+                                draw.text((text_x+dx, adjusted_y+dy), display_text, fill="black", font=font)
+                            
+                            # Draw main text
+                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                        
                     except Exception as e:
                         print(f"Error drawing text for {control_name}: {e}")
                         continue
             else:
                 print("No text_items attribute found!")
             
-            # Add logo to the image (after drawing text, before display)
+            # Add logo to the image
             print("Adding logo to image")
             bg_img = self.add_logo_to_image(bg_img, self.current_game)
-            
+
+            # The rest of the method stays the same...
             print("Image preparation complete, creating display window")
             
             # Now display this image in a window
@@ -4814,7 +4841,7 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error updating logo in exact preview: {e}")
     
     def apply_preview_update_hook(self):
-        """Apply hooks to update preview window for text appearance and logos"""
+        """Apply hooks to update preview window for logos only (text settings removed)"""
         print("\n=== Applying preview hooks ===")
         
         # Store the original show_preview method properly
@@ -4822,9 +4849,9 @@ class MAMEControlConfig(ctk.CTk):
             self.show_preview_original = self.show_preview
             print("Original show_preview method stored")
         
-        # Define the new method that combines logo and text settings
-        def show_preview_with_logo_and_text(self):
-            """Custom version of show_preview that applies both logo and text settings"""
+        # Define the new method that only applies logo settings
+        def show_preview_with_logo_only(self):
+            """Custom version of show_preview that applies logo settings only"""
             # Call the original method first
             result = self.show_preview_original()
             
@@ -4837,10 +4864,6 @@ class MAMEControlConfig(ctk.CTk):
                 # Add the logo to the canvas
                 if self.logo_visible:
                     self.add_logo_to_preview_canvas()
-            
-            # Apply text settings to any existing text items
-            if hasattr(self, 'preview_canvas'):
-                self.update_preview_text_appearance()
                 
             # Add logo controls to buttons if they exist
             if hasattr(self, 'button_row2') and self.button_row2.winfo_exists():
@@ -4862,22 +4885,12 @@ class MAMEControlConfig(ctk.CTk):
                 )
                 self.logo_position_button.pack(side="left", padx=3)
                 
-            # Add text settings button if it exists
-            if hasattr(self, 'button_row1') and self.button_row1.winfo_exists():
-                settings_button = ctk.CTkButton(
-                    self.button_row1,
-                    text="Text Settings",
-                    command=lambda: self.show_text_appearance_settings(update_preview=True),
-                    width=90
-                )
-                settings_button.pack(side="left", padx=3)
-                
             return result
         
-        # Replace the original method with our new combined method
-        self.show_preview = show_preview_with_logo_and_text.__get__(self, type(self))
+        # Replace the original method with our new method
+        self.show_preview = show_preview_with_logo_only.__get__(self, type(self))
         
-        print("Replaced show_preview with custom version that applies text settings and logos")
+        print("Replaced show_preview with custom version that applies logo settings only")
         print("=== Preview hooks applied ===\n")
 
     # Modification to show_text_appearance_settings to improve font selection
@@ -4969,275 +4982,75 @@ class MAMEControlConfig(ctk.CTk):
             return False, str(e)
     
     def show_text_appearance_settings(self, update_preview=False):
-        """Show dialog to configure text appearance for images with improved preview"""
-        dialog = ctk.CTkToplevel(self)
-        dialog.title("Text Appearance Settings")
-        dialog.geometry("500x850")  # Increased height to show all elements by default
-        dialog.transient(self)
-        dialog.grab_set()
+        """Show message about fixed font settings"""
+        import tkinter as tk
+        from tkinter import messagebox
         
-        # Load current settings
-        settings = self.load_text_appearance_settings()
-        
-        # Create main frame
-        main_frame = ctk.CTkFrame(dialog)
-        main_frame.pack(fill="both", expand=True, padx=20, pady=20)
-        
-        # Create settings widgets
-        ctk.CTkLabel(main_frame, text="Text Appearance Settings", font=("Arial", 16, "bold")).pack(pady=(0, 20))
-        
-        # Add uppercase option
-        uppercase_frame = ctk.CTkFrame(main_frame)
-        uppercase_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(uppercase_frame, text="Text Case", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        uppercase_var = ctk.IntVar(value=settings.get("use_uppercase", False))
-        uppercase_checkbox = ctk.CTkCheckBox(
-            uppercase_frame,
-            text="Use UPPERCASE for all text",
-            variable=uppercase_var
+        messagebox.showinfo(
+            "Fixed Font Settings",
+            "Text formatting customization has been disabled.\n\n" +
+            "The application now uses ScoutCond Bold font with fixed settings " +
+            "for better consistency with The Spirit theme."
         )
-        uppercase_checkbox.pack(anchor="w", padx=20, pady=5)
         
-        # Function to update preview when any setting changes
-        def update_preview():
-            preview_canvas.delete("all")
-            
-            # Get current settings
-            font_family = font_var.get()
-            font_size = size_var.get()
-            bold_strength = bold_var.get()
-            use_uppercase = bool(uppercase_var.get())
-            
-            # Text to show (apply uppercase if enabled)
-            preview_text = "Preview Text"
-            if use_uppercase:
-                preview_text = preview_text.upper()
-            
-            # Use the canvas text with our simulated bold effect
-            text_x, text_y = 225, 50  # Center of canvas
-            
-            # Draw with different bold strengths
-            if bold_strength == 0:
-                # No bold - just draw the text
-                preview_canvas.create_text(text_x, text_y, text=preview_text, fill="white", font=(font_family, font_size))
-            else:
-                # Apply bold effect based on strength
-                offsets = []
-                if bold_strength >= 1:
-                    offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
-                if bold_strength >= 2:
-                    offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
-                if bold_strength >= 3:
-                    offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
-                if bold_strength >= 4:
-                    offsets.extend([(2, 1), (1, 2), (-2, 1), (-1, 2), (2, -1), (1, -2), (-2, -1), (-1, -2)])
-                if bold_strength >= 5:
-                    offsets.extend([(2, 2), (-2, 2), (2, -2), (-2, -2)])
-                
-                # Draw shadows
-                for dx, dy in offsets:
-                    preview_canvas.create_text(text_x+dx, text_y+dy, text=preview_text, fill="black", font=(font_family, font_size))
-                
-                # Draw main text
-                preview_canvas.create_text(text_x, text_y, text=preview_text, fill="white", font=(font_family, font_size))
-        
-        # Connect uppercase toggle to update preview automatically
-        def on_uppercase_toggle():
-            update_preview()
-            
-        uppercase_checkbox.configure(command=on_uppercase_toggle)
-        
-        # Font callback function for when a font is selected
-        def on_font_change(new_font):
-            update_preview()
-        
-        # Use the new font selection helper method
-        font_var = self.create_font_selection(main_frame, settings.get("font_family", "Arial"), on_font_change)
-        
-        # Font size section
-        size_frame = ctk.CTkFrame(main_frame)
-        size_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(size_frame, text="Font Size Settings", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Font size
-        size_row = ctk.CTkFrame(size_frame)
-        size_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(size_row, text="Font Size:", width=100).pack(side="left", padx=5)
-        
-        size_var = ctk.IntVar(value=settings.get("font_size", 28))
-        size_slider = ctk.CTkSlider(size_row, from_=12, to=48, variable=size_var, number_of_steps=36)
-        size_slider.pack(side="left", padx=5, fill="x", expand=True)
-        
-        size_label = ctk.CTkLabel(size_row, text=str(size_var.get()), width=30)
-        size_label.pack(side="left", padx=5)
-        
-        # Update size label when slider changes
-        def update_size_label(val):
-            size_label.configure(text=str(int(val)))
-            update_preview()  # Update preview when size changes
-        
-        size_slider.configure(command=update_size_label)
-        
-        # Title font size
-        title_size_row = ctk.CTkFrame(size_frame)
-        title_size_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(title_size_row, text="Title Size:", width=100).pack(side="left", padx=5)
-        
-        title_size_var = ctk.IntVar(value=settings.get("title_font_size", 36))
-        title_size_slider = ctk.CTkSlider(title_size_row, from_=16, to=60, variable=title_size_var, number_of_steps=44)
-        title_size_slider.pack(side="left", padx=5, fill="x", expand=True)
-        
-        title_size_label = ctk.CTkLabel(title_size_row, text=str(title_size_var.get()), width=30)
-        title_size_label.pack(side="left", padx=5)
-        
-        # Update title size label when slider changes
-        def update_title_size_label(val):
-            title_size_label.configure(text=str(int(val)))
-            update_preview()  # Update preview when size changes
-        
-        title_size_slider.configure(command=update_title_size_label)
-        
-        # Bold effect
-        bold_frame = ctk.CTkFrame(main_frame)
-        bold_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(bold_frame, text="Bold Effect", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Bold strength
-        bold_row = ctk.CTkFrame(bold_frame)
-        bold_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(bold_row, text="Strength:", width=100).pack(side="left", padx=5)
-        
-        bold_var = ctk.IntVar(value=settings.get("bold_strength", 2))
-        bold_slider = ctk.CTkSlider(bold_row, from_=0, to=5, variable=bold_var, number_of_steps=5)
-        bold_slider.pack(side="left", padx=5, fill="x", expand=True)
-        
-        bold_strength_labels = ["None", "Light", "Medium", "Strong", "Very Strong", "Maximum"]
-        bold_label = ctk.CTkLabel(bold_row, text=bold_strength_labels[bold_var.get()], width=80)
-        bold_label.pack(side="left", padx=5)
-        
-        # Update bold label when slider changes
-        def update_bold_label(val):
-            idx = int(val)
-            if 0 <= idx < len(bold_strength_labels):
-                bold_label.configure(text=bold_strength_labels[idx])
-            update_preview()  # Update preview when bold changes
-        
-        bold_slider.configure(command=update_bold_label)
-        
-        # Y offset
-        offset_frame = ctk.CTkFrame(main_frame)
-        offset_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(offset_frame, text="Position Adjustment", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Y offset
-        y_offset_row = ctk.CTkFrame(offset_frame)
-        y_offset_row.pack(fill="x", padx=10, pady=5)
-        
-        ctk.CTkLabel(y_offset_row, text="Y Offset:", width=100).pack(side="left", padx=5)
-        
-        y_offset_var = ctk.IntVar(value=settings.get("y_offset", -40))
-        y_offset_slider = ctk.CTkSlider(y_offset_row, from_=-60, to=0, variable=y_offset_var, number_of_steps=60)
-        y_offset_slider.pack(side="left", padx=5, fill="x", expand=True)
-        
-        y_offset_label = ctk.CTkLabel(y_offset_row, text=str(y_offset_var.get()), width=30)
-        y_offset_label.pack(side="left", padx=5)
-        
-        # Update y offset label when slider changes
-        def update_y_offset_label(val):
-            y_offset_label.configure(text=str(int(val)))
-            update_preview()  # Update preview when offset changes
-        
-        y_offset_slider.configure(command=update_y_offset_label)
-        
-        # Preview section
-        preview_frame = ctk.CTkFrame(main_frame)
-        preview_frame.pack(fill="x", pady=10)
-        
-        ctk.CTkLabel(preview_frame, text="Preview", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
-        
-        # Preview canvas
-        preview_canvas = ctk.CTkCanvas(preview_frame, width=450, height=100, bg="black", highlightthickness=0)
-        preview_canvas.pack(padx=10, pady=10)
-        
-        # Initial preview update
-        update_preview()
-        
-        # Note about live preview update
-        if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
-            live_update_var = ctk.IntVar(value=1)
-            live_update_check = ctk.CTkCheckBox(
-                main_frame,
-                text="Update preview window in real-time",
-                variable=live_update_var
-            )
-            live_update_check.pack(pady=10)
-        
-        # Buttons
-        button_frame = ctk.CTkFrame(dialog)
-        button_frame.pack(fill="x", padx=20, pady=10)
-        
-        def get_current_settings():
-            """Get the current settings from UI controls"""
-            return {
-                "font_family": font_var.get(),
-                "font_size": size_var.get(),
-                "title_font_size": title_size_var.get(),
-                "bold_strength": bold_var.get(),
-                "y_offset": y_offset_var.get(),
-                "use_uppercase": bool(uppercase_var.get())
-            }
-        
-        def apply_settings():
-            """Apply the current settings without closing dialog"""
-            # Save settings temporarily
-            current_settings = get_current_settings()
-            self.save_text_appearance_settings(current_settings)
-            
-            # Update preview window if it exists
-            if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
-                self.update_preview_text_appearance()
-                print("Applied settings to preview window")
-        
-        def save_settings():
-            """Save settings and close dialog"""
-            # Get current settings
-            current_settings = get_current_settings()
-            
-            # Save settings
-            self.save_text_appearance_settings(current_settings)
-            
-            # Update preview window if requested
-            if update_preview and hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
-                self.update_preview_text_appearance()
-            
-            dialog.destroy()
-        
-        # Apply button for live preview
-        apply_button = ctk.CTkButton(button_frame, text="Apply", command=apply_settings)
-        apply_button.pack(side="left", padx=10, pady=10)
-        
-        save_button = ctk.CTkButton(button_frame, text="Save", command=save_settings)
-        save_button.pack(side="left", padx=10, pady=10)
-        
-        cancel_button = ctk.CTkButton(button_frame, text="Cancel", command=dialog.destroy)
-        cancel_button.pack(side="right", padx=10, pady=10)
+        # If we need to update the preview, do it with the fixed settings
+        if update_preview and hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+            self.update_preview_text_appearance()
 
-        # Center window on screen
-        dialog.update_idletasks()
-        width = dialog.winfo_width()
-        height = dialog.winfo_height()
-        x = (dialog.winfo_screenwidth() // 2) - (width // 2)
-        y = (dialog.winfo_screenheight() // 2) - (height // 2)
-        dialog.geometry(f'{width}x{height}+{x}+{y}')
-
+    def ensure_font_available(self):
+        """Ensure ScoutCond Bold font is available in the application directory"""
+        import os
+        import shutil
+        
+        # Define the font directory
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        os.makedirs(font_dir, exist_ok=True)
+        
+        # Check if font already exists (either otf or ttf)
+        font_path_otf = os.path.join(font_dir, "ScoutCond-Bold.otf")
+        font_path_ttf = os.path.join(font_dir, "ScoutCond-Bold.ttf")
+        
+        if os.path.exists(font_path_otf):
+            print(f"ScoutCond Bold font already exists at: {font_path_otf}")
+            return True
+        elif os.path.exists(font_path_ttf):
+            print(f"ScoutCond Bold font already exists at: {font_path_ttf}")
+            return True
+        
+        # If not, try to find it in common locations
+        common_locations = [
+            # OTF versions
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "ScoutCond-Bold.otf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "ScoutCond-Bold.otf"),
+            os.path.join(self.mame_dir, "preview", "ScoutCond-Bold.otf"),
+            "C:\\Windows\\Fonts\\ScoutCond-Bold.otf",
+            # TTF versions as fallback
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "ScoutCond-Bold.ttf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "ScoutCond-Bold.ttf"),
+            os.path.join(self.mame_dir, "preview", "ScoutCond-Bold.ttf"),
+            "C:\\Windows\\Fonts\\ScoutCond-Bold.ttf",
+        ]
+        
+        for location in common_locations:
+            if os.path.exists(location):
+                # Copy the font to our font directory
+                try:
+                    # Determine the destination path based on the source file extension
+                    if location.endswith('.otf'):
+                        destination = font_path_otf
+                    else:
+                        destination = font_path_ttf
+                    
+                    shutil.copy2(location, destination)
+                    print(f"Copied ScoutCond Bold font from {location} to {destination}")
+                    return True
+                except Exception as e:
+                    print(f"Failed to copy font: {e}")
+        
+        print("ScoutCond Bold font not found in common locations.")
+        print("Please place ScoutCond-Bold.otf or ScoutCond-Bold.ttf in the 'fonts' directory.")
+        return False
+    
     def get_logo_path(self, rom_name):
         """Find logo path for a given ROM name with extensive debugging"""
         import os
@@ -5652,6 +5465,17 @@ class MAMEControlConfig(ctk.CTk):
             
         print("--- LOGO TEST COMPLETE ---\n")
 
+    def get_text_settings(self):
+        """Central place for all text appearance settings"""
+        return {
+            "font_name": "ScoutCond-Bold",  # Base filename without extension
+            "font_size": 28,                # Regular text size
+            "title_size": 36,               # Title text size
+            "uppercase": True,              # Whether to use uppercase
+            "bold_strength": 2,             # Shadow effect (0-3)
+            "y_offset": -30                 # Y-position adjustment
+        }
+        
     # Here's the key part that needs to be fixed - how text is displayed in the preview screen
     def show_preview(self):
         
@@ -5932,6 +5756,9 @@ class MAMEControlConfig(ctk.CTk):
                     if not control_name.startswith('P1_'):
                         continue
                     
+                    display_text = self.get_formatted_text(action)
+                    print(f"Adding control: {control_name} = {display_text}")
+
                     # Apply uppercase if enabled
                     if use_uppercase:
                         display_text = action.upper()
