@@ -1808,7 +1808,7 @@ class ConfigManager:
                 'hidden': True
             },
             'view_games_tab': {
-                'default': 'always',  # 'auto', 'always', or 'never'
+                'default': 'never',  # 'auto', 'always', or 'never'
                 'description': 'Visibility of All Games tab',
                 'type': str,
                 'hidden': True
@@ -1876,7 +1876,7 @@ class ConfigManager:
                 'hidden': True
             },
             'check_roms_button': {
-                'default': 'always',  # 'always', 'never'
+                'default': 'never',  # 'always', 'never'
                 'description': 'Check your favs are in the build',
                 'type': str,
                 'hidden': True
@@ -9752,6 +9752,7 @@ class ViewRoms:
         # Return the result
         return result['proceed']
     
+    
     def show_rom_operations_selection(self):
         """Show a dialog to select which ROM operation to perform"""
         try:
@@ -9770,13 +9771,13 @@ class ViewRoms:
             screen_width = selection_window.winfo_screenwidth()
             screen_height = selection_window.winfo_screenheight()
             
-            # Make the window larger by default - 30% of screen width, 50% of screen height
-            window_width = int(screen_width * 0.30)
-            window_height = int(screen_height * 0.50)
+            # Make the window larger by default - 30% of screen width, 60% of screen height
+            window_width = int(screen_width * 0.35)
+            window_height = int(screen_height * 0.65)
             
             # Ensure minimum size for smaller screens
-            window_width = max(window_width, 450)
-            window_height = max(window_height, 400)
+            window_width = max(window_width, 500)
+            window_height = max(window_height, 500)
             
             # Center the window
             x = (screen_width // 2) - (window_width // 2)
@@ -9830,130 +9831,143 @@ class ViewRoms:
             # Get centralized popup management from main app
             on_close = self.main_app.show_popup(selection_window)
 
-            # Functions for button clicks
-            def on_move_roms():
-                if on_close:
-                    on_close()
-                self.show_instructions_popup('show_move_roms_button')
+            # ==========================================
+            # OPERATION DEFINITIONS - EASY TO MODIFY!
+            # ==========================================
+            
+            operations = [
+                {
+                    'title': "Move ROMs Listed in Text File",
+                    'description': "Move specific ROMs listed in a text file to a separate folder.",
+                    'button_text': "Move Listed ROMs",
+                    'action': lambda: self.show_instructions_popup('show_move_roms_button'),
+                    'color': '#4CAF50',  # Green
+                    'hover_color': '#45a049'
+                },
+                {
+                    'title': "Remove ROMs NOT in Text File", 
+                    'description': "Keep only the ROMs listed in a text file and move all others to a separate folder.",
+                    'button_text': "Remove Unlisted ROMs",
+                    'action': self.remove_roms_not_in_txt,
+                    'color': '#2196F3',  # Blue
+                    'hover_color': '#0b7dda'
+                },
+                {
+                    'title': "Select & Remove Individual Games",
+                    'description': "Manually select specific games to remove from the collection.",
+                    'button_text': "Select Games to Remove", 
+                    'action': self.select_games_to_remove,
+                    'color': '#9C27B0',  # Purple
+                    'hover_color': '#7B1FA2'
+                },
+                # ==========================================
+                # ADD NEW OPERATIONS HERE:
+                # ==========================================
+                {
+                    'title': "Remove Random ROMs",
+                    'description': "Remove a specified percentage of ROMs randomly from the collection.",
+                    'button_text': "Remove Random ROMs",
+                    'action': self.remove_random_roms,
+                    'color': '#FF9800',  # Orange
+                    'hover_color': '#F57C00'
+                },
+                {
+                    'title': "Check ROMs in Collection",
+                    'description': "Check if ROMs from a text file exist in the selected collection and show match statistics.",
+                    'button_text': "Check ROM List",
+                    'action': self.check_roms_in_collection,
+                    'color': '#607D8B',  # Blue Grey
+                    'hover_color': '#455A64'
+                },
+                {
+                    'title': "Move Artwork for Missing ROMs",
+                    'description': "Move artwork files that don't have corresponding ROM files in the collection.",
+                    'button_text': "Move Orphaned Artwork",
+                    'action': lambda: self.show_instructions_popup('show_move_artwork_button'),
+                    'color': '#795548',  # Brown
+                    'hover_color': '#5D4037'
+                },
+                # Example of adding a new function:
+                # {
+                #     'title': "Backup ROM Collection",
+                #     'description': "Create a backup of the entire ROM collection to a specified location.",
+                #     'button_text': "Backup Collection",
+                #     'action': self.backup_rom_collection,  # Your new method
+                #     'color': '#009688',  # Teal
+                #     'hover_color': '#00796B'
+                # },
+                # {
+                #     'title': "Validate ROM Files",
+                #     'description': "Check all ROM files for corruption and generate a validation report.",
+                #     'button_text': "Validate ROMs",
+                #     'action': self.validate_rom_files,  # Your new method
+                #     'color': '#E91E63',  # Pink
+                #     'hover_color': '#C2185B'
+                # },
+            ]
 
-            def on_remove_roms():
-                if on_close:
-                    on_close()
-                self.remove_roms_not_in_txt()
+            # ==========================================
+            # CREATE OPERATION BUTTONS DYNAMICALLY
+            # ==========================================
+            
+            def create_operation_button(operation):
+                """Create a button for an operation"""
+                def execute_and_close():
+                    if on_close:
+                        on_close()
+                    operation['action']()
                 
-            def on_select_games():
-                if on_close:
-                    on_close()
-                self.select_games_to_remove()
-
-            def on_cancel():
-                if on_close:
-                    on_close()
-
-            # Operation buttons - with descriptions
-            operation_frame1 = ctk.CTkFrame(button_frame, fg_color='#333333')
-            operation_frame1.pack(fill='x', pady=5)
+                # Operation container
+                operation_frame = ctk.CTkFrame(button_frame, fg_color='#333333')
+                operation_frame.pack(fill='x', pady=5)
+                
+                # Title
+                title_label = ctk.CTkLabel(
+                    operation_frame,
+                    text=operation['title'],
+                    font=('Helvetica', 14, 'bold'),
+                    text_color='white'
+                )
+                title_label.pack(anchor='w', padx=10, pady=(10, 5))
+                
+                # Description
+                desc_label = ctk.CTkLabel(
+                    operation_frame,
+                    text=operation['description'],
+                    font=('Helvetica', 12),
+                    wraplength=window_width - 80,
+                    justify='left'
+                )
+                desc_label.pack(anchor='w', padx=10, pady=(0, 10))
+                
+                # Action button
+                action_button = ctk.CTkButton(
+                    operation_frame,
+                    text=operation['button_text'],
+                    command=execute_and_close,
+                    font=('Helvetica', 12),
+                    height=40,
+                    fg_color=operation['color'],
+                    hover_color=operation['hover_color']
+                )
+                action_button.pack(fill='x', padx=10, pady=(0, 10))
             
-            op1_title = ctk.CTkLabel(
-                operation_frame1,
-                text="Move ROMs Listed in Text File",
-                font=('Helvetica', 14, 'bold'),
-                text_color='white'
-            )
-            op1_title.pack(anchor='w', padx=10, pady=(10, 5))
-            
-            op1_desc = ctk.CTkLabel(
-                operation_frame1,
-                text="Move specific ROMs listed in a text file to a separate folder.",
-                font=('Helvetica', 12),
-                wraplength=window_width - 80,
-                justify='left'
-            )
-            op1_desc.pack(anchor='w', padx=10, pady=(0, 10))
-            
-            move_button = ctk.CTkButton(
-                operation_frame1,
-                text="Move Listed ROMs",
-                command=on_move_roms,
-                font=('Helvetica', 12),
-                height=40,
-                fg_color='#4CAF50',
-                hover_color='#45a049'
-            )
-            move_button.pack(fill='x', padx=10, pady=(0, 10))
-            
-            # Second operation
-            operation_frame2 = ctk.CTkFrame(button_frame, fg_color='#333333')
-            operation_frame2.pack(fill='x', pady=5)
-            
-            op2_title = ctk.CTkLabel(
-                operation_frame2,
-                text="Remove ROMs NOT in Text File",
-                font=('Helvetica', 14, 'bold'),
-                text_color='white'
-            )
-            op2_title.pack(anchor='w', padx=10, pady=(10, 5))
-            
-            op2_desc = ctk.CTkLabel(
-                operation_frame2,
-                text="Keep only the ROMs listed in a text file and move all others to a separate folder.",
-                font=('Helvetica', 12),
-                wraplength=window_width - 80,
-                justify='left'
-            )
-            op2_desc.pack(anchor='w', padx=10, pady=(0, 10))
-            
-            remove_button = ctk.CTkButton(
-                operation_frame2,
-                text="Remove Unlisted ROMs",
-                command=on_remove_roms,
-                font=('Helvetica', 12),
-                height=40,
-                fg_color='#2196F3',
-                hover_color='#0b7dda'
-            )
-            remove_button.pack(fill='x', padx=10, pady=(0, 10))
-            
-            # Third operation
-            operation_frame3 = ctk.CTkFrame(button_frame, fg_color='#333333')
-            operation_frame3.pack(fill='x', pady=5)
-            
-            op3_title = ctk.CTkLabel(
-                operation_frame3,
-                text="Select & Remove Individual Games",
-                font=('Helvetica', 14, 'bold'),
-                text_color='white'
-            )
-            op3_title.pack(anchor='w', padx=10, pady=(10, 5))
-            
-            op3_desc = ctk.CTkLabel(
-                operation_frame3,
-                text="Manually select specific games to remove from the collection.",
-                font=('Helvetica', 12),
-                wraplength=window_width - 80,
-                justify='left'
-            )
-            op3_desc.pack(anchor='w', padx=10, pady=(0, 10))
-            
-            select_games_button = ctk.CTkButton(
-                operation_frame3,
-                text="Select Games to Remove",
-                command=on_select_games,
-                font=('Helvetica', 12),
-                height=40,
-                fg_color='#9C27B0',
-                hover_color='#7B1FA2'
-            )
-            select_games_button.pack(fill='x', padx=10, pady=(0, 10))
+            # Create all operation buttons
+            for operation in operations:
+                create_operation_button(operation)
             
             # Always visible cancel button at the bottom (outside the scrollable area)
             cancel_frame = ctk.CTkFrame(main_frame, fg_color='#2c2c2c')
             cancel_frame.pack(fill='x', side='bottom', pady=(10, 5))
             
+            def cancel_action():
+                if on_close:
+                    on_close()
+            
             cancel_button = ctk.CTkButton(
                 cancel_frame,
                 text="Cancel",
-                command=on_cancel,
+                command=cancel_action,
                 font=('Helvetica', 12),
                 height=40,
                 fg_color='#f44336',
@@ -9982,9 +9996,6 @@ class ViewRoms:
             traceback.print_exc()
             messagebox.showerror("Error", f"Error showing ROM operations: {str(e)}")
             self.status_bar.configure(text="Error showing ROM operations")
-
-        except Exception as e:
-            messagebox.showerror("Error", f"Error showing ROM operations: {str(e)}")
     
     def refresh_rom_list(self):
         """Refresh the ROM list after operations that modify the collection"""
